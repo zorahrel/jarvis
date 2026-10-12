@@ -206,7 +206,7 @@ case "$cmd" in
     Q="${1:-}"; [[ $# -gt 0 ]] && shift
     [[ -z "$V" || -z "$Q" ]] && die 'uso: vis watch VIDEO "domanda" [--fps N] [--modello M] [--da S --a S]'
     need_file "$V"
-    FPS="5"; MODEL="${VIS_WATCH_MODEL:-gemini-3.5-flash}"; DA=""; A=""
+    FPS="5"; MODEL="${VIS_WATCH_MODEL:-gemini-3.8-flash}"; DA=""; A=""
     while [[ $# -gt 0 ]]; do
       case "$1" in
         --fps) FPS="${2:-5}"; shift 2 ;;
@@ -218,7 +218,9 @@ case "$cmd" in
     done
     KEY="${GEMINI_API_KEY:-$(security find-generic-password -s gemini -a api-key -w 2>/dev/null)}"
     [[ -z "$KEY" ]] && die "manca la chiave: Keychain servizio 'gemini' account 'api-key' (o GEMINI_API_KEY)"
-    VIS_KEY="$KEY" python3 - "$V" "$Q" "$FPS" "$MODEL" "$DA" "$A" <<'PY'
+    # VIS_WATCH_BACKEND=codex salta Gemini (quota del giorno gia' finita)
+    [[ "${VIS_WATCH_BACKEND:-}" == codex ]] && KEY=skip
+    [[ "$KEY" == skip ]] || VIS_KEY="$KEY" python3 - "$V" "$Q" "$FPS" "$MODEL" "$DA" "$A" <<'PY'
 import base64, json, mimetypes, os, sys, time, urllib.request, urllib.error
 path, q, fps, model, da, a = sys.argv[1:7]
 key = os.environ["VIS_KEY"]
@@ -255,8 +257,32 @@ if da: meta["start_offset"] = f"{float(da)}s"
 if a: meta["end_offset"] = f"{float(a)}s"
 part["video_metadata"] = meta
 req = {"contents": [{"parts": [part, {"text": q}]}]}
-_, body = call(f"{base}/v1beta/models/{model}:generateContent?key={key}", json.dumps(req).encode(), {"Content-Type": "application/json"})
-r = json.loads(body)
+# 503/429/404 (sovraccarico, quota, modello ritirato): si scende la catena;
+# se cadono tutti per sovraccarico si ripassa, fino a 3 giri con pause crescenti
+r = None
+chain = list(dict.fromkeys([model, "gemini-3.8-flash", "gemini-3.7-flash", "gemini-3.5-flash", "gemini-flash-latest"]))
+last = ""
+for turn in range(3):
+    busy = False   # un 503 passa da solo; una quota finita (429) o un modello ritirato no
+    for m in chain:
+        try:
+            rq = urllib.request.Request(f"{base}/v1beta/models/{m}:generateContent?key={key}", json.dumps(req).encode(), {"Content-Type": "application/json"})
+            with urllib.request.urlopen(rq, timeout=300) as resp:
+                r = json.loads(resp.read()); model = m
+            break
+        except urllib.error.HTTPError as e:
+            last = f"HTTP {e.code} ({m}): {e.read().decode()[:300]}"
+            if e.code not in (404, 429, 500, 503):
+                sys.exit(f"vis watch: {last}")
+            busy = busy or e.code in (500, 503)
+            print(f"vis watch: {m} risponde {e.code}", file=sys.stderr)
+    if r is not None or not busy: break
+    if turn < 2:
+        print(f"vis watch: tutti occupati, riprovo fra {20 * (turn + 1)} s", file=sys.stderr)
+        time.sleep(20 * (turn + 1))
+if r is None:
+    print(f"vis watch: nessun modello API risponde dopo 3 giri; ultimo: {last}", file=sys.stderr)
+    sys.exit(75)
 try:
     print("".join(p.get("text", "") for p in r["candidates"][0]["content"]["parts"]).strip())
 except (KeyError, IndexError):
@@ -264,6 +290,36 @@ except (KeyError, IndexError):
 u = r.get("usageMetadata", {})
 print(f"\n[{model} · {fps} fps · {u.get('promptTokenCount','?')} token letti da Google, 0 da chi chiama]", file=sys.stderr)
 PY
+    rc=$?; [[ "$KEY" == skip ]] && rc=75
+    # RIPIEGO: la chiave gratuita ha 20 richieste al giorno per modello e nelle
+    # ore piene risponde 503. Allora i fotogrammi (fino a 24, con l'ora stampata)
+    # vanno a codex: quota fissa ChatGPT, ancora zero token Claude. La CLI gemini
+    # non serve da ripiego: usa la stessa quota della chiave (misurato 12/10).
+    if [[ $rc -eq 75 ]] && have codex; then
+      need ffmpeg ffmpeg; need magick imagemagick
+      DUR=$(ffprobe -v error -show_entries format=duration -of csv=p=0 "$V" 2>/dev/null)
+      [[ -z "$DUR" || "$DUR" == "N/A" ]] && DUR=$(ffmpeg -i "$V" -f null - 2>&1 | sed -n 's/.*time=\([0-9:.]*\).*/\1/p' | tail -1 | awk -F: '{print $1*3600+$2*60+$3}')
+      T0="${DA:-0}"; T1="${A:-$(python3 -c "print(max(0, $DUR - 0.1))")}"
+      N=$(python3 -c "import math;print(max(2,min(24,math.ceil(($T1-$T0)*$FPS))))")
+      TMP=$(mktemp -d -t vis-watch); IMGS=()
+      echo "vis watch: ripiego su codex con $N fotogrammi fra ${T0}s e ${T1}s (quota ChatGPT)" >&2
+      for i in $(seq 0 $((N - 1))); do
+        T=$(python3 -c "print(round($T0 + ($T1 - $T0) * $i / ($N - 1 if $N > 1 else 1) * 0.999, 2))")
+        F="$TMP/f$(printf %02d $i).png"
+        ffmpeg -loglevel error -ss "$T" -i "$V" -frames:v 1 -vf scale=480:-2 "$F" </dev/null || continue
+        # l'ora stampata e' un aiuto: se il font manca, il fotogramma va lo stesso
+        magick "$F" -font /System/Library/Fonts/Supplemental/Arial.ttf -gravity NorthWest -fill yellow \
+          -undercolor black -pointsize 18 -annotate +4+4 "t=${T}s" "$F" 2>/dev/null
+        IMGS+=(-i "$F")
+      done
+      [[ ${#IMGS[@]} -eq 0 ]] && die "nessun fotogramma estratto da $V"
+      # in una cartella vuota: senza, codex va a cercare il video nel repo da cui lo si chiama
+      (cd "$TMP" && codex exec -m "${VIS_WATCH_CODEX_MODEL:-gpt-6-luna}" --skip-git-repo-check -s read-only "${IMGS[@]}" -o "$TMP/out.txt" \
+        "Sono $((${#IMGS[@]} / 2)) fotogrammi in ordine di tempo dallo stesso video, allegati qui (l'ora e' stampata in alto a sinistra). Guarda solo quelli, non cercare file. $Q" </dev/null >/dev/null 2>&1)
+      rc=$?
+      [[ $rc -eq 0 && -s "$TMP/out.txt" ]] && cat "$TMP/out.txt" && printf '\n[codex · %s fotogrammi · 0 token Claude]\n' "$N" >&2
+    fi
+    exit $rc
     ;;
 
   qr|barcode)
