@@ -96,7 +96,14 @@ def scan_cc(path):
             elif tx: err = None  # errore superato da una risposta successiva
     if not prompts: return None
     sid = os.path.basename(path)[:-6]
-    return rec('claude', sid, cwd, start, end, prompts, last_a, end_reason(last_a, err, False),
+    # Per Claude Code il limite arriva SOLO come messaggio sintetico d'errore API
+    # (isApiErrorMessage, modello <synthetic>: 33 su 33 nei transcript al 12/10),
+    # e quello sta gia' in `err`. Il testo libero della risposta non si guarda:
+    # una sessione che risponde «Ripresa sessione bloccata da rate limit» (il
+    # titolo che Topics chiede per la card di un limite) contava come morta sul
+    # limite, faceva una card nuova, il cui titolo rifaceva lo stesso giro:
+    # 956 card in backlog in tre giorni, 16 all'ora.
+    return rec('claude', sid, cwd, start, end, prompts, last_a, end_reason('', err, False),
                f'cd {cwd} && claude --resume {sid}', {'entrypoint': ep})
 
 
