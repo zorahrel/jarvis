@@ -17,6 +17,11 @@
 #   vis diff A B [--soglia N]    quanto differiscono due immagini + mappa
 #   vis frames VIDEO [--ogni N]  estrae fotogrammi da un video
 #   vis sheet VIDEO              contact sheet: un video in una immagine sola
+#   vis watch VIDEO "domanda"    guarda il video in movimento (Gemini, gratis)
+#                                [--fps N] fotogrammi al secondo letti (5; 10-24 per
+#                                animazioni veloci) · [--modello M] · [--da S --a S]
+#                                ESCE DALLA MACCHINA: va a Google, e col piano gratuito
+#                                Google puo' usarlo per addestrare. Niente dati veri.
 #   vis qr FILE                  legge QR e codici a barre
 #   vis meta FILE                dimensioni, formato, EXIF
 #   vis crop FILE X Y W H        ritaglia (coordinate 0-1 o pixel)
@@ -192,6 +197,75 @@ case "$cmd" in
     echo "$OUT"
     ;;
 
+  watch|video)
+    # PERCHE': un contact sheet ferma il tempo, e i difetti di un'animazione
+    # (una mano che scatta, due che si compenetrano a meta' corsa) stanno nel
+    # movimento. Gemini legge il video intero ai fps che chiedi, gratis, e
+    # chi lo usa (Claude, Codex, OpenClaw) paga solo la risposta in testo.
+    V="${1:-}"; shift || true
+    Q="${1:-}"; [[ $# -gt 0 ]] && shift
+    [[ -z "$V" || -z "$Q" ]] && die 'uso: vis watch VIDEO "domanda" [--fps N] [--modello M] [--da S --a S]'
+    need_file "$V"
+    FPS="5"; MODEL="${VIS_WATCH_MODEL:-gemini-3.5-flash}"; DA=""; A=""
+    while [[ $# -gt 0 ]]; do
+      case "$1" in
+        --fps) FPS="${2:-5}"; shift 2 ;;
+        --modello|--model) MODEL="${2:-$MODEL}"; shift 2 ;;
+        --da) DA="${2:-}"; shift 2 ;;
+        --a) A="${2:-}"; shift 2 ;;
+        *) shift ;;
+      esac
+    done
+    KEY="${GEMINI_API_KEY:-$(security find-generic-password -s gemini -a api-key -w 2>/dev/null)}"
+    [[ -z "$KEY" ]] && die "manca la chiave: Keychain servizio 'gemini' account 'api-key' (o GEMINI_API_KEY)"
+    VIS_KEY="$KEY" python3 - "$V" "$Q" "$FPS" "$MODEL" "$DA" "$A" <<'PY'
+import base64, json, mimetypes, os, sys, time, urllib.request, urllib.error
+path, q, fps, model, da, a = sys.argv[1:7]
+key = os.environ["VIS_KEY"]
+base = "https://generativelanguage.googleapis.com"
+mime = mimetypes.guess_type(path)[0] or "video/mp4"
+if path.endswith(".webm"): mime = "video/webm"
+size = os.path.getsize(path)
+def call(url, data=None, headers=None, method=None):
+    req = urllib.request.Request(url, data=data, headers=headers or {}, method=method)
+    try:
+        with urllib.request.urlopen(req, timeout=300) as r:
+            return r.headers, r.read()
+    except urllib.error.HTTPError as e:
+        sys.exit(f"vis watch: HTTP {e.code} da Gemini: {e.read().decode()[:400]}")
+# sotto i 18 MB il video va dentro la richiesta; sopra si carica e si aspetta
+if size < 18 * 1024 * 1024:
+    part = {"inline_data": {"mime_type": mime, "data": base64.b64encode(open(path, "rb").read()).decode()}}
+else:
+    h, _ = call(f"{base}/upload/v1beta/files?key={key}", json.dumps({"file": {"display_name": os.path.basename(path)}}).encode(),
+                {"X-Goog-Upload-Protocol": "resumable", "X-Goog-Upload-Command": "start",
+                 "X-Goog-Upload-Header-Content-Length": str(size), "X-Goog-Upload-Header-Content-Type": mime,
+                 "Content-Type": "application/json"})
+    _, body = call(h["X-Goog-Upload-URL"], open(path, "rb").read(),
+                   {"X-Goog-Upload-Command": "upload, finalize", "X-Goog-Upload-Offset": "0"})
+    f = json.loads(body)["file"]
+    while f.get("state") == "PROCESSING":
+        time.sleep(2)
+        _, body = call(f"{base}/v1beta/{f['name']}?key={key}")
+        f = json.loads(body)
+    if f.get("state") != "ACTIVE": sys.exit(f"vis watch: il file non e' pronto ({f.get('state')})")
+    part = {"file_data": {"mime_type": mime, "file_uri": f["uri"]}}
+meta = {"fps": float(fps)}
+if da: meta["start_offset"] = f"{float(da)}s"
+if a: meta["end_offset"] = f"{float(a)}s"
+part["video_metadata"] = meta
+req = {"contents": [{"parts": [part, {"text": q}]}]}
+_, body = call(f"{base}/v1beta/models/{model}:generateContent?key={key}", json.dumps(req).encode(), {"Content-Type": "application/json"})
+r = json.loads(body)
+try:
+    print("".join(p.get("text", "") for p in r["candidates"][0]["content"]["parts"]).strip())
+except (KeyError, IndexError):
+    sys.exit(f"vis watch: risposta senza testo: {json.dumps(r)[:400]}")
+u = r.get("usageMetadata", {})
+print(f"\n[{model} · {fps} fps · {u.get('promptTokenCount','?')} token letti da Google, 0 da chi chiama]", file=sys.stderr)
+PY
+    ;;
+
   qr|barcode)
     F="${1:-}"
     [[ -z "$F" ]] && die "uso: vis qr FILE"
@@ -286,6 +360,7 @@ case "$cmd" in
                 "magick:imagemagick (diff, crop, resize)" \
                 "ffmpeg:video (frames, contact sheet)" \
                 "ffprobe:durata video" \
+                "security:chiave Gemini per watch (Keychain gemini/api-key)" \
                 "zbarimg:QR e barcode" \
                 "pdftoppm:PDF in immagini" \
                 "tesseract:OCR di riserva"; do
