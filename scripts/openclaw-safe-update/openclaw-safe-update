@@ -90,6 +90,10 @@ MCP_LAZY = os.environ.get("OSU_MCP_LAZY") or str(
 ANNOUNCE_FIX = os.environ.get("OSU_ANNOUNCE_FIX") or str(
     Path(__file__).resolve().parent.parent / "openclaw-announce-fix/openclaw-announce-fix.py")
 ANNOUNCE_DOCTOR = "openclaw-announce-fix"  # la riga di agents-doctor che la controlla
+# Terza patch su dist/: finali WhatsApp rifiutate dopo un hot reload (backport openclaw#160009).
+# Su 2026.10.2+ e' un no-op; serve se un rollback rimette la 9.x. Stessa regola di ANNOUNCE_FIX.
+DURABLE_VIEW = os.environ.get("OSU_DURABLE_VIEW") or str(
+    Path(__file__).resolve().parent.parent / "openclaw-durable-view/openclaw-durable-view.py")
 
 LABEL = "ai.openclaw.gateway"
 BRIEF_CRON = "c34dcc15-c2c1-4c5c-8ffa-51b9054827f1"  # brief-mattutino: il suo delivery e' Attilio
@@ -260,6 +264,11 @@ def mcp_lazy(cmd):
 
 def announce_fix(cmd):
     rc, out, err = run([ANNOUNCE_FIX, cmd], 120)
+    return rc, tail(out or err)
+
+
+def durable_view(cmd):
+    rc, out, err = run([DURABLE_VIEW, cmd], 120)
     return rc, tail(out or err)
 
 
@@ -468,7 +477,8 @@ def converge(core, idle_minutes):
         else:
             patch = "apply"
     announce = announce_fix("check")[0] != 0
-    if not (installs or patch or announce):
+    durable = durable_view("check")[0] != 0
+    if not (installs or patch or announce or durable):
         return [], notes, False
     busy = wait_idle(idle_minutes, down_ok=True)
     if busy:
@@ -490,6 +500,9 @@ def converge(core, idle_minutes):
     if announce:
         rc, msg = announce_fix("apply")
         notes.append(f"patch annunci non applicata: {msg}" if rc else "patch annunci applicata")
+    if durable:
+        rc, msg = durable_view("apply")
+        notes.append(f"patch finali WhatsApp non applicata: {msg}" if rc else "patch finali WhatsApp applicata")
     err = kickstart()
     if err:
         problems.append(err)
@@ -938,6 +951,9 @@ def maintain(cur, root, dry, idle):
     rc, msg = announce_fix("check")
     if rc:
         todo.append(f"patch annunci: {msg}")
+    rc, msg = durable_view("check")
+    if rc:
+        todo.append(f"patch finali WhatsApp: {msg}")
     if not todo:
         return 0
     log("da sistemare: " + "; ".join(todo))
