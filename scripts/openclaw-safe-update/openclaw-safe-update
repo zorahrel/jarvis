@@ -94,6 +94,10 @@ ANNOUNCE_DOCTOR = "openclaw-announce-fix"  # la riga di agents-doctor che la con
 # Su 2026.10.2+ e' un no-op; serve se un rollback rimette la 9.x. Stessa regola di ANNOUNCE_FIX.
 DURABLE_VIEW = os.environ.get("OSU_DURABLE_VIEW") or str(
     Path(__file__).resolve().parent.parent / "openclaw-durable-view/openclaw-durable-view.py")
+# Quarta patch su dist/: tetti dello stream-json dei sottoagenti (20000 righe / 8 MB chiudevano in
+# errore lavori gia' finiti). Stessa regola di ANNOUNCE_FIX.
+CLI_OUTPUT_LIMIT = os.environ.get("OSU_CLI_OUTPUT_LIMIT") or str(
+    Path(__file__).resolve().parent.parent / "openclaw-cli-output-limit/openclaw-cli-output-limit.py")
 
 LABEL = "ai.openclaw.gateway"
 BRIEF_CRON = "c34dcc15-c2c1-4c5c-8ffa-51b9054827f1"  # brief-mattutino: il suo delivery e' Attilio
@@ -269,6 +273,11 @@ def announce_fix(cmd):
 
 def durable_view(cmd):
     rc, out, err = run([DURABLE_VIEW, cmd], 120)
+    return rc, tail(out or err)
+
+
+def cli_output_limit(cmd):
+    rc, out, err = run([CLI_OUTPUT_LIMIT, cmd], 120)
     return rc, tail(out or err)
 
 
@@ -478,7 +487,8 @@ def converge(core, idle_minutes):
             patch = "apply"
     announce = announce_fix("check")[0] != 0
     durable = durable_view("check")[0] != 0
-    if not (installs or patch or announce or durable):
+    outlimit = cli_output_limit("check")[0] != 0
+    if not (installs or patch or announce or durable or outlimit):
         return [], notes, False
     busy = wait_idle(idle_minutes, down_ok=True)
     if busy:
@@ -503,6 +513,9 @@ def converge(core, idle_minutes):
     if durable:
         rc, msg = durable_view("apply")
         notes.append(f"patch finali WhatsApp non applicata: {msg}" if rc else "patch finali WhatsApp applicata")
+    if outlimit:
+        rc, msg = cli_output_limit("apply")
+        notes.append(f"patch tetti sottoagenti non applicata: {msg}" if rc else "patch tetti sottoagenti applicata")
     err = kickstart()
     if err:
         problems.append(err)
@@ -954,6 +967,9 @@ def maintain(cur, root, dry, idle):
     rc, msg = durable_view("check")
     if rc:
         todo.append(f"patch finali WhatsApp: {msg}")
+    rc, msg = cli_output_limit("check")
+    if rc:
+        todo.append(f"patch tetti sottoagenti: {msg}")
     if not todo:
         return 0
     log("da sistemare: " + "; ".join(todo))
