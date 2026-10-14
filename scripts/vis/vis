@@ -22,6 +22,12 @@
 #                                animazioni veloci) · [--modello M] · [--da S --a S]
 #                                ESCE DALLA MACCHINA: va a Google, e col piano gratuito
 #                                Google puo' usarlo per addestrare. Niente dati veri.
+#   vis giuria VIDEO --atteso "X" --scelte "A; B; X; ..." [--controllo VIDEO]
+#                                piu' modelli guardano il video alla cieca e scelgono
+#                                da un elenco rimescolato; il controllo smaschera chi
+#                                tira a indovinare. Esce 0 VERDE, 1 ROSSO, 3 INCERTO.
+#                                Per dire «si legge» di un'animazione: mai una lettura
+#                                sola. Esce dalla macchina come watch.
 #   vis qr FILE                  legge QR e codici a barre
 #   vis meta FILE                dimensioni, formato, EXIF
 #   vis crop FILE X Y W H        ritaglia (coordinate 0-1 o pixel)
@@ -320,6 +326,11 @@ PY
       [[ $rc -eq 0 && -s "$TMP/out.txt" ]] && cat "$TMP/out.txt" && printf '\n[codex · %s fotogrammi · 0 token Claude]\n' "$N" >&2
     fi
     exit $rc
+    ;;
+
+  giuria|jury|verdetto)
+    need ffmpeg ffmpeg; need magick imagemagick
+    exec python3 "$VIS_HOME/giuria.py" "$@"
     ;;
 
   qr|barcode)
