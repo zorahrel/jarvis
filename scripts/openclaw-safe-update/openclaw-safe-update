@@ -98,6 +98,10 @@ DURABLE_VIEW = os.environ.get("OSU_DURABLE_VIEW") or str(
 # errore lavori gia' finiti). Stessa regola di ANNOUNCE_FIX.
 CLI_OUTPUT_LIMIT = os.environ.get("OSU_CLI_OUTPUT_LIMIT") or str(
     Path(__file__).resolve().parent.parent / "openclaw-cli-output-limit/openclaw-cli-output-limit.py")
+# Quinta patch su dist/: un tag tra bot (Jarvis <-> Visione) non esige risposta, il NO_REPLY non e'
+# piu' un errore. Stessa regola di ANNOUNCE_FIX.
+BOT_MENTION = os.environ.get("OSU_BOT_MENTION") or str(
+    Path(__file__).resolve().parent.parent / "openclaw-bot-mention-silent/openclaw-bot-mention-silent.py")
 
 LABEL = "ai.openclaw.gateway"
 BRIEF_CRON = "c34dcc15-c2c1-4c5c-8ffa-51b9054827f1"  # brief-mattutino: il suo delivery e' Attilio
@@ -278,6 +282,11 @@ def durable_view(cmd):
 
 def cli_output_limit(cmd):
     rc, out, err = run([CLI_OUTPUT_LIMIT, cmd], 120)
+    return rc, tail(out or err)
+
+
+def bot_mention(cmd):
+    rc, out, err = run([BOT_MENTION, cmd], 120)
     return rc, tail(out or err)
 
 
@@ -488,7 +497,8 @@ def converge(core, idle_minutes):
     announce = announce_fix("check")[0] != 0
     durable = durable_view("check")[0] != 0
     outlimit = cli_output_limit("check")[0] != 0
-    if not (installs or patch or announce or durable or outlimit):
+    botmention = bot_mention("check")[0] != 0
+    if not (installs or patch or announce or durable or outlimit or botmention):
         return [], notes, False
     busy = wait_idle(idle_minutes, down_ok=True)
     if busy:
@@ -516,6 +526,9 @@ def converge(core, idle_minutes):
     if outlimit:
         rc, msg = cli_output_limit("apply")
         notes.append(f"patch tetti sottoagenti non applicata: {msg}" if rc else "patch tetti sottoagenti applicata")
+    if botmention:
+        rc, msg = bot_mention("apply")
+        notes.append(f"patch tag tra bot non applicata: {msg}" if rc else "patch tag tra bot applicata")
     err = kickstart()
     if err:
         problems.append(err)
@@ -970,6 +983,9 @@ def maintain(cur, root, dry, idle):
     rc, msg = cli_output_limit("check")
     if rc:
         todo.append(f"patch tetti sottoagenti: {msg}")
+    rc, msg = bot_mention("check")
+    if rc:
+        todo.append(f"patch tag tra bot: {msg}")
     if not todo:
         return 0
     log("da sistemare: " + "; ".join(todo))
