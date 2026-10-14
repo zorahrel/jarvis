@@ -102,6 +102,10 @@ CLI_OUTPUT_LIMIT = os.environ.get("OSU_CLI_OUTPUT_LIMIT") or str(
 # piu' un errore. Stessa regola di ANNOUNCE_FIX.
 BOT_MENTION = os.environ.get("OSU_BOT_MENTION") or str(
     Path(__file__).resolve().parent.parent / "openclaw-bot-mention-silent/openclaw-bot-mention-silent.py")
+# Dopo un giro che ha riavviato il gateway: OpenClaw non riprende i sottoagenti interrotti, li
+# chiede di rilanciare ai canali che li avevano lanciati (misurato 15/10: 7 su 7 fermi).
+OC_RESTART = os.environ.get("OSU_OC_RESTART") or str(
+    Path(__file__).resolve().parent.parent / "oc-restart/oc-restart")
 
 LABEL = "ai.openclaw.gateway"
 BRIEF_CRON = "c34dcc15-c2c1-4c5c-8ffa-51b9054827f1"  # brief-mattutino: il suo delivery e' Attilio
@@ -1019,6 +1023,8 @@ def main():
     except OSError:
         log("un altro giro e' in corso: esco")
         return 3
+    global PID_BEFORE
+    PID_BEFORE = gateway_pid()  # per resume_interrupted: il giro ha riavviato il gateway?
 
     gw = gateway_pid()
     if (gw and gw in ancestors()) or os.environ.get("OPENCLAW_GATEWAY_SERVICE_PID"):
@@ -1159,5 +1165,20 @@ def main():
     return finish_rollback(state, rec, why)
 
 
+PID_BEFORE = None
+
+
+def resume_interrupted(started):
+    """Se il gateway e' stato riavviato durante il giro, fa riprendere i sottoagenti persi."""
+    if "--dry-run" in sys.argv or PID_BEFORE is None or gateway_pid() in (None, PID_BEFORE):
+        return
+    mins = (time.time() - started) / 60 + 5
+    rc, out, err = run([OC_RESTART, "--resume-since", f"{mins:.0f}"], 120)
+    log(f"ripresa sottoagenti: {tail(out or err)}" if rc == 0 else f"ripresa sottoagenti fallita: {tail(err or out)}")
+
+
 if __name__ == "__main__":
-    sys.exit(main())
+    _started = time.time()
+    _rc = main()
+    resume_interrupted(_started)
+    sys.exit(_rc)

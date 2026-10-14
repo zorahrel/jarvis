@@ -1,0 +1,138 @@
+#!/usr/bin/env python3
+"""Riavvio veloce del gateway OpenClaw senza perdere lavoro.
+
+OpenClaw non riprende i sottoagenti che un riavvio interrompe: li segna interrupted e poi
+subagent-error, e nessuno li rilancia (misurato 15/10: 7 su 7 fermi). Aspettare che finiscano non
+serve, durano 30-80 minuti (--safe ha atteso 10 minuti e li ha interrotti lo stesso). Quindi:
+
+  oc-restart                 fotografa i sottoagenti vivi, riavvia subito (restart --force), aspetta
+                             gateway e WhatsApp, poi chiede a ogni canale di rilanciare i suoi
+  oc-restart --resume-since N  solo la ripresa: sottoagenti finiti male negli ultimi N minuti
+  oc-restart --dry-run       dice cosa farebbe, non riavvia e non scrive a nessuno
+
+La ripresa e' un messaggio interno alla sessione del canale che li aveva lanciati (senza --deliver):
+e' quell'agente a ricontrollare git/worktree e a rilanciarli, con il contesto che ha gia'."""
+import json, os, re, sqlite3, subprocess, sys, time
+from pathlib import Path
+
+DB = Path.home() / ".openclaw/state/openclaw.sqlite"
+LOGDIR = Path("/tmp/openclaw")
+STATE = Path.home() / ".claude/jarvis/state"
+LABEL = "ai.openclaw.gateway"
+UP_S = 240                    # tempo concesso a gateway e WhatsApp per tornare su
+BAD_END = ("subagent-error", "subagent-killed")
+
+
+def rows(sql, args=()):
+    con = sqlite3.connect(f"file:{DB}?mode=ro", uri=True, timeout=10)
+    try:
+        return [json.loads(r[0]) | {"_run": r[1], "_req": r[2]} for r in con.execute(sql, args)]
+    finally:
+        con.close()
+
+
+def running():
+    return rows("select payload_json, run_id, requester_session_key from subagent_runs "
+                "where json_extract(payload_json,'$.execution.status') not in ('terminal')")
+
+
+def lost_since(ms):
+    """Finiti male (errore/ucciso) o mai consegnati, partiti o chiusi dopo ms."""
+    out = []
+    for p in rows("select payload_json, run_id, requester_session_key from subagent_runs "
+                  "where coalesce(json_extract(payload_json,'$.execution.endedAt'), created_at) >= ?", (ms,)):
+        ex, dl = p.get("execution") or {}, p.get("delivery") or {}
+        if p.get("parentCompletion") or not p.get("label"):
+            continue  # righe di servizio senza compito proprio
+        bad = p.get("endedReason") in BAD_END or ex.get("status") == "interrupted"
+        undelivered = ex.get("status") == "terminal" and dl.get("status") not in ("delivered", None)
+        if bad or undelivered:
+            out.append(p)
+    return out
+
+
+def gateway_pid():
+    out = subprocess.run(["launchctl", "print", f"gui/{os.getuid()}/{LABEL}"], capture_output=True, text=True).stdout
+    m = re.search(r"^\s*pid = (\d+)", out, re.M)
+    return m and m.group(1)
+
+
+def whatsapp_listening_after(ts):
+    """True se un log di oggi dice «Listening for WhatsApp» dopo ts (epoch)."""
+    stamp = time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime(ts))
+    for f in sorted(LOGDIR.glob(f"openclaw-{time.strftime('%Y-%m-%d')}*.log")):
+        with open(f, errors="replace") as fh:
+            for line in fh:
+                if "Listening for WhatsApp" in line:
+                    m = re.search(r'"time":"([^".+]+)', line)
+                    if m and m.group(1) >= stamp:
+                        return True
+    return False
+
+
+def restart():
+    old, t0 = gateway_pid(), time.time()
+    r = subprocess.run(["openclaw", "gateway", "restart", "--force", "--json"], capture_output=True, text=True, timeout=180)
+    if r.returncode:
+        sys.exit(f"restart --force: exit {r.returncode} {(r.stderr or r.stdout)[-300:]}")
+    end, pid = t0 + UP_S, None
+    while time.time() < end:
+        time.sleep(3)
+        pid = gateway_pid()
+        if pid and pid != old and whatsapp_listening_after(t0):
+            print(f"gateway su (pid {old} -> {pid}) e WhatsApp in ascolto in {time.time() - t0:.0f} s")
+            return t0
+    sys.exit(f"dopo {UP_S} s: pid {pid} (era {old}), WhatsApp in ascolto: {whatsapp_listening_after(t0)}")
+
+
+def resume(lost, when, dry):
+    by_req = {}
+    for p in lost:
+        by_req.setdefault(p["_req"], []).append(p)
+    procs = []
+    for req, items in by_req.items():
+        lines = [f"- «{p['label']}» (run {p['_run'][:8]}, partito alle "
+                 f"{time.strftime('%H:%M', time.localtime(p.get('createdAt', 0) / 1000))}, "
+                 f"{p.get('endedReason') or (p.get('execution') or {}).get('status')}, "
+                 f"consegna {(p.get('delivery') or {}).get('status')})" for p in items]
+        msg = (f"Nota di servizio (riavvio del gateway delle {when}): questi tuoi sottoagenti sono stati "
+               "interrotti prima di finire, o il loro resoconto non e' arrivato.\n" + "\n".join(lines) +
+               "\n\nPer ciascuno: controlla cosa c'e' gia' (git, worktree, file), poi rilancialo con lo stesso "
+               "compito dicendogli di riprendere da li', non da zero. Se risulta gia' finito, riporta l'esito "
+               "nel canale come faresti normalmente. Non serve rispondere a questa nota.")
+        print(f"{req}: {len(items)} da riprendere")
+        if dry:
+            continue
+        procs.append(subprocess.Popen(["openclaw", "agent", "--session-key", req, "--message", msg,
+                                       "--timeout", "1800", "--json"],
+                                      stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True))
+    return procs
+
+
+def main():
+    a = sys.argv[1:]
+    dry = "--dry-run" in a
+    if "--resume-since" in a:
+        mins = float(a[a.index("--resume-since") + 1])
+        lost = lost_since((time.time() - mins * 60) * 1000)
+        print(f"{len(lost)} sottoagenti da riprendere degli ultimi {mins:g} min")
+        resume(lost, time.strftime("%H:%M"), dry)
+        return 0
+    alive = running()
+    print(f"{len(alive)} sottoagenti vivi: " + ", ".join(p.get("label", "?") for p in alive))
+    if dry:
+        return 0
+    STATE.mkdir(parents=True, exist_ok=True)
+    snap = STATE / f"oc-restart-{time.strftime('%Y%m%d-%H%M%S')}.json"
+    snap.write_text(json.dumps([{"run": p["_run"], "req": p["_req"], "label": p.get("label")} for p in alive], ensure_ascii=False))
+    t0 = restart()
+    time.sleep(20)  # l'avvio marca gli orfani come interrupted/subagent-error
+    ids = {p["_run"] for p in alive}
+    lost = [p for p in lost_since((t0 - 60) * 1000) if p["_run"] in ids]
+    print(f"{len(lost)} su {len(alive)} interrotti dal riavvio")
+    resume(lost, time.strftime("%H:%M", time.localtime(t0)), False)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -226,7 +226,7 @@ for n in openclaw npm launchctl agents-doctor trash lsof mcp-lazy announce-fix; 
 setup() {
   export HOME="$T/home-$RANDOM" FAKE_STATE="$T/state.json" FAKE_CALLS="$T/calls.log" FAKE_MSGS="$T/msgs.log"
   export FAKE_ROOT="$T/root" PATH="$T/bin:/usr/bin:/bin:/usr/sbin:/sbin" OSU_MCP_LAZY="$T/bin/mcp-lazy"
-  export OSU_ANNOUNCE_FIX="$T/bin/announce-fix" OSU_DURABLE_VIEW=/usr/bin/true OSU_CLI_OUTPUT_LIMIT=/usr/bin/true OSU_BOT_MENTION=/usr/bin/true  # patch finali, tetti, tag tra bot: no-op nel banco
+  export OSU_ANNOUNCE_FIX="$T/bin/announce-fix" OSU_DURABLE_VIEW=/usr/bin/true OSU_CLI_OUTPUT_LIMIT=/usr/bin/true OSU_BOT_MENTION=/usr/bin/true OSU_OC_RESTART=/usr/bin/true  # patch finali, tetti, tag tra bot: no-op nel banco
   export OSU_POLL_S=0.1 OSU_SETTLE_S=1 OSU_KICK_S=1 OSU_POST_IDLE_MIN=0.01 OSU_ROLLBACK_IDLE_MIN=0.01 OSU_MIN_FREE_GB=0
   unset OPENCLAW_GATEWAY_SERVICE_PID OPENCLAW_CONFIG_PATH
   mkdir -p "$HOME/.claude/jarvis/state" "$HOME/.openclaw" "$FAKE_ROOT/dist"
