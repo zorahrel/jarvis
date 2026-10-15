@@ -603,6 +603,11 @@ def heartbeat(before=None):
         return f"cron {HEARTBEAT} non trovato"
     t0 = time.time() * 1000 - 2000
     rc, out, err = oc(["cron", "run", job["id"], "--wait", "--wait-timeout", "8m"], 540)
+    if (parse_json(out) or {}).get("reason") == "already-running":
+        # 15/10: battito appeso da prima (Muse a quota zero, bug #144400): non dice niente sulla
+        # versione nuova. Bocciarla qui ha mandato in rollback una 10.3 sana.
+        log("heartbeat: gia' in corso da prima del riavvio (#144400): non conta, giro vero non verificato")
+        return None
     e = ((oc_json(["cron", "runs", job["id"], "--limit", "1", "--sort", "desc", "--json"], 90) or {})
          .get("entries") or [{}])[0]
     if float(e.get("ts") or 0) < t0:

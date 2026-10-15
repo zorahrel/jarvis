@@ -203,6 +203,8 @@ if args[:2] == ["cron", "list"]:
     job = {"id": "hb-1", "name": "heartbeat-main"}
     if st.get("hb_skip"): job["state"] = {"lastRunStatus": HB_SKIP["status"], "lastError": HB_SKIP["error"]}
     out({"jobs": [job]}); sys.exit(0)
+if args[:2] == ["cron", "run"] and st.get("hb_stuck"):
+    out({"ok": True, "ran": False, "reason": "already-running"}); sys.exit(0)
 if args[:2] == ["cron", "run"] and st.get("hb_skip"):
     st["hb"] = dict(HB_SKIP, ts=time.time() * 1000); save(); sys.exit(0)
 if args[:2] == ["cron", "run"]:
@@ -594,6 +596,12 @@ setup '{"hb_skip":true}'; arm
 check "exit 0" "$(go)" 0
 hasnt "nessun rollback" "tag 2026.9.5" "$T/calls.log"
 has "lo dice" "come prima dell'update" "$T/out.log"
+
+echo "== 31. heartbeat appeso da prima (already-running, 15/10): niente rollback"
+setup '{"hb_stuck":true}'; arm
+check "exit 0" "$(go)" 0
+hasnt "nessun rollback" "tag 2026.9.5" "$T/calls.log"
+has "lo dice" "gia' in corso da prima del riavvio" "$T/out.log"
 
 echo
 echo "$PASS ok, $FAIL FAIL"
