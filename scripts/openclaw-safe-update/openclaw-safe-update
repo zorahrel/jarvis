@@ -102,6 +102,9 @@ CLI_OUTPUT_LIMIT = os.environ.get("OSU_CLI_OUTPUT_LIMIT") or str(
 # piu' un errore. Stessa regola di ANNOUNCE_FIX.
 BOT_MENTION = os.environ.get("OSU_BOT_MENTION") or str(
     Path(__file__).resolve().parent.parent / "openclaw-bot-mention-silent/openclaw-bot-mention-silent.py")
+# Sesta patch su dist/: il NO_REPLY nei turni interni di consegna (runId announce:) non e' un errore.
+ANNOUNCE_SILENT = os.environ.get("OSU_ANNOUNCE_SILENT") or str(
+    Path(__file__).resolve().parent.parent / "openclaw-announce-silent/openclaw-announce-silent.py")
 # Dopo un giro che ha riavviato il gateway: OpenClaw non riprende i sottoagenti interrotti, li
 # chiede di rilanciare ai canali che li avevano lanciati (misurato 15/10: 7 su 7 fermi).
 OC_RESTART = os.environ.get("OSU_OC_RESTART") or str(
@@ -291,6 +294,11 @@ def cli_output_limit(cmd):
 
 def bot_mention(cmd):
     rc, out, err = run([BOT_MENTION, cmd], 120)
+    return rc, tail(out or err)
+
+
+def announce_silent(cmd):
+    rc, out, err = run([ANNOUNCE_SILENT, cmd], 120)
     return rc, tail(out or err)
 
 
@@ -502,7 +510,8 @@ def converge(core, idle_minutes):
     durable = durable_view("check")[0] != 0
     outlimit = cli_output_limit("check")[0] != 0
     botmention = bot_mention("check")[0] != 0
-    if not (installs or patch or announce or durable or outlimit or botmention):
+    annsilent = announce_silent("check")[0] != 0
+    if not (installs or patch or announce or durable or outlimit or botmention or annsilent):
         return [], notes, False
     busy = wait_idle(idle_minutes, down_ok=True)
     if busy:
@@ -533,6 +542,9 @@ def converge(core, idle_minutes):
     if botmention:
         rc, msg = bot_mention("apply")
         notes.append(f"patch tag tra bot non applicata: {msg}" if rc else "patch tag tra bot applicata")
+    if annsilent:
+        rc, msg = announce_silent("apply")
+        notes.append(f"patch silenzio consegne non applicata: {msg}" if rc else "patch silenzio consegne applicata")
     err = kickstart()
     if err:
         problems.append(err)
@@ -990,6 +1002,9 @@ def maintain(cur, root, dry, idle):
     rc, msg = bot_mention("check")
     if rc:
         todo.append(f"patch tag tra bot: {msg}")
+    rc, msg = announce_silent("check")
+    if rc:
+        todo.append(f"patch silenzio consegne: {msg}")
     if not todo:
         return 0
     log("da sistemare: " + "; ".join(todo))
