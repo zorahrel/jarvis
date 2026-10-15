@@ -35,7 +35,8 @@ MARK = "jarvis-patch openclaw-mcp-lazy"
 
 LOOP_ORIG = "\t\turl: `http://127.0.0.1:${port}/mcp`,\n\t\talwaysLoad: true,\n"
 LOOP_NEW = f"\t\turl: `http://127.0.0.1:${{port}}/mcp`,\n\t\t// {MARK}: alwaysLoad per tool in mcp-http.schema\n"
-SCHEMA_FN = "/** Builds MCP-compatible tool schemas for loopback-visible gateway tools. */\nfunction buildMcpToolSchema(tools) {"
+# Aggancio sulla sola firma: la 2026.10.2 ha tolto il commento JSDoc che le stava sopra.
+SCHEMA_FN = "function buildMcpToolSchema(tools) {"
 SCHEMA_CONST = (f"// {MARK}: questi tool restano caricati anche col server differito\n"
                 f"const MCP_LOOPBACK_ALWAYS_LOAD_TOOLS = new Set({KEEP!r});\n".replace("'", '"'))
 RET_ORIG = "\t\t\tinputSchema: raw\n\t\t};"
@@ -131,7 +132,7 @@ def main():
                 sys.exit(f"ERRORE: in {os.path.basename(loop)} non trovo il blocco alwaysLoad atteso")
             open(loop, "w").write(lt.replace(LOOP_ORIG, LOOP_NEW, 1))
         if not sok:
-            if SCHEMA_FN not in st or RET_ORIG not in st:
+            if st.count(SCHEMA_FN) != 1 or st.count(RET_ORIG) != 1:
                 sys.exit(f"ERRORE: in {os.path.basename(schema)} non trovo buildMcpToolSchema nella forma attesa")
             st = st.replace(SCHEMA_FN, SCHEMA_CONST + SCHEMA_FN, 1).replace(RET_ORIG, RET_NEW, 1)
             open(schema, "w").write(st)
