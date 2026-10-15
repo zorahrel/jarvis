@@ -118,6 +118,11 @@ def resume(lost, when, dry):
 
 def main():
     a = sys.argv[1:]
+    # un'opzione sconosciuta (--help, -h, refusi) non deve riavviare: il 15/10 «--help» ha riavviato davvero
+    unknown = [x for x in a if x.startswith("-") and x not in ("--dry-run", "--resume-since")]
+    if unknown:
+        print(__doc__)
+        sys.exit(0 if set(unknown) <= {"-h", "--help"} else 2)
     dry = "--dry-run" in a
     if "--resume-since" in a:
         mins = float(a[a.index("--resume-since") + 1])
