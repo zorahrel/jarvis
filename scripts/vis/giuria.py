@@ -10,8 +10,11 @@ risposta gia' in bocca, e tenere la frase piu' bella.
 Qui:
   - il lettore non sa cosa dovrebbe essere: descrive, poi sceglie UNA voce da
     un elenco rimescolato a ogni lettura (la posizione non conta);
-  - ogni lettura la fa un modello diverso, e quando si puo' di due famiglie
-    (Gemini guarda il video, codex i fotogrammi con l'ora stampata);
+  - ogni lettura la fa un modello diverso, e quando si puo' di piu' famiglie
+    (Gemini guarda il video; tutti gli altri i fotogrammi con l'ora stampata:
+    codex, modelli vision gratuiti OpenAI-compatibili `oai:<canale>/<modello>`
+    su NIM / OpenRouter / Kilo, Muse `muse:`, e come ultima riserva Claude
+    `claude:`, che non e' nell'elenco di default perche' consuma quota);
   - il controllo (--controllo, un video che NON e' il gesto) lo leggono gli
     stessi lettori con lo stesso elenco: se lo chiamano come l'atteso, la
     giuria tira a indovinare e il verdetto non vale;
@@ -40,17 +43,47 @@ NONE_LABEL = "nessuno di questi, non si capisce"
 # Ogni modello Gemini gratuito ha la sua quota del giorno (20 richieste i
 # Flash, 500 i Flash-Lite): chi risponde 429 si salta fino al giorno dopo.
 READERS = [
-    "gemini-3.8-flash", "codex:gpt-6-luna", "gemini-3.1-pro-preview", "gemini-3.7-flash",
+    "gemini-3.8-flash", "codex:gpt-6-luna",
+    # senza Gemini bastano questi per 4 famiglie: openai, nvidia, meta, google (Gemma)
+    "oai:nim/nvidia/nemotron-3.5-super-vl-120b-a12b", "oai:nim/meta/llama-3.2-90b-vision-instruct",
+    "oai:nim/google/gemma-4-31b-it",
+    "oai:or/nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free", "oai:or/google/gemma-4-31b-it:free",
+    "gemini-3.1-pro-preview", "gemini-3.7-flash",
     "gemini-robotics-er-2-preview", "gemini-3.6-flash", "gemini-3.5-flash", "gemini-3-flash-preview",
     "gemini-omni-1.1-flash", "gemma-4-31b-it", "gemini-3.5-flash-lite", "gemini-3.1-flash-lite",
     "gemini-2.5-flash-lite",
 ]
+# muse: e' agentico e a volte risponde con un commento invece del JSON (15/10): esiste ma non e' nel default
+# Riserva: solo se nominati con --lettori, consumano la quota Claude (vedi --help)
+RESERVE = ["claude:claude-haiku-5-5", "claude:claude-sonnet-5-5"]
 # chi non legge il video intero: gli si danno i fotogrammi
 FRAMES_ONLY = {"gemma-4-31b-it", "gemma-4-26b-a4b-it"}
+# chi accetta UN'immagine sola (o la legge meglio cosi'): i fotogrammi vanno in un foglio unico
+SHEET = ("oai:nim/meta/llama-3.2", "oai:or/nvidia/nemotron-3-nano-omni", "muse:", "claude:")
+# canali OpenAI-compatibili: (base, dove sta la chiave). Mai in chiaro.
+CHANNELS = {"nim": "https://integrate.api.nvidia.com/v1", "or": "https://openrouter.ai/api/v1",
+            "kilo": "https://api.kilo.ai/api/gateway", "router": "http://127.0.0.1:18791/v1"}
+VENDOR_FAMILY = {"nvidia": "nvidia", "meta": "meta", "meta-llama": "meta", "google": "google", "qwen": "alibaba",
+                 "mistralai": "mistral", "z-ai": "zai", "zai-org": "zai", "thinkingmachines": "thinkingmachines"}
 
 
 def family(reader):
-    return "openai" if reader.startswith("codex:") else "google"
+    """due modelli della stessa famiglia non sono due voti indipendenti"""
+    if reader.startswith("codex:"):
+        return "openai"
+    if reader.startswith("muse:"):
+        return "meta"  # Muse Spark e' di Meta, come Llama
+    if reader.startswith("claude:"):
+        return "anthropic"
+    if reader.startswith("oai:"):
+        vendor = reader.split("/", 1)[1].split("/", 1)[0] if "/" in reader else ""
+        return VENDOR_FAMILY.get(vendor, vendor or "oai")
+    return "google"
+
+
+def external(reader):
+    """true se il lettore non passa dalla chiave Gemini"""
+    return reader.startswith(("codex:", "oai:", "muse:", "claude:"))
 
 
 def die(msg, code=64):
@@ -202,9 +235,106 @@ def gemini(model, key, parts, use_schema=True):
     raise Skip("occupato")
 
 
+def channel_key(ch):
+    """chiave del canale: Keychain, altrimenti il file env di jcode per NIM. Mai stampata."""
+    if ch == "or":
+        return subprocess.run(["security", "find-generic-password", "-s", "openrouter", "-w"],
+                              capture_output=True, text=True).stdout.strip()
+    if ch == "nim":
+        k = subprocess.run(["security", "find-generic-password", "-s", "nvidia-nim", "-w"],
+                           capture_output=True, text=True).stdout.strip()
+        if k:
+            return k
+        env = Path.home() / "Library/Application Support/jcode/openai-compatible.env"
+        try:
+            for l in env.read_text().splitlines():
+                if l.startswith("OPENAI_COMPAT_API_KEY="):
+                    return l.split("=", 1)[1].strip().strip('"')
+        except OSError:
+            pass
+    return ""
+
+
+def oai(reader, images, q):
+    """un modello vision dietro un endpoint OpenAI-compatibile: oai:<canale>/<modello>"""
+    ch, _, model = reader[4:].partition("/")
+    if ch not in CHANNELS or not model:
+        raise Skip(f"canale sconosciuto: {ch!r}")
+    key = channel_key(ch)
+    if not key and ch in ("or", "nim"):
+        raise Skip(f"nessuna chiave per {ch}")
+    content = [{"type": "text", "text": q}] + [
+        {"type": "image_url", "image_url": {"url": "data:image/" + ("jpeg" if str(f).endswith(".jpg") else "png") + ";base64," + base64.b64encode(Path(f).read_bytes()).decode()}}
+        for f in images]
+    # i modelli che ragionano consumano token prima di rispondere: tetto largo
+    body = json.dumps({"model": model, "max_tokens": 6000, "temperature": 0.7,
+                       "messages": [{"role": "user", "content": content}]}).encode()
+    hdr = {"Content-Type": "application/json"} | ({"Authorization": f"Bearer {key}"} if key else {})
+    rq = urllib.request.Request(CHANNELS[ch] + "/chat/completions", body, hdr)
+    try:
+        with urllib.request.urlopen(rq, timeout=240) as r:
+            d = json.loads(r.read())
+    except urllib.error.HTTPError as e:
+        raise Skip(f"HTTP {e.code}: {e.read().decode(errors='replace')[:120]}")
+    except (urllib.error.URLError, TimeoutError, ValueError) as e:
+        raise Skip(f"{type(e).__name__}: {str(e)[:120]}")
+    try:
+        m = d["choices"][0]["message"]
+        # a volte il modello che ragiona lascia la risposta solo nel ragionamento
+        return m.get("content") or m.get("reasoning_content") or m.get("reasoning") or ""
+    except (KeyError, IndexError, TypeError):
+        raise Skip(f"risposta senza testo: {str(d)[:120]}")
+
+
+FONT = "/System/Library/Fonts/Supplemental/Arial.ttf"
+
+
+def small(fr, tmp, width=640):
+    """fotogrammi piu' leggeri per le API: i video sono spesso 1920 px e 20 PNG superano i 25 MB di NIM"""
+    out = []
+    for t, f in fr:
+        g = Path(tmp) / (f.stem + ".jpg")
+        p = subprocess.run(["magick", str(f), "-resize", f"{width}x", "-quality", "85", str(g)],
+                           capture_output=True, stdin=subprocess.DEVNULL)
+        out.append(g if p.returncode == 0 and g.exists() else f)
+    return out
+
+
+def sheet(fr, tmp):
+    """tutti i fotogrammi in un foglio unico (per chi accetta una sola immagine)"""
+    out = Path(tmp) / "foglio.jpg"
+    cols = 4 if len(fr) > 9 else 3
+    p = subprocess.run(["magick", "montage"] + [str(f) for _, f in fr] + ["-font", FONT, "-tile", f"{cols}x", "-geometry", "448x+3+3",
+                        "-background", "black", "-quality", "85", str(out)], capture_output=True, stdin=subprocess.DEVNULL)
+    if p.returncode != 0 or not out.exists():
+        raise Skip("montage fallito")
+    return out
+
+
+def agent_cli(reader, fr, tmp, q):
+    """muse: (Muse Spark 1.3 via OpenCode Zen) e claude: leggono il foglio dei fotogrammi da una cartella vuota"""
+    sh = sheet(fr, tmp)
+    q = (q.replace("Look only at these images, do not search for files.", "")
+         + f"\nThe frames are tiled in time order in ONE image file, {sh.resolve()}: "
+           "read that file, and nothing else. Your final message must be the JSON object and nothing else: no comments before or after it.")
+    if reader.startswith("muse:"):
+        exe = shutil.which("opencode") or "/opt/homebrew/bin/opencode"
+        # l'abbonamento Muse e' a quota: si usa il canale gratuito di Zen, quello della riserva di museagent
+        args = [exe, "run", "-m", "opencode/" + reader[5:] + "-contributor-free", q]
+    else:
+        exe = shutil.which("claude")
+        if not exe:
+            raise Skip("claude non installato")
+        args = [exe, "-p", "--model", reader[7:], "--allowedTools", "Read", "--add-dir", str(tmp), q]
+    p = subprocess.run(args, cwd=tmp, stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=600)
+    if p.returncode != 0 or not p.stdout.strip():
+        raise Skip(f"{reader.split(':')[0]} esce {p.returncode}: {(p.stderr or p.stdout or '')[-160:]}")
+    return p.stdout
+
+
 def read_once(reader, video, options, context, fps, n_frames, key):
     """una lettura: (risposta grezza in dict). Solleva Skip se il lettore non c'e'."""
-    as_frames = reader.startswith("codex:") or reader in FRAMES_ONLY
+    as_frames = external(reader) or reader in FRAMES_ONLY
     with tempfile.TemporaryDirectory(prefix="giuria-") as tmp:
         if as_frames:
             fr = frames(video, n_frames, tmp)
@@ -224,6 +354,11 @@ def read_once(reader, video, options, context, fps, n_frames, key):
                 if p.returncode != 0 or not out.exists():
                     raise Skip(f"codex esce {p.returncode}: {(p.stderr or '')[-160:]}")
                 return parse(out.read_text())
+            if reader.startswith("oai:"):
+                imgs = [sheet(fr, tmp)] if reader.startswith(SHEET) else small(fr, tmp)
+                return parse(oai(reader, imgs, q))
+            if reader.startswith(("muse:", "claude:")):
+                return parse(agent_cli(reader, fr, tmp, q))
             parts = []
             for t, f in fr:
                 parts += [{"text": f"t={t}s"}, {"inline_data": {"mime_type": "image/png", "data": base64.b64encode(f.read_bytes()).decode()}}]
@@ -272,7 +407,7 @@ def jury(video, options, context, fps, n_frames, key, n, readers, cache, pairs=N
     lock = threading.Lock()
     queue = [r for r in readers if r not in exhausted()]
     if not key:
-        queue = [r for r in queue if r.startswith("codex:")]
+        queue = [r for r in queue if external(r)]
 
     def take():
         with lock:
@@ -304,7 +439,8 @@ def jury(video, options, context, fps, n_frames, key, n, readers, cache, pairs=N
 
 
 def main():
-    ap = argparse.ArgumentParser(prog="vis giuria", description=__doc__.split("\n\n")[0])
+    ap = argparse.ArgumentParser(prog="vis giuria", description=__doc__.split("\n\n")[0],
+                                 epilog="VIS_GIURIA_SENZA_GEMINI=1: come --senza-gemini. Exit: 0 VERDE, 1 ROSSO, 3 INCERTO, 64 uso.")
     ap.add_argument("video")
     ap.add_argument("--atteso", required=True, help="la voce giusta («a; b» se ne vanno bene piu' d'una)")
     ap.add_argument("--scelte", required=True, help="l'elenco, separato da ; oppure @file (una voce per riga)")
@@ -317,7 +453,13 @@ def main():
     ap.add_argument("--min", type=int, default=3, help="letture valide minime per un verdetto")
     ap.add_argument("--fps", type=float, default=10, help="fotogrammi al secondo letti da Gemini")
     ap.add_argument("--fotogrammi", type=int, default=20, help="quanti ne vede chi legge i fotogrammi (max 24)")
-    ap.add_argument("--lettori", default="", help="lettori in ordine, separati da virgola (codex:MODELLO per codex)")
+    ap.add_argument("--lettori", default="", help="lettori in ordine, separati da virgola. Prefissi: "
+                    "codex:MODELLO · oai:CANALE/MODELLO (canali nim, or, kilo, router: modelli vision gratuiti, es. "
+                    "oai:nim/nvidia/nemotron-3.5-super-vl-120b-a12b) · muse:muse-spark-1.3 (Zen gratuito) · "
+                    "claude:claude-haiku-5-5 (RISERVA: consuma la quota Claude, mai nel default). Senza prefisso = Gemini. "
+                    "Una famiglia = un voto: Llama e Muse sono Meta, Gemma e Gemini Google")
+    ap.add_argument("--senza-gemini", action="store_true",
+                    help="toglie i lettori Gemini/Gemma-via-Google dall'elenco (anche con VIS_GIURIA_SENZA_GEMINI=1)")
     ap.add_argument("--json", default="", help="scrive tutte le letture in questo file")
     ap.add_argument("--senza-cache", action="store_true")
     ap.add_argument("--statico", action="store_true", help="il video puo' restare fermo (una posa, non un gesto)")
@@ -352,6 +494,8 @@ def main():
     key = os.environ.get("GEMINI_API_KEY") or subprocess.run(
         ["security", "find-generic-password", "-s", "gemini", "-a", "api-key", "-w"], capture_output=True, text=True).stdout.strip()
     readers = [r.strip() for r in a.lettori.split(",") if r.strip()] or READERS
+    if a.senza_gemini or os.environ.get("VIS_GIURIA_SENZA_GEMINI", "").lower() not in ("", "0", "no", "false"):
+        readers = [r for r in readers if external(r)]
     ctx = a.contesto.strip()
     nf = max(4, min(24, a.fotogrammi))
     log = lambda s: print(s, file=sys.stderr)
