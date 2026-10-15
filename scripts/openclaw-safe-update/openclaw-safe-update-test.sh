@@ -419,6 +419,12 @@ has "lo dice" "interrompo l'update prima dell'attivazione" "$T/out.log"
 check "stato: interrotto" "$(last result)" interrupted
 check "nessuna notifica" "$(wc -l < "$T/msgs.log" | tr -d ' ')" 0
 
+echo "== 15b. --no-interrupt: OpenClaw lavora durante la validazione, l'update va avanti"
+setup '{"busy_during_validation":true,"validate_s":5}'; arm
+check "exit 0" "$(go --no-interrupt)" 0
+check "passa a 9.7" "$(sget version)" 2026.9.7
+hasnt "non interrompe" "interrompo l'update prima dell'attivazione" "$T/out.log"
+
 echo "== 16. versione nuova rotta e OpenClaw mai fermo: rollback in sospeso senza riavvii, poi fatto a OpenClaw fermo"
 setup '{"bad_version":"2026.9.7","busy_after_update":true}'; arm
 check "exit 2" "$(go)" 2

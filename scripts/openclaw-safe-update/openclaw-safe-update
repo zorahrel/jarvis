@@ -757,6 +757,9 @@ def after_interrupt(children, started):
         clean_update_stages(root, started - 5)
 
 
+NO_INTERRUPT = False
+
+
 def run_update(target, down_ok=False):
     """`openclaw update` verso target. Ritorna (exit, record del run, stderr, interrotto).
     interrotto = perche' OpenClaw si e' svegliato durante la validazione e l'update e' stato fermato
@@ -776,7 +779,7 @@ def run_update(target, down_ok=False):
             time.sleep(WATCH_S)
             if busy or p.poll() is not None:
                 continue
-            why = busy_reasons(down_ok)
+            why = [] if NO_INTERRUPT else busy_reasons(down_ok)
             if why and update_phase() in PRE_ACTIVATION:
                 busy = why
                 log("OpenClaw si e' messo a lavorare durante la validazione (" + ", ".join(why)
@@ -1058,7 +1061,12 @@ def main():
     ap.add_argument("--dry-run", action="store_true", help="passi 1-3 senza toccare niente, poi il piano")
     ap.add_argument("--force-version", help="giro supervisionato verso questa versione (arma il notturno)")
     ap.add_argument("--idle-wait", type=float, default=45, help="minuti di attesa di OpenClaw fermo")
+    ap.add_argument("--no-interrupt", action="store_true",
+                    help="non fermare l'update se OpenClaw lavora: il drain nativo aspetta i turni in corso, "
+                         "i messaggi arrivati a gateway giu' li ripescano openclaw-wa-catchup e oc-restart")
     a = ap.parse_args()
+    global NO_INTERRUPT
+    NO_INTERRUPT = a.no_interrupt
 
     LOCK.parent.mkdir(parents=True, exist_ok=True)
     lock = open(LOCK, "w")
@@ -1129,7 +1137,7 @@ def main():
 
     why_dry = " [dry-run]" if a.dry_run else " [non armato: il primo giro vero e' quello supervisionato]" if dry else ""
     log(f"OpenClaw {cur} -> {target}{why_dry}")
-    busy = busy_reasons() if dry else wait_idle(a.idle_wait)
+    busy = busy_reasons() if dry else [] if NO_INTERRUPT else wait_idle(a.idle_wait)
     if busy:
         log("OpenClaw non e' fermo: " + ", ".join(busy) + ("" if dry else "; riprovo la notte prossima"))
         if not dry:

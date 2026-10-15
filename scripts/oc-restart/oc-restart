@@ -12,7 +12,7 @@ serve, durano 30-80 minuti (--safe ha atteso 10 minuti e li ha interrotti lo ste
 
 La ripresa e' un messaggio interno alla sessione del canale che li aveva lanciati (senza --deliver):
 e' quell'agente a ricontrollare git/worktree e a rilanciarli, con il contesto che ha gia'."""
-import json, os, re, sqlite3, subprocess, sys, time
+import json, os, re, sqlite3, subprocess, sys, time, urllib.request
 from pathlib import Path
 
 DB = Path.home() / ".openclaw/state/openclaw.sqlite"
@@ -21,6 +21,9 @@ STATE = Path.home() / ".claude/jarvis/state"
 LABEL = "ai.openclaw.gateway"
 UP_S = 240                    # tempo concesso a gateway e WhatsApp per tornare su
 BAD_END = ("subagent-error", "subagent-killed")
+OC_CONFIG = Path.home() / ".openclaw/openclaw.json"
+DISCORD_AGENT = {"default": "main", "visione": "gtm"}  # account Discord -> agente che lo serve
+ACTIVE_DAYS = 3               # canali con una sessione viva negli ultimi giorni
 
 
 def rows(sql, args=()):
@@ -87,6 +90,83 @@ def restart():
     sys.exit(f"dopo {UP_S} s: pid {pid} (era {old}), WhatsApp in ascolto: {whatsapp_listening_after(t0)}")
 
 
+def discord_get(token, path):
+    req = urllib.request.Request("https://discord.com/api/v10" + path, headers={
+        "Authorization": f"Bot {token}", "User-Agent": "DiscordBot (jarvis-oc-restart, 1.0)"})
+    with urllib.request.urlopen(req, timeout=20) as r:
+        return json.load(r)
+
+
+def snowflake(ms):
+    return str((int(ms) - 1420070400000) << 22)
+
+
+def discord_missed(since_ms, until_ms):
+    """Messaggi umani arrivati su Discord a gateway giu' e mai registrati nella sessione del canale.
+    Discord non riconsegna gli eventi persi: senza questo un messaggio scritto durante il riavvio
+    resta senza risposta. Ritorna {session_key: [righe]}."""
+    accounts = ((json.loads(OC_CONFIG.read_text()).get("channels") or {}).get("discord") or {}).get("accounts") or {}
+    con = sqlite3.connect(f"file:{DB}?mode=ro", uri=True, timeout=10)
+    out = {}
+    try:
+        cutoff = (time.time() - ACTIVE_DAYS * 86400) * 1000
+        for acc, agent in DISCORD_AGENT.items():
+            token = (accounts.get(acc) or {}).get("token")
+            if not isinstance(token, str):
+                continue
+            keys = [r[0] for r in con.execute(
+                "select session_key from session_state_heads where agent_id=? and session_key like ? and updated_at>=?",
+                (agent, f"agent:{agent}:discord:channel:%", cutoff))]
+            for key in keys:
+                chan = key.rsplit(":", 1)[-1]
+                try:
+                    msgs = discord_get(token, f"/channels/{chan}/messages?limit=50&after={snowflake(since_ms)}")
+                except Exception as e:
+                    print(f"  discord {chan}: lettura fallita ({e})")
+                    continue
+                # visto = gia' entrato nella coda di ingresso di quell'account (event_id = id del messaggio)
+                ids = [m["id"] for m in msgs]
+                seen = {r[0] for r in con.execute(
+                    f"select event_id from channel_ingress_events where account_id=? and event_id in ({','.join('?' * len(ids))})",
+                    (acc, *ids))} if ids else set()
+                lines = []
+                for m in sorted(msgs, key=lambda m: m["id"]):
+                    if (m.get("author") or {}).get("bot"):
+                        continue
+                    ts = (int(m["id"]) >> 22) + 1420070400000
+                    if ts > until_ms or m["id"] in seen:
+                        continue
+                    who = (m.get("author") or {}).get("global_name") or (m.get("author") or {}).get("username", "?")
+                    lines.append(f"[{time.strftime('%H:%M', time.localtime(ts / 1000))}] {who} (<@{(m.get('author') or {}).get('id')}>): {m.get('content', '')[:1500]}")
+                if lines:
+                    out[key] = lines
+    finally:
+        con.close()
+    return out
+
+
+def discord_catchup(since_ms, until_ms, dry):
+    missed = discord_missed(since_ms, until_ms)
+    print(f"Discord: {sum(len(v) for v in missed.values())} messaggi arrivati a gateway giu' in {len(missed)} canali")
+    procs = []
+    for key, lines in missed.items():
+        msg = ("Nota di servizio (riavvio del gateway): mentre era giu' in questo canale sono arrivati questi "
+               "messaggi, che non hai ricevuto. Trattali come appena arrivati, con le regole di questo canale "
+               "(menzioni comprese): se non ti riguardano, NO_REPLY.\n\n" + "\n".join(lines))
+        print(f"  {key}: {len(lines)}")
+        if dry:
+            continue
+        out = STATE / f"oc-restart-discord-{time.strftime('%Y%m%d-%H%M%S')}-{key.rsplit(':', 1)[-1]}.log"
+        STATE.mkdir(parents=True, exist_ok=True)
+        # --deliver: la risposta deve arrivare nel canale come una normale
+        procs.append(subprocess.Popen(["sh", "-c", 'for i in 1 2 3; do openclaw agent --session-key "$1" --message "$2" '
+                                       '--deliver --timeout 1800 --json && exit 0; echo "tentativo $i fallito"; sleep 30; done; exit 1',
+                                       "oc-restart", key, msg],
+                                      stdout=open(out, "w"), stderr=subprocess.STDOUT, start_new_session=True))
+        print(f"  esito in {out}")
+    return procs
+
+
 def resume(lost, when, dry):
     by_req = {}
     for p in lost:
@@ -129,6 +209,7 @@ def main():
         lost = lost_since((time.time() - mins * 60) * 1000)
         print(f"{len(lost)} sottoagenti da riprendere degli ultimi {mins:g} min")
         resume(lost, time.strftime("%H:%M"), dry)
+        discord_catchup((time.time() - mins * 60) * 1000, time.time() * 1000, dry)
         return 0
     alive = running()
     print(f"{len(alive)} sottoagenti vivi: " + ", ".join(p.get("label", "?") for p in alive))
@@ -143,6 +224,7 @@ def main():
     lost = [p for p in lost_since((t0 - 60) * 1000) if p["_run"] in ids]
     print(f"{len(lost)} su {len(alive)} interrotti dal riavvio")
     resume(lost, time.strftime("%H:%M", time.localtime(t0)), False)
+    discord_catchup((t0 - 60) * 1000, time.time() * 1000, False)
     return 0
 
 
