@@ -24,9 +24,12 @@ Altri due difetti del runner claude-cli, stesso giro (08/10, canale Discord rebr
      fallisce a ogni turno (`No API key found for provider "anthropic"`) e la sessione cresce
      fino a rispondere vuoto (605k token). Fix: se il provider non e' un backend, si prova il
      runtime dichiarato in agents.defaults.models["<provider>/<modello>"].agentRuntime.id.
-  4. tetto di 20.000 righe JSONL per turno: un sottoagente di 47 minuti lo supera e il suo
-     lavoro si butta (`CLI JSONL output exceeded 20000 lines`). Alzato a 200.000: la memoria
-     la protegge gia' il tetto di 8 MB sui caratteri, che resta.
+  4. tetto di 20.000 righe JSONL per turno: dal 15/10 lo gestisce openclaw-cli-output-limit
+     (righe E caratteri, che il 14/10 hanno buttato 8 sottoagenti). Qui non si tocca piu': due
+     patch sullo stesso blocco si rompevano a vicenda.
+
+Il punto 3 e' corretto upstream nella 2026.10.2 (`params.cliBackendId` prima del provider):
+check lo riconosce e apply non lo tocca.
 
   openclaw-announce-fix.py check    exit 0 = patch attiva su disco E nel gateway in esecuzione
   openclaw-announce-fix.py apply    idempotente; poi: launchctl kickstart -k gui/$UID/ai.openclaw.gateway
@@ -59,8 +62,7 @@ COMPACT_NEW = ("\t\tconst resolvedBackend = cliCompactionDeps.resolveCliBackendC
                " ?? cliCompactionDeps.resolveCliBackendConfig(params.cfg?.agents?.defaults?.models"
                "?.[`${params.provider}/${params.model}`]?.agentRuntime?.id || \"-\", params.cfg);"
                f" // {MARK}: il backend e' il runtime, non il provider\n")
-LINES_ORIG = "\tmaxTurnLines: 2e4\n"
-LINES_NEW = f"\tmaxTurnLines: 2e5 // {MARK}: 2e4 buttava i sottoagenti lunghi\n"
+COMPACT_UPSTREAM = "const cliBackendId = params.cliBackendId?.trim() || params.provider;"  # 2026.10.2
 
 
 def dist_dir():
@@ -78,11 +80,10 @@ def find(pattern, needle):
 
 
 def edits():
-    """(file, originale, patchato) per ciascuno dei quattro punti."""
+    """(file, originale, patchato) per i punti 1-3."""
     return [(find("cli-runner-*.mjs", "async function persistCliAssistantTranscript"), RUN_ID_ORIG, RUN_ID_NEW),
             (find("subagent-announce-delivery-*.mjs", "async function sendSubagentAnnounceDirectly"), DM_ORIG, DM_NEW),
-            (find("cli-compaction-*.mjs", "async function runCliTurnCompactionLifecycle"), COMPACT_ORIG, COMPACT_NEW),
-            (find("cli-live-session-registry-*.mjs", "const CLI_STREAM_JSON_OUTPUT_LIMITS"), LINES_ORIG, LINES_NEW)]
+            (find("cli-compaction-*.mjs", "async function runCliTurnCompactionLifecycle"), COMPACT_ORIG, COMPACT_NEW)]
 
 
 def write(path, text):
@@ -115,16 +116,17 @@ def main():
     texts = {path: open(path).read() for path, _, _ in todo}
     done = [new in texts[path] for path, _, new in todo]
     done[0] = done[0] or RUN_ID_UPSTREAM in texts[todo[0][0]]
+    done[2] = done[2] or COMPACT_UPSTREAM in texts[todo[2][0]]
     if cmd == "check":
         if all(done):
             if gateway_started_after([p for p, _, _ in todo]):
-                print("ok   patch openclaw-announce-fix attiva (runId claude-cli, fine sottoagente in privato, compattazione claude-cli, tetto righe)")
+                print("ok   patch openclaw-announce-fix attiva (runId claude-cli, fine sottoagente in privato, compattazione claude-cli)")
                 return 0
             print("FAIL patch su disco ma il gateway gira col codice vecchio: launchctl kickstart -k gui/$UID/ai.openclaw.gateway")
             return 1
         print("FAIL patch openclaw-announce-fix assente (update di OpenClaw?): openclaw-announce-fix.py apply + kickstart"
               f" [runId {'ok' if done[0] else 'no'}, privato {'ok' if done[1] else 'no'},"
-              f" compattazione {'ok' if done[2] else 'no'}, righe {'ok' if done[3] else 'no'}]")
+              f" compattazione {'ok' if done[2] else 'no'}]")
         return 1
     if cmd == "apply":
         for (path, orig, new), ok in zip(todo, done):
@@ -141,7 +143,7 @@ def main():
         return 0
     if cmd == "revert":
         for (path, orig, new), ok in zip(todo, done):
-            if ok:
+            if ok and new in texts[path]:  # mai «togliere» un fix upstream
                 write(path, texts[path].replace(new, orig, 1))
         print("patch tolta; ora: launchctl kickstart -k gui/$UID/ai.openclaw.gateway")
         return 0
