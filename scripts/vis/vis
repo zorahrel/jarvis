@@ -25,7 +25,8 @@
 #   vis giuria VIDEO --atteso "X" --scelte "A; B; X; ..." [--controllo VIDEO]
 #                                piu' modelli guardano il video alla cieca e scelgono
 #                                da un elenco rimescolato; il controllo smaschera chi
-#                                tira a indovinare. Esce 0 VERDE, 1 ROSSO, 3 INCERTO.
+#                                tira a indovinare, [--positivo VIDEO] chi non vede
+#                                quel tipo di gesto. Esce 0 VERDE, 1 ROSSO, 3 INCERTO.
 #                                Per dire «si legge» di un'animazione: mai una lettura
 #                                sola. Esce dalla macchina come watch.
 #   vis qr FILE                  legge QR e codici a barre

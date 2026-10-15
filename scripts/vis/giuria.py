@@ -15,6 +15,10 @@ Qui:
   - il controllo (--controllo, un video che NON e' il gesto) lo leggono gli
     stessi lettori con lo stesso elenco: se lo chiamano come l'atteso, la
     giuria tira a indovinare e il verdetto non vale;
+  - il positivo (--positivo, il gesto senza dubbio, per esempio esagerato)
+    pure: chi non riconosce nemmeno quello non vota, e se restano troppo
+    pochi voti e' INCERTO, non ROSSO (i Flash-Lite non vedono i gesti fatti
+    solo di movimento);
   - la stessa lettura dello stesso video non si rifa': e' in cache, cosi'
     rilanciare finche' esce verde non serve a niente.
 
@@ -305,6 +309,8 @@ def main():
     ap.add_argument("--atteso", required=True, help="la voce giusta («a; b» se ne vanno bene piu' d'una)")
     ap.add_argument("--scelte", required=True, help="l'elenco, separato da ; oppure @file (una voce per riga)")
     ap.add_argument("--controllo", action="append", default=[], help="video che NON e' l'atteso (ripetibile)")
+    ap.add_argument("--positivo", action="append", default=[],
+                    help="video che E' l'atteso senza dubbio (es. esagerato): chi non lo riconosce non vota (ripetibile)")
     ap.add_argument("--contesto", default="", help="cosa c'e' nel video, senza dire cosa dovrebbe fare")
     ap.add_argument("--letture", type=int, default=4)
     ap.add_argument("--soglia", type=float, default=0.75, help="quota di letture sull'atteso per il VERDE")
@@ -317,9 +323,13 @@ def main():
     ap.add_argument("--statico", action="store_true", help="il video puo' restare fermo (una posa, non un gesto)")
     a = ap.parse_args()
 
-    for v in [a.video] + a.controllo:
+    for v in [a.video] + a.controllo + a.positivo:
         if not Path(v).is_file():
             die(f"file non trovato: {v}")
+    # il video stesso come positivo toglierebbe il voto proprio a chi lo legge male
+    same = lambda p: Path(p).read_bytes() == Path(a.video).read_bytes()
+    if any(same(p) for p in a.positivo):
+        die("il positivo e' lo stesso video: deve essere il gesto senza dubbio, un altro video")
     # Un video fermo non si giudica: il 15/10 un registratore che inquadrava
     # l'angolo sbagliato della pagina ha dato nove ROSSO su nove a gesti mai
     # visti. Quello e' un guasto di chi registra, non un verdetto.
@@ -352,16 +362,11 @@ def main():
         mark = "✓" if r["voce"] in expected else "✗"
         print(f"  {mark} {r['lettore'][:28]:<28} {r['voce'][:34]:<34} ({r['sicurezza']}){' [cache]' if r.get('cache') else ''}")
         print(f"      {r['descrizione'][:220]}")
-    hits = sum(r["voce"] in expected for r in res)
     defects = [r["difetti"] for r in res if r["difetti"] and not re.match(r"^(nessun|niente|none|-)", r["difetti"].strip(), re.I)]
     if defects:
         print(f"  difetti segnalati da {len(defects)} su {len(res)}:")
         for d in defects:
             print(f"      - {d[:200]}")
-    wrong = {}
-    for r in res:
-        if r["voce"] not in expected:
-            wrong[r["voce"]] = wrong.get(r["voce"], 0) + 1
 
     controls = []
     for c in a.controllo:
@@ -375,15 +380,45 @@ def main():
               + ", ".join(f"{k} {v}" for k, v in sorted(seen.items(), key=lambda x: -x[1])) + ")")
         controls.append({"video": c, "letture": cr, "come_atteso": ch})
 
+    # Il positivo: lo stesso gesto, senza dubbio. Il 15/10 un saluto esagerato
+    # (40 gradi, otto oscillazioni, a occhio un «ciao» pieno) e' stato letto
+    # «tamburellare» e «girare la mano di lato» dai due Flash-Lite: chi non
+    # riconosce nemmeno quello non vede questo tipo di gesto, e il suo voto
+    # sul video vero non dice niente del video.
+    positives, blind = [], set()
+    for p in a.positivo:
+        pr = jury(p, options, ctx, a.fps, nf, key, 0, readers, not a.senza_cache,
+                  pairs=[(r["lettore"], r["seme"]) for r in res], log=log)
+        ok = {(r["lettore"], r["seme"]) for r in pr if r["voce"] in expected}
+        # chi non ha letto il positivo (quota finita) non si sa se ci vede: non vota
+        blind |= {(r["lettore"], r["seme"]) for r in res} - ok
+        miss = [f"{r['lettore'].replace('gemini-', '')} {r['voce']}" for r in pr if r["voce"] not in expected]
+        print(f"positivo {Path(p).name}: letto come l'atteso {len(ok)} su {len(pr)}"
+              + (f" ({', '.join(miss)})" if miss else ""))
+        positives.append({"video": p, "letture": pr, "come_atteso": len(ok)})
+    for r in res:
+        r["cieco"] = (r["lettore"], r["seme"]) in blind
+    if blind:
+        print("  non votano, non riconoscono il positivo: "
+              + ", ".join(sorted({l.replace('gemini-', '') for l, _ in blind})))
+    votes = [r for r in res if not r["cieco"]]
+    hits = sum(r["voce"] in expected for r in votes)
+    wrong = {}
+    for r in votes:
+        if r["voce"] not in expected:
+            wrong[r["voce"]] = wrong.get(r["voce"], 0) + 1
+
     if a.json:
         Path(a.json).write_text(json.dumps({"video": a.video, "atteso": expected, "voci": options, "letture": res,
-                                            "controlli": controls}, ensure_ascii=False, indent=1))
-    fams = {family(r["lettore"]) for r in res}
-    share = hits / len(res) if res else 0
-    tail = f"{hits} su {len(res)} ({share:.0%}, soglia {a.soglia:.0%}), lettori di {len(fams)} famiglie"
+                                            "controlli": controls, "positivi": positives}, ensure_ascii=False, indent=1))
+    fams = {family(r["lettore"]) for r in votes}
+    share = hits / len(votes) if votes else 0
+    tail = f"{hits} su {len(votes)} ({share:.0%}, soglia {a.soglia:.0%}), lettori di {len(fams)} famiglie"
     conf = (" · scambiato per: " + ", ".join(f"{k} {v}" for k, v in sorted(wrong.items(), key=lambda x: -x[1]))) if wrong else ""
-    if len(res) < a.min:
-        print(f"INCERTO: solo {len(res)} letture valide (minimo {a.min}); esauriti oggi: {', '.join(sorted(exhausted())) or 'nessuno'}")
+    if len(votes) < a.min:
+        why = (f"{len(res) - len(votes)} lettori non riconoscono nemmeno il positivo, serve un lettore piu' forte"
+               if blind else f"esauriti oggi: {', '.join(sorted(exhausted())) or 'nessuno'}")
+        print(f"INCERTO: solo {len(votes)} letture valide (minimo {a.min}); {why} · {tail}{conf}")
         sys.exit(3)
     if any(c["come_atteso"] for c in controls):
         print(f"INCERTO: il controllo e' stato letto come l'atteso, la giuria non distingue · {tail}{conf}")
