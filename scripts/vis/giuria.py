@@ -385,6 +385,8 @@ def read_once(reader, video, options, context, fps, n_frames, key):
 
 def reading(reader, video, options, context, fps, n_frames, key, seed, cache):
     """una lettura con l'elenco rimescolato dal seme: dict con la voce scelta, o None"""
+    if reader in os.environ.get("VIS_GIURIA_FALLISCI", "").split(","):
+        raise Skip("fallito apposta (VIS_GIURIA_FALLISCI, per provare)")
     opts = options[:]
     random.Random(seed).shuffle(opts)
     h = hashlib.sha256(Path(video).read_bytes()).hexdigest()[:16]
