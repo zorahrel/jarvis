@@ -108,6 +108,9 @@ ANNOUNCE_SILENT = os.environ.get("OSU_ANNOUNCE_SILENT") or str(
 # 10 min, non 60 s (un riavvio dura 94-144 s). Va dopo l'install dei plugin, che la cancella.
 WA_CATCHUP = os.environ.get("OSU_WA_CATCHUP") or str(
     Path(__file__).resolve().parent.parent / "openclaw-wa-catchup/openclaw-wa-catchup.py")
+# Ottava patch su dist/: il battito non aspetta i sottoagenti (restava «running» per ore, 15/10).
+HB_SUBAGENTS = os.environ.get("OSU_HB_SUBAGENTS") or str(
+    Path(__file__).resolve().parent.parent / "openclaw-heartbeat-subagents/openclaw-heartbeat-subagents.py")
 # Dopo un giro che ha riavviato il gateway: OpenClaw non riprende i sottoagenti interrotti, li
 # chiede di rilanciare ai canali che li avevano lanciati (misurato 15/10: 7 su 7 fermi).
 OC_RESTART = os.environ.get("OSU_OC_RESTART") or str(
@@ -307,6 +310,11 @@ def announce_silent(cmd):
 
 def wa_catchup(cmd):
     rc, out, err = run([WA_CATCHUP, cmd], 120)
+    return rc, tail(out or err)
+
+
+def hb_subagents(cmd):
+    rc, out, err = run([HB_SUBAGENTS, cmd], 120)
     return rc, tail(out or err)
 
 
@@ -534,7 +542,8 @@ def converge(core, idle_minutes):
     annsilent = announce_silent("check")[0] != 0
     # un plugin reinstallato perde la patch: dopo l'install va riapplicata comunque
     wacatchup = bool(installs) or wa_catchup("check")[0] != 0
-    if not (installs or patch or announce or durable or outlimit or botmention or annsilent or wacatchup):
+    hbsub = hb_subagents("check")[0] != 0
+    if not (installs or patch or announce or durable or outlimit or botmention or annsilent or wacatchup or hbsub):
         return [], notes, False
     busy = wait_idle(idle_minutes, down_ok=True)
     if busy:
@@ -568,6 +577,9 @@ def converge(core, idle_minutes):
     if annsilent:
         rc, msg = announce_silent("apply")
         notes.append(f"patch silenzio consegne non applicata: {msg}" if rc else "patch silenzio consegne applicata")
+    if hbsub:
+        rc, msg = hb_subagents("apply")
+        notes.append(f"patch battito non applicata: {msg}" if rc else "patch battito applicata")
     if wacatchup:
         rc, msg = wa_catchup("apply")
         notes.append(f"patch coda WhatsApp non applicata: {msg}" if rc else "patch coda WhatsApp applicata")
@@ -1042,6 +1054,9 @@ def maintain(cur, root, dry, idle):
     rc, msg = wa_catchup("check")
     if rc:
         todo.append(f"patch coda WhatsApp: {msg}")
+    rc, msg = hb_subagents("check")
+    if rc:
+        todo.append(f"patch battito: {msg}")
     if not todo:
         return 0
     log("da sistemare: " + "; ".join(todo))
