@@ -105,9 +105,14 @@ def resume(lost, when, dry):
         print(f"{req}: {len(items)} da riprendere")
         if dry:
             continue
-        procs.append(subprocess.Popen(["openclaw", "agent", "--session-key", req, "--message", msg,
-                                       "--timeout", "1800", "--json"],
-                                      stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True))
+        # l'esito va su file: il 15/10 una nota spedita a gateway ancora in salita e' sparita in silenzio
+        out = STATE / f"oc-restart-resume-{time.strftime('%Y%m%d-%H%M%S')}-{req.rsplit(':', 1)[-1]}.log"
+        STATE.mkdir(parents=True, exist_ok=True)
+        procs.append(subprocess.Popen(["sh", "-c", 'for i in 1 2 3; do openclaw agent --session-key "$1" --message "$2" '
+                                       '--timeout 1800 --json && exit 0; echo "tentativo $i fallito"; sleep 30; done; exit 1',
+                                       "oc-restart", req, msg],
+                                      stdout=open(out, "w"), stderr=subprocess.STDOUT, start_new_session=True))
+        print(f"  esito in {out}")
     return procs
 
 
