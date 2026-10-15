@@ -385,12 +385,13 @@ def main():
     # «tamburellare» e «girare la mano di lato» dai due Flash-Lite: chi non
     # riconosce nemmeno quello non vede questo tipo di gesto, e il suo voto
     # sul video vero non dice niente del video.
-    positives, blind = [], set()
+    positives, blind, unread = [], set(), set()
     for p in a.positivo:
         pr = jury(p, options, ctx, a.fps, nf, key, 0, readers, not a.senza_cache,
                   pairs=[(r["lettore"], r["seme"]) for r in res], log=log)
         ok = {(r["lettore"], r["seme"]) for r in pr if r["voce"] in expected}
         # chi non ha letto il positivo (quota finita) non si sa se ci vede: non vota
+        unread |= {(r["lettore"], r["seme"]) for r in res} - {(r["lettore"], r["seme"]) for r in pr}
         blind |= {(r["lettore"], r["seme"]) for r in res} - ok
         miss = [f"{r['lettore'].replace('gemini-', '')} {r['voce']}" for r in pr if r["voce"] not in expected]
         print(f"positivo {Path(p).name}: letto come l'atteso {len(ok)} su {len(pr)}"
@@ -398,9 +399,14 @@ def main():
         positives.append({"video": p, "letture": pr, "come_atteso": len(ok)})
     for r in res:
         r["cieco"] = (r["lettore"], r["seme"]) in blind
-    if blind:
+    # i due casi si dicono separati: il 15/10 un Gemini che aveva letto giusto
+    # con 100 e poi preso un 429 sul positivo risultava «non lo riconosce»
+    if blind - unread:
         print("  non votano, non riconoscono il positivo: "
-              + ", ".join(sorted({l.replace('gemini-', '') for l, _ in blind})))
+              + ", ".join(sorted({l.replace('gemini-', '') for l, _ in blind - unread})))
+    if unread:
+        print("  non votano, non hanno letto il positivo (quota o errore): "
+              + ", ".join(sorted({l.replace('gemini-', '') for l, _ in unread})))
     votes = [r for r in res if not r["cieco"]]
     hits = sum(r["voce"] in expected for r in votes)
     wrong = {}
@@ -416,7 +422,8 @@ def main():
     tail = f"{hits} su {len(votes)} ({share:.0%}, soglia {a.soglia:.0%}), lettori di {len(fams)} famiglie"
     conf = (" · scambiato per: " + ", ".join(f"{k} {v}" for k, v in sorted(wrong.items(), key=lambda x: -x[1]))) if wrong else ""
     if len(votes) < a.min:
-        why = (f"{len(res) - len(votes)} lettori non riconoscono nemmeno il positivo, serve un lettore piu' forte"
+        why = (f"{len(blind - unread)} lettori non riconoscono nemmeno il positivo, {len(unread)} non l'hanno letto;"
+               f" serve un lettore piu' forte (esauriti oggi: {', '.join(sorted(exhausted())) or 'nessuno'})"
                if blind else f"esauriti oggi: {', '.join(sorted(exhausted())) or 'nessuno'}")
         print(f"INCERTO: solo {len(votes)} letture valide (minimo {a.min}); {why} · {tail}{conf}")
         sys.exit(3)
