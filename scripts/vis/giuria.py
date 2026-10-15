@@ -54,8 +54,10 @@ READERS = [
     "gemini-2.5-flash-lite",
 ]
 # muse: e' agentico e a volte risponde con un commento invece del JSON (15/10): esiste ma non e' nel default
-# Riserva: solo se nominati con --lettori, consumano la quota Claude (vedi --help)
-RESERVE = ["claude:claude-haiku-5-5", "claude:claude-sonnet-5-5"]
+# Entra da solo, dopo i gratuiti, se le famiglie vive sono meno di MIN_FAMILIES (consuma la quota Claude).
+# Sonnet, non Haiku (Attilio, 15/10).
+AUTO_LAST = "claude:claude-sonnet-5-5"
+MIN_FAMILIES = 4
 # chi non legge il video intero: gli si danno i fotogrammi
 FRAMES_ONLY = {"gemma-4-31b-it", "gemma-4-26b-a4b-it"}
 # chi accetta UN'immagine sola (o la legge meglio cosi'): i fotogrammi vanno in un foglio unico
@@ -325,7 +327,8 @@ def agent_cli(reader, fr, tmp, q):
         exe = shutil.which("claude")
         if not exe:
             raise Skip("claude non installato")
-        args = [exe, "-p", "--model", reader[7:], "--allowedTools", "Read", "--add-dir", str(tmp), q]
+        # --add-dir e --allowedTools sono variadici: il prompt va prima, o se li mangiano
+        args = [exe, "-p", q, "--model", reader[7:], "--allowedTools", "Read", "--add-dir", str(tmp)]
     p = subprocess.run(args, cwd=tmp, stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=600)
     if p.returncode != 0 or not p.stdout.strip():
         raise Skip(f"{reader.split(':')[0]} esce {p.returncode}: {(p.stderr or p.stdout or '')[-160:]}")
@@ -456,7 +459,7 @@ def main():
     ap.add_argument("--lettori", default="", help="lettori in ordine, separati da virgola. Prefissi: "
                     "codex:MODELLO · oai:CANALE/MODELLO (canali nim, or, kilo, router: modelli vision gratuiti, es. "
                     "oai:nim/nvidia/nemotron-3.5-super-vl-120b-a12b) · muse:muse-spark-1.3 (Zen gratuito) · "
-                    "claude:claude-haiku-5-5 (RISERVA: consuma la quota Claude, mai nel default). Senza prefisso = Gemini. "
+                    "claude:claude-sonnet-5-5 (entra da solo in fondo se le famiglie vive sono meno di 4; consuma quota Claude). Senza prefisso = Gemini. "
                     "Una famiglia = un voto: Llama e Muse sono Meta, Gemma e Gemini Google")
     ap.add_argument("--senza-gemini", action="store_true",
                     help="toglie i lettori Gemini/Gemma-via-Google dall'elenco (anche con VIS_GIURIA_SENZA_GEMINI=1)")
@@ -502,6 +505,10 @@ def main():
 
     print(f"giuria: {Path(a.video).name} · atteso «{'» o «'.join(expected)}» · {len(options)} voci · {a.letture} letture")
     res = jury(a.video, options, ctx, a.fps, nf, key, a.letture, readers, not a.senza_cache, log=log)
+    # meno di 4 famiglie vive: Claude entra come lettore normale (famiglia a parte)
+    if not a.lettori and len({family(r["lettore"]) for r in res}) < MIN_FAMILIES and AUTO_LAST not in {r["lettore"] for r in res}:
+        log(f"  famiglie vive {len({family(r['lettore']) for r in res})} < {MIN_FAMILIES}: entra {AUTO_LAST}")
+        res += jury(a.video, options, ctx, a.fps, nf, key, 1, [AUTO_LAST], not a.senza_cache, log=log)
     for i, r in enumerate(res, 1):
         mark = "✓" if r["voce"] in expected else "✗"
         print(f"  {mark} {r['lettore'][:28]:<28} {r['voce'][:34]:<34} ({r['sicurezza']}){' [cache]' if r.get('cache') else ''}")
