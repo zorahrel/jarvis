@@ -237,7 +237,7 @@ setup() {
 import json,sys
 st={'version':'2026.9.5','latest':'2026.9.7','pid':1000,'patched':True,'patch_live':True,'ann_patched':True,'ann_live':True,
     'plugins':{'whatsapp':'2026.9.5','tokenjuice':'2026.9.5','codex':'2026.9.5'}}
-st.update(json.loads(sys.argv[1])); json.dump(st,open('$FAKE_STATE','w'))" "${1:-{\}}"
+st.update(json.loads(sys.argv[1] or '{}')); json.dump(st,open('$FAKE_STATE','w'))" "${1:-}"
 }
 arm() { echo '{"armed": true}' > "$HOME/.claude/jarvis/state/openclaw-safe-update.json"; }
 # sget chiave[.sotto] : legge lo stato del finto · sset chiave valore-json : lo cambia
