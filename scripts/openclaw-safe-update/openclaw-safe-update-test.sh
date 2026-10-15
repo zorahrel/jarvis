@@ -171,7 +171,9 @@ if args[:2] == ["tasks", "list"]:
 if args[:1] == ["health"]:
     if down(): print("gateway closed", file=sys.stderr); sys.exit(1)
     out({"ok": True, "plugins": {"loaded": ["whatsapp"], "errors": []},
-         "channels": {"whatsapp": {"accounts": {"default": {"activeRuns": st.get("active_runs", 0)}}}}}); sys.exit(0)
+         "channels": {"whatsapp": {"accounts": {"default": {"activeRuns": st.get("active_runs", 0),
+                                                            "busy": st.get("tasks_running", 0) > 0}}}},
+         "sessions": {"recent": st.get("recent", [])}}); sys.exit(0)
 if args[:2] == ["channels", "status"]:
     if down(): sys.exit(1)
     out({"channels": {"whatsapp": {"configured": True, "running": True, "connected": True, "linked": True,
@@ -261,7 +263,7 @@ setup '{"tasks_running":1}'; arm
 check "exit 0" "$(go)" 0
 hasnt "nessun update" "update --yes" "$T/calls.log"
 hasnt "nessun backup" "backup sqlite" "$T/calls.log"
-has "dice perche'" "1 task attivi" "$T/out.log"
+has "dice perche'" "in conversazione: whatsapp/default" "$T/out.log"
 setup '{"active_runs":2}'; arm
 go >/dev/null
 hasnt "un run sul canale basta a fermarlo" "update --yes" "$T/calls.log"
@@ -269,6 +271,16 @@ setup; arm; P="$HOME/.claude/projects/$(printf %s "$HOME" | sed 's/[^A-Za-z0-9]/
 mkdir -p "$P" && touch "$P/s.jsonl"
 go >/dev/null
 hasnt "un transcript di 0 s fa basta a fermarlo" "update --yes" "$T/calls.log"
+setup; arm; P="$HOME/.claude/projects/$(printf %s "$HOME" | sed 's/[^A-Za-z0-9]/-/g')--openclaw"
+mkdir -p "$P" && echo '{"type":"user","message":{"content":"<<<BEGIN_OPENCLAW_INTERNAL_CONTEXT>>> [Subagent Context] You are running"}}' > "$P/sub.jsonl"
+go >/dev/null
+has "un sottoagente al lavoro non ferma l'update (lo riprende oc-restart)" "update --yes" "$T/calls.log"
+setup '{"recent":[{"key":"agent:main:whatsapp:direct:+390000000000","age":5000}]}'; arm
+go >/dev/null
+hasnt "una chat aggiornata 5 s fa lo ferma" "update --yes" "$T/calls.log"
+setup '{"recent":[{"key":"agent:main:subagent:abc","age":5000}]}'; arm
+go >/dev/null
+has "una sessione di sottoagente di 5 s fa no" "update --yes" "$T/calls.log"
 # jl <file> <eta' in s dell'evento>... : righe con timestamp, poi la contabilita' che claude-cli scrive
 # senza timestamp quando OpenClaw parcheggia la sessione (mtime = adesso)
 jl() { f=$1; shift; python3 -c "import json,sys,datetime as d

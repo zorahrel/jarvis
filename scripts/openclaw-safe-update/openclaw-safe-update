@@ -67,7 +67,6 @@ import os
 import re
 import shutil
 import signal
-import sqlite3
 import stat
 import subprocess
 import sys
@@ -330,14 +329,8 @@ def transcript_age():
     quando OpenClaw la chiude (01/10 00:15, sessione dell'heartbeat), e con l'mtime quella chiusura
     sembrava lavoro e ha interrotto un update vero. L'mtime resta solo se la coda non ha timestamp."""
     newest = 0.0
-    for db in glob.glob(str(OC_HOME / "agents/*/agent/openclaw-agent.sqlite")):
-        try:
-            con = sqlite3.connect(f"file:{db}?mode=ro", uri=True, timeout=5)
-            ms = con.execute("select max(created_at) from transcript_events").fetchone()[0]
-            con.close()
-            newest = max(newest, (ms or 0) / 1000)
-        except sqlite3.Error:
-            pass
+    # Il SQLite dei transcript non si guarda piu' (15/10): mescola chat e sottoagenti, e un
+    # sottoagente di 80 minuti teneva OpenClaw «occupato» tutta la notte. Le chat le dice health.
     slug = re.sub(r"[^A-Za-z0-9]", "-", str(HOME))  # come Claude Code nomina ~/.claude/projects
     files = []
     for pat in (HOME / ".claude/projects" / f"{slug}--openclaw*" / "*.jsonl",
@@ -351,9 +344,30 @@ def transcript_age():
     for mtime, f in sorted(files, reverse=True):
         if mtime <= newest:
             break
+        if not is_chat_transcript(f):
+            continue
         ts = jsonl_last_ts(f)
         newest = max(newest, mtime if ts is None else ts)
     return time.time() - newest
+
+
+# Prima riga utente di un transcript claude-cli che non ha una persona in attesa: sottoagente
+# (anche ritentato) o follow-up mandato dal canale a una sessione figlia. Interromperli costa
+# poco: oc-restart --resume-since li fa rilanciare a fine giro (resume_interrupted).
+NOT_CHAT = ("[Subagent Context]", "[Inter-session message]")
+
+
+def is_chat_transcript(path):
+    try:
+        with open(path, errors="replace") as fh:
+            for i, line in enumerate(fh):
+                if i > 40:
+                    break
+                if '"type":"user"' in line.replace(" ", ""):
+                    return not any(m in line[:6000] for m in NOT_CHAT)
+    except OSError:
+        return False
+    return True  # nessuna riga utente in testa: nel dubbio conta come chat
 
 
 def busy_reasons(down_ok=False):
@@ -366,19 +380,17 @@ def busy_reasons(down_ok=False):
             log("il gateway non risponde: nessun lavoro da interrompere")
             return []
         return ["health non risponde"]
-    why, n = [], 0
-    for st in ("running", "queued"):
-        d = oc_json(["tasks", "list", "--json", "--status", st], 90)
-        if not isinstance(d, dict):
-            why.append("task non leggibili")
-            break
-        n += len(d.get("tasks") or [])
-    if n:
-        why.append(f"{n} task attivi")
-    runs = sum(int(a.get("activeRuns") or 0) for c in (h.get("channels") or {}).values()
-               for a in (c.get("accounts") or {}).values())
-    if runs:
-        why.append(f"{runs} run in corso sui canali")
+    # Niente piu' `tasks list` (15/10: 3 minuti e poi exit 1, quindi «task non leggibili» ogni
+    # notte e nessun update). Contano solo le conversazioni: i sottoagenti si riprendono dopo.
+    why = []
+    busy = [f"{c}/{a}" for c, v in (h.get("channels") or {}).items()
+            for a, x in (v.get("accounts") or {}).items() if x.get("busy") or int(x.get("activeRuns") or 0)]
+    if busy:
+        why.append("in conversazione: " + ", ".join(busy))
+    recent = [r.get("key", "?") for r in ((h.get("sessions") or {}).get("recent") or [])
+              if ":subagent:" not in r.get("key", "") and (r.get("age") if r.get("age") is not None else 1e12) < QUIET_S * 1000]
+    if recent:
+        why.append(f"{len(recent)} conversazioni attive negli ultimi {QUIET_S} s")
     age = transcript_age()
     if age < QUIET_S:
         why.append(f"transcript scritto {int(age)} s fa")
