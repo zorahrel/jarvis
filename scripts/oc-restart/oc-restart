@@ -74,7 +74,9 @@ def restart():
     old, t0 = gateway_pid(), time.time()
     r = subprocess.run(["openclaw", "gateway", "restart", "--force", "--json"], capture_output=True, text=True, timeout=180)
     if r.returncode:
-        sys.exit(f"restart --force: exit {r.returncode} {(r.stderr or r.stdout)[-300:]}")
+        # esce 1 anche quando il riavvio c'e' stato: la sua sonda da 3 s scade su un gateway che
+        # sta ancora salendo (15/10). Decide il pid nuovo qui sotto, non questo exit code.
+        print(f"restart --force: exit {r.returncode}, controllo il pid")
     end, pid = t0 + UP_S, None
     while time.time() < end:
         time.sleep(3)
