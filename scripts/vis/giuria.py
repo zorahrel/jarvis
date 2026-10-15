@@ -56,7 +56,10 @@ READERS = [
 # muse: e' agentico e a volte risponde con un commento invece del JSON (15/10): esiste ma non e' nel default
 # Entra da solo, dopo i gratuiti, se le famiglie vive sono meno di MIN_FAMILIES (consuma la quota Claude).
 # Sonnet, non Haiku (Attilio, 15/10).
-AUTO_LAST = "claude:claude-sonnet-5-5"
+# Haiku 5.5 per primo (costa meno); Sonnet 5.5 solo se Haiku non risponde o non vede il positivo.
+# Stessa famiglia «anthropic»: un voto solo.
+AUTO_LAST = "claude:claude-haiku-5-5"
+AUTO_SECOND = "claude:claude-sonnet-5-5"
 MIN_FAMILIES = 4
 # chi non legge il video intero: gli si danno i fotogrammi
 FRAMES_ONLY = {"gemma-4-31b-it", "gemma-4-26b-a4b-it"}
@@ -459,7 +462,7 @@ def main():
     ap.add_argument("--lettori", default="", help="lettori in ordine, separati da virgola. Prefissi: "
                     "codex:MODELLO · oai:CANALE/MODELLO (canali nim, or, kilo, router: modelli vision gratuiti, es. "
                     "oai:nim/nvidia/nemotron-3.5-super-vl-120b-a12b) · muse:muse-spark-1.3 (Zen gratuito) · "
-                    "claude:claude-sonnet-5-5 (entra da solo in fondo se le famiglie vive sono meno di 4; consuma quota Claude). Senza prefisso = Gemini. "
+                    "claude:claude-haiku-5-5 (entra da solo in fondo se le famiglie vive sono meno di 4, Sonnet 5.5 se Haiku salta o non vede il positivo; consuma quota Claude). Senza prefisso = Gemini. "
                     "Una famiglia = un voto: Llama e Muse sono Meta, Gemma e Gemini Google")
     ap.add_argument("--senza-gemini", action="store_true",
                     help="toglie i lettori Gemini/Gemma-via-Google dall'elenco (anche con VIS_GIURIA_SENZA_GEMINI=1)")
@@ -506,9 +509,11 @@ def main():
     print(f"giuria: {Path(a.video).name} · atteso «{'» o «'.join(expected)}» · {len(options)} voci · {a.letture} letture")
     res = jury(a.video, options, ctx, a.fps, nf, key, a.letture, readers, not a.senza_cache, log=log)
     # meno di 4 famiglie vive: Claude entra come lettore normale (famiglia a parte)
-    if not a.lettori and len({family(r["lettore"]) for r in res}) < MIN_FAMILIES and AUTO_LAST not in {r["lettore"] for r in res}:
+    auto = not a.lettori and len({family(r["lettore"]) for r in res}) < MIN_FAMILIES
+    if auto:
         log(f"  famiglie vive {len({family(r['lettore']) for r in res})} < {MIN_FAMILIES}: entra {AUTO_LAST}")
-        res += jury(a.video, options, ctx, a.fps, nf, key, 1, [AUTO_LAST], not a.senza_cache, log=log)
+        # un solo lettore Claude: se Haiku salta, la lista passa a Sonnet da sola
+        res += jury(a.video, options, ctx, a.fps, nf, key, 1, [AUTO_LAST, AUTO_SECOND], not a.senza_cache, log=log)
     for i, r in enumerate(res, 1):
         mark = "✓" if r["voce"] in expected else "✗"
         print(f"  {mark} {r['lettore'][:28]:<28} {r['voce'][:34]:<34} ({r['sicurezza']}){' [cache]' if r.get('cache') else ''}")
@@ -548,6 +553,18 @@ def main():
         print(f"positivo {Path(p).name}: letto come l'atteso {len(ok)} su {len(pr)}"
               + (f" ({', '.join(miss)})" if miss else ""))
         positives.append({"video": p, "letture": pr, "come_atteso": len(ok)})
+    # Haiku non vede il positivo: al suo posto Sonnet (stessa famiglia, un voto solo)
+    hk = [r for r in res if r["lettore"] == AUTO_LAST and (r["lettore"], r["seme"]) in blind | unread]
+    if auto and hk and a.positivo:
+        log(f"  {AUTO_LAST} non vede il positivo: provo {AUTO_SECOND}")
+        sn = jury(a.video, options, ctx, a.fps, nf, key, 1, [AUTO_SECOND], not a.senza_cache, log=log)
+        if sn:
+            pk = (sn[0]["lettore"], sn[0]["seme"])
+            seen = [jury(p, options, ctx, a.fps, nf, key, 0, [AUTO_SECOND], not a.senza_cache, pairs=[pk], log=log) for p in a.positivo]
+            if all(x and x[0]["voce"] in expected for x in seen):
+                res = [r for r in res if r is not hk[0]] + sn
+                blind -= {(hk[0]["lettore"], hk[0]["seme"])}
+                unread -= {(hk[0]["lettore"], hk[0]["seme"])}
     for r in res:
         r["cieco"] = (r["lettore"], r["seme"]) in blind
     # i due casi si dicono separati: il 15/10 un Gemini che aveva letto giusto
