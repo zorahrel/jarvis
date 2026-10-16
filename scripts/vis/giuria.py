@@ -23,7 +23,10 @@ Qui:
     pochi voti e' INCERTO, non ROSSO (i Flash-Lite non vedono i gesti fatti
     solo di movimento);
   - la stessa lettura dello stesso video non si rifa': e' in cache, cosi'
-    rilanciare finche' esce verde non serve a niente.
+    rilanciare finche' esce verde non serve a niente;
+  - la domanda di default parla di dita e pollice (i gesti del cursore): per
+    qualunque altra animazione --domanda animazione, che chiede cosa si muove
+    e come. Una domanda diversa e' una lettura diversa, anche in cache.
 
 Esce 0 VERDE, 1 ROSSO, 3 INCERTO (troppo pochi lettori vivi, o il controllo
 letto come l'atteso), 64 uso sbagliato.
@@ -181,6 +184,25 @@ Do not guess what it is meant to be: judge only what is visible.
 1. Describe precisely what you see, in Italian, in one or two sentences: which fingers are extended and which are curled, where the thumb points, how the shape and the position change over time.
 2. Choose the ONE option that best names what the clip shows. If none fits, choose the option that says so.
 3. Report, in Italian, anything that looks wrong or unnatural (parts passing through each other, sudden jumps, impossible bends, a pose that looks broken or crooked). Leave it empty if nothing.
+Options:
+{letters}
+Reply with JSON only: {{"descrizione": "...", "scelta": "<letter>", "seconda": "<letter or empty>", "sicurezza": <0-100>, "difetti": "..."}}"""
+
+
+HAND_PROMPT = prompt
+
+
+def prompt_animation(options, context, as_frames, n_frames=0):
+    """--domanda animazione: la stessa giuria per cio' che non e' una mano"""
+    head = (f"You are shown {n_frames} frames taken in time order from one short clip (the time is printed top left). "
+            "Look only at these images, do not search for files." if as_frames else "You are shown a short video clip.")
+    letters = "\n".join(f"{chr(65 + i)}) {o}" for i, o in enumerate(options))
+    return f"""{head}
+{context}
+Do not guess what it is meant to be: judge only what is visible.
+1. Describe precisely what you see, in Italian, in one or two sentences: what is on screen, what moves and how (direction, size, speed), and how shapes and positions change over time.
+2. Choose the ONE option that best names what the clip shows. If none fits, choose the option that says so.
+3. Report, in Italian, anything that looks wrong or unnatural (sudden jumps, flicker, things passing through each other, parts that look broken or see-through when they should not). Leave it empty if nothing.
 Options:
 {letters}
 Reply with JSON only: {{"descrizione": "...", "scelta": "<letter>", "seconda": "<letter or empty>", "sicurezza": <0-100>, "difetti": "..."}}"""
@@ -390,7 +412,11 @@ def reading(reader, video, options, context, fps, n_frames, key, seed, cache):
     opts = options[:]
     random.Random(seed).shuffle(opts)
     h = hashlib.sha256(Path(video).read_bytes()).hexdigest()[:16]
-    k = hashlib.sha256(json.dumps([h, reader, opts, context, fps, n_frames]).encode()).hexdigest()[:24]
+    # La domanda entra nella chiave quando non e' quella delle dita (che tiene le chiavi di prima).
+    # Fino al 16/10 non c'era: una clip gia' letta con le dita tornava quelle letture anche
+    # chiedendo d'altro, cioe' risposte a un'altra domanda date per buone.
+    ask = [] if prompt is HAND_PROMPT else [hashlib.sha256(prompt(["-"], "", False).encode()).hexdigest()[:12]]
+    k = hashlib.sha256(json.dumps([h, reader, opts, context, fps, n_frames] + ask).encode()).hexdigest()[:24]
     cf_ = CACHE / f"{k}.json"
     if cache and cf_.exists():
         r = json.loads(cf_.read_text())
@@ -447,6 +473,7 @@ def jury(video, options, context, fps, n_frames, key, n, readers, cache, pairs=N
 
 
 def main():
+    global prompt
     ap = argparse.ArgumentParser(prog="vis giuria", description=__doc__.split("\n\n")[0],
                                  epilog="VIS_GIURIA_SENZA_GEMINI=1: come --senza-gemini. Exit: 0 VERDE, 1 ROSSO, 3 INCERTO, 64 uso.")
     ap.add_argument("video")
@@ -471,7 +498,12 @@ def main():
     ap.add_argument("--json", default="", help="scrive tutte le letture in questo file")
     ap.add_argument("--senza-cache", action="store_true")
     ap.add_argument("--statico", action="store_true", help="il video puo' restare fermo (una posa, non un gesto)")
+    ap.add_argument("--domanda", choices=["mano", "animazione"], default="mano",
+                    help="mano (default): dita e pollice, per i gesti del cursore; animazione: cosa si muove e come, "
+                         "per tutto il resto (pagine, nuvole, carte, testo che entra)")
     a = ap.parse_args()
+    if a.domanda == "animazione":
+        prompt = prompt_animation
 
     for v in [a.video] + a.controllo + a.positivo:
         if not Path(v).is_file():
