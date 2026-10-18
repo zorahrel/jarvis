@@ -22,7 +22,7 @@ public_claude() {
 
 # Da OpenClaw solo cio' che non parla di persone: workflow, test e script del gateway.
 public_openclaw() {
-  git -C "$HOME/.openclaw" ls-files | grep -E '^(workflows|tests)/|^bin/stall-capture\.py$' | grep -v -E '\.jsonl$'
+  git -C "$HOME/.openclaw" ls-files | grep -E '^(workflows|tests)/|^bin/stall-capture\.py$' | grep -v -E '\.jsonl$|^workflows/push\.py$'
 }
 
 mirror() { # $1 sorgente, $2 destinazione, stdin = elenco

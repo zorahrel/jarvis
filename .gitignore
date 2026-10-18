@@ -115,3 +115,10 @@ memory-recall/hits.log
 !claude/**
 !openclaw/
 !openclaw/**
+
+# Dal 19/10: file con dati di persone vere (email, numeri, nomi). La copia sta nel
+# privato (private/sync.sh, PRIVATE_FILES); qui restano fuori.
+docs/estirpazione-2026-10.md
+scripts/fatture-mensili.py
+scripts/fatture-portali.py
+scripts/jcode-auth-sync.py
