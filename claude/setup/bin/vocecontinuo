@@ -1,0 +1,218 @@
+#!/usr/bin/env bash
+# vocecontinuo — esegue i comandi MENTRE parli, senza aspettare la fine della frase.
+#
+# La differenza con Controllo vocale di macOS: quello aspetta che tu finisca e
+# poi confronta la frase con una grammatica fissa. Qui la trascrizione arriva a
+# blocchi (whisper-stream --step) e ogni blocco viene scansionato per i comandi
+# che conosciamo: "apri Note ora apri il browser cerca Norbert Wiener" detta di
+# fila fa partire tre azioni una dietro l'altra, senza pause.
+#
+#   vocecontinuo            ascolta e esegue
+#   vocecontinuo --prova    legge da stdin invece del microfono (per i test)
+#
+# Perche' non serve un LLM per questo pezzo: i comandi sono un insieme CHIUSO e
+# le frasi sono letterali. L'LLM serve quando l'intento non e' letterale
+# («segna come lette le prime tre»), e quello e' un altro pezzo.
+set -uo pipefail   # NON -e: un comando che fallisce non deve fermare gli altri della frase
+
+# small, non large: misurato 167 ms per blocco contro 1000 del grande, cioe'
+# sei volte piu' reattivo, e l'avvio passa da ~12 s a ~2 s. Il piccolo storpia
+# le parole, ma i comandi sono un insieme CHIUSO: le varianti si elencano
+# (vedi COMANDI), che costa meno che aspettare un secondo per battuta.
+MODELLO="${VOCE_MODELLO:-$HOME/whisper-models/ggml-small.bin}"
+STEP="${VOCE_STEP:-1000}"     # ogni quanto arriva un pezzo di trascrizione (ms)
+LUNGHEZZA="${VOCE_LEN:-3000}" # finestra audio considerata (ms)
+LOG="$HOME/.vocecomandi.log"
+
+# I comandi: <frase riconosciuta>|<comando shell>. La frase si cerca DENTRO il
+# testo trascritto, quindi funziona anche in mezzo a una dettatura di fila.
+COMANDI=(
+  "metti musica|$HOME/bin/media play"
+  "metti play|$HOME/bin/media play"
+  "metti in play|$HOME/bin/media play"
+  "fai play|$HOME/bin/media play"
+  "dai play|$HOME/bin/media play"
+  "play musica|$HOME/bin/media play"
+  "fai partire|$HOME/bin/media play"
+  "fai ripartire la musica|$HOME/bin/media play"
+  "tiene musica|$HOME/bin/media play"
+  "metti la musica|$HOME/bin/media play"
+  "riproduci musica|$HOME/bin/media play"
+  "pausa|$HOME/bin/media pausa"
+  "metti pausa|$HOME/bin/media pausa"
+  "metti in pausa|$HOME/bin/media pausa"
+  "metti la pausa|$HOME/bin/media pausa"
+  "mettilo in pausa|$HOME/bin/media pausa"
+  "fai pausa|$HOME/bin/media pausa"
+  "pausa musica|$HOME/bin/media pausa"
+  "pausa alla musica|$HOME/bin/media pausa"
+  "stoppa la musica|$HOME/bin/media pausa"
+  "ferma musica|$HOME/bin/media pausa"
+  "riprendi la musica|$HOME/bin/media play"
+  "riprendi musica|$HOME/bin/media play"
+  "fai partire la musica|$HOME/bin/media play"
+  "avvia la musica|$HOME/bin/media play"
+  "ferma la musica|$HOME/bin/media pausa"
+  "prossima canzone|$HOME/bin/media avanti"
+  "canzone precedente|$HOME/bin/media indietro"
+  "nascondi finestra|osascript -e 'tell application \"System Events\" to set visible of first process whose frontmost is true to false'"
+  "nascondi la finestra|osascript -e 'tell application \"System Events\" to set visible of first process whose frontmost is true to false'"
+  "nascondi finestre|osascript -e 'tell application \"System Events\" to set visible of first process whose frontmost is true to false'"
+  "nascondi app|osascript -e 'tell application \"System Events\" to set visible of first process whose frontmost is true to false'"
+  "nascondi l'app|osascript -e 'tell application \"System Events\" to set visible of first process whose frontmost is true to false'"
+  "nascondi questa finestra|osascript -e 'tell application \"System Events\" to set visible of first process whose frontmost is true to false'"
+  "apri note|open -a Notes"
+  "apri il browser|open -a Safari"
+  "apri safari|open -a Safari"
+  "apri i progetti|open $HOME/Projects"
+  "blocca lo schermo|pmset displaysleepnow"
+  "crea una nota nuova|osascript -e 'tell application \"Notes\" to make new note at folder \"Notes\"' -e 'tell application \"Notes\" to activate'"
+  "nuova nota|osascript -e 'tell application \"Notes\" to make new note at folder \"Notes\"' -e 'tell application \"Notes\" to activate'"
+)
+
+# Comandi con un PARAMETRO: la parte variabile si cattura con una regex, non
+# serve un LLM. Formato: <regex con un gruppo>|<comando con @1 al posto del valore>.
+# Qui sta la meta' del reel che credevo fuori portata: «cerca Norbert Wiener»
+# non richiede di capire l'intento, richiede di prendere il testo dopo "cerca".
+PARAMETRICI=(
+  "cerca (.+)|$HOME/bin/cercaweb @1"
+  "cercami (.+)|$HOME/bin/cercaweb @1"
+  "come titolo scrivi (.+)|$HOME/bin/scrivitesto @1"
+  "scrivi (.+)|$HOME/bin/scrivitesto @1"
+  "apri il sito (.+)|open \"https://@1\""
+  # Questi passano da Jev: il bersaglio non sta nella frase, sta sullo schermo.
+  "fai clic su (.+)|$HOME/bin/voceschermo @1"
+  "clicca su (.+)|$HOME/bin/voceschermo @1"
+  "premi (.+)|$HOME/bin/voceschermo @1"
+)
+
+normalizza() {
+  # minuscolo, via la punteggiatura, spazi singoli: "Apri Note." e "apri  note"
+  # devono corrispondere allo stesso comando.
+  tr '[:upper:]' '[:lower:]' | tr -d '.,;:!?"' | tr -s ' '
+}
+
+# Un comando appena eseguito non si riesegue subito: la finestra audio si
+# sovrappone (--keep), quindi la stessa frase ricompare nel blocco successivo e
+# senza questo freno «pausa» partirebbe due o tre volte di fila.
+# Niente array associativi: il bash di macOS e' il 3.2 del 2007 e non li ha
+# (`declare -A` da' "invalid option"). Lo stato sta in un file per frase.
+STATO="${TMPDIR:-/tmp}/vocecontinuo.$$"
+mkdir -p "$STATO"
+trap 'rm -rf "$STATO"' EXIT
+
+antirimbalzo() {
+  local chiave f ora prec
+  chiave=$(printf '%s' "$1" | tr -cd '[:alnum:]')
+  f="$STATO/$chiave"
+  ora=$(date +%s)
+  prec=$(cat "$f" 2>/dev/null || echo 0)
+  # 6 secondi, e il file si scrive PRIMA di eseguire. Con la scrittura dopo,
+  # due blocchi audio nello stesso secondo passavano entrambi e il comando
+  # partiva due volte (visto tre volte di fila su «metti musica»).
+  [ $((ora - prec)) -lt 6 ] && return 1
+  echo "$ora" > "$f"
+  # mkdir e' atomico: se un secondo blocco arriva mentre il primo esegue,
+  # qui fallisce invece di passare.
+  mkdir "$STATO/lock.$chiave" 2>/dev/null || return 1
+  ( sleep 6; rmdir "$STATO/lock.$chiave" 2>/dev/null ) &
+  return 0
+}
+
+registra_ed_esegui() {
+  local etichetta="$1" cmd="$2" out
+  printf '%s  %s\n' "$(date '+%H:%M:%S')" "$etichetta" >> "$LOG"
+  out=$( { eval "$cmd"; } 2>&1 | tail -1 ) || true
+  printf '%s    -> %s\n' "$(date '+%H:%M:%S')" "${out:-ok}" >> "$LOG"
+  echo "  ✓ $etichetta"
+}
+
+esegui_da_testo() {
+  local testo; testo=$(printf '%s' "$1" | normalizza)
+  local voce frase cmd valore
+
+  # `(.+)` e' goloso: su "scrivi hello ora apri il browser cerca X" il valore di
+  # "scrivi" diventa tutto il resto della frase, e gli altri comandi sparfiscono.
+  # Quindi il valore si taglia alla prima PAROLA CHIAVE successiva.
+  local stop="ora |poi |e poi |apri |cerca |cercami |crea |metti |pausa |prossima |canzone |blocca |scrivi |come titolo "
+  for voce in "${PARAMETRICI[@]}"; do
+    frase="${voce%%|*}"; cmd="${voce#*|}"
+    valore=$(printf '%s' "$testo" | sed -nE "s/.*${frase}.*/\1/p" | head -1)
+    [ -n "$valore" ] || continue
+    # taglia al prossimo comando: "hello ora apri il browser" -> "hello"
+    valore=$(printf '%s' "$valore" | sed -E "s/ (${stop// /}).*$//" \
+             | sed -E "s/ (ora|poi|e poi|apri|cerca|cercami|crea|metti|blocca|scrivi) .*$//")
+    valore=$(printf '%s' "$valore" | sed -E 's/^ +| +$//g')
+    [ -n "$valore" ] || continue
+    antirimbalzo "${frase}${valore}" || continue
+    # Il valore entra come argomento fra apici, mai concatenato come codice:
+    # una frase dettata non deve poter diventare shell da eseguire.
+    registra_ed_esegui "${frase%% (*} $valore" "${cmd//@1/\"$valore\"}"
+    # Il pezzo consumato si toglie: senza, "come titolo scrivi hello" fa
+    # scattare anche il pattern piu' corto "scrivi (.+)" sulla stessa frase.
+    testo=$(printf '%s' "$testo" | sed -E "s/${frase%% (*}[ ]*${valore}//")
+  done
+
+  for voce in "${COMANDI[@]}"; do
+    frase="${voce%%|*}"; cmd="${voce#*|}"
+    case "$testo" in
+      *"$frase"*)
+        antirimbalzo "$frase" || continue
+        registra_ed_esegui "$frase" "$cmd"
+        ;;
+    esac
+  done
+}
+
+if [ "${1:-}" = "--prova" ]; then
+  # Modo test: le frasi arrivano da stdin, nessun microfono. Serve per provare
+  # il riconoscimento senza dover parlare, e per i test ripetibili.
+  while IFS= read -r riga; do
+    echo "« $riga"
+    esegui_da_testo "$riga"
+  done
+  exit 0
+fi
+
+# Una sola istanza: due copie in ascolto sullo stesso microfono eseguono ogni
+# comando due volte, e sembra un difetto dell'antirimbalzo (mi ha ingannato per
+# tre giri di test). Qui si rifiuta la seconda.
+if pgrep -f '[w]hisper-stream' >/dev/null 2>&1; then
+  echo "C'e' gia' un ascolto in corso. Per fermarlo: pkill -f vocecontinuo" >&2
+  exit 1
+fi
+# Quando questo script muore, whisper-stream deve morire con lui: altrimenti
+# resta orfano e continua a occupare il microfono.
+# L'`exit 0` dentro un trap EXIT fa terminare lo script appena parte: va solo
+# sui segnali, e la pulizia su EXIT resta senza exit.
+trap 'pkill -P $$ -f whisper-stream 2>/dev/null; rm -rf "$STATO"' EXIT
+trap 'exit 0' INT TERM
+
+[ -f "$MODELLO" ] || { echo "modello mancante: $MODELLO" >&2; exit 1; }
+
+echo "In ascolto (italiano, blocchi da ${STEP}ms). Ctrl-C per smettere."
+echo "Comandi: $(printf '%s, ' "${COMANDI[@]%%|*}" | sed 's/, $//')"
+echo
+
+/opt/homebrew/bin/whisper-stream \
+  -m "$MODELLO" -l it -t 10 \
+  --step "$STEP" --length "$LUNGHEZZA" --keep 200 \
+  --vad-thold "${VOCE_VAD:-0.60}" --no-fallback 2>/dev/null \
+| while IFS= read -r riga; do
+    # whisper-stream stampa anche righe di servizio tra parentesi quadre
+    # Via le sequenze ANSI di riscrittura riga e i marcatori di non-parlato.
+    riga=$(printf '%s' "$riga" \
+      | sed -E 's/\x1b\[[0-9;]*[A-Za-z]//g; s/\r//g' \
+      | sed -E 's/\[(Musica|MUSICA|Rumore|BLANK_AUDIO|_TT_[0-9]+)\]//g' \
+      | sed -E 's/^ +| +$//g')
+    [ -n "$riga" ] || continue
+    # Whisper, quando non c'e' parlato, inventa: frasi fra parentesi quadre
+    # ("[L'ho fatto un po' di test]") o pezzi di inglese ("Bye, let's go").
+    # Scartarle conta piu' del riconoscimento: un comando che parte da
+    # un'allucinazione fa una cosa che non hai chiesto.
+    case "$riga" in
+      \[*\]|*"let's"*|*"Bye"*|*"Thank you"*|*"Thanks for watching"*) continue ;;
+    esac
+    echo "« $riga"
+    esegui_da_testo "$riga"
+  done

@@ -1,0 +1,9 @@
+#!/bin/bash
+# Esegue lo script PowerShell letto da stdin sull'host Windows, via -EncodedCommand
+# (fra ssh -> cmd -> powershell gli apici collassano: il base64 li salva).
+# ProgressPreference spento: le barre di avanzamento escono su stderr come CLIXML.
+set -euo pipefail
+HOST="${WIN_HOST:-zorah@100.92.197.74}"
+script=$( { echo '$ProgressPreference="SilentlyContinue"'; cat; } )
+b64=$(printf '%s' "$script" | python3 -c 'import sys,base64;sys.stdout.write(base64.b64encode(sys.stdin.read().encode("utf-16-le")).decode())')
+ssh -o ConnectTimeout=10 "$HOST" "powershell -NoProfile -NonInteractive -EncodedCommand $b64" 2>/dev/null

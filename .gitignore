@@ -108,3 +108,10 @@ bin-ocr-vision
 # hits.log i path delle schede richiamate. Il repo è PUBBLICO: restano solo in locale.
 memory-recall/eval.json
 memory-recall/hits.log
+
+# Dal 19/10: parti pubbliche di ai-config e openclaw-workspace (sync-public.sh).
+# Le regole sopra (agents/, memory/, ...) non valgono qui dentro: l elenco lo fa lo script.
+!claude/
+!claude/**
+!openclaw/
+!openclaw/**

@@ -1,0 +1,107 @@
+#!/usr/bin/env bash
+# offload: fa girare un comando dove costa meno. Mac libero -> qui; Mac carico -> sul PC Windows
+# (lo sveglia se dorme), con una copia dei file del repo senza segreti, e riporta exit code e file.
+#
+#   offload [opzioni] -- <comando>     il comando (sul PC gira in cmd.exe: scrivilo per Windows)
+#   offload status                     carico del Mac, stato e carico del PC
+#
+#   -C <dir>       cartella da portare (default: radice git della cartella corrente)
+#   --pc|--local   forza dove (default: decide il carico)
+#   --get <path>   dopo il giro riporta <path> (relativo alla cartella) qui; ripetibile
+#   --mac-cmd <c>  comando da usare se gira sul Mac, quando quello per Windows è diverso
+#
+# Soglie: OFFLOAD_MAX_MAC (carico per core oltre il quale si va sul PC, default 1.5),
+# OFFLOAD_MAX_PC (CPU % del PC oltre la quale resta qui, default 60). Sul PC non vanno MAI segreti
+# (PC bonificato l'11/10): .env, .dev.vars, chiavi e credenziali restano fuori dalla copia.
+# La copia sul PC (E:\offload\<nome>) resta tra un giro e l'altro: node_modules non si rifà ogni volta.
+set -uo pipefail
+HOST="${OFFLOAD_HOST:-$(. ~/.config/winfleet/config.env 2>/dev/null; echo "${HOST_SSH:-zorah@192.168.1.2}")}"
+MAX_MAC="${OFFLOAD_MAX_MAC:-1.5}"
+MAX_PC="${OFFLOAD_MAX_PC:-60}"
+ROOT_PC="E:/offload"
+SSH=(ssh -o ConnectTimeout=5 -o BatchMode=yes -o ServerAliveInterval=30 -o ServerAliveCountMax=4)
+SECRET_RE='(^|/)(\.env(\..*)?|\.dev\.vars.*|.*\.(pem|key|p12|pfx|keystore)|id_(rsa|ed25519|ecdsa).*|credentials(\..*)?|secrets?(\..*)?|.*\.secret)$'
+
+say() { echo "offload: $*" >&2; }
+
+mac_load() {  # carico a 1 minuto per core, 2 decimali
+  local l n; l=$(sysctl -n vm.loadavg | awk '{print $2}'); n=$(sysctl -n hw.ncpu)
+  awk -v l="$l" -v n="$n" 'BEGIN{printf "%.2f", l/n}'
+}
+pc_up() { "${SSH[@]}" -o ConnectTimeout=3 "$HOST" exit 2>/dev/null; }
+pc_cpu() {
+  "${SSH[@]}" "$HOST" "powershell -NoProfile -Command \"[int](Get-CimInstance Win32_Processor | Measure-Object LoadPercentage -Average).Average\"" 2>/dev/null | tr -dc '0-9'
+}
+
+if [ "${1:-}" = status ]; then
+  echo "Mac: $(mac_load) per core ($(sysctl -n hw.ncpu) core), soglia $MAX_MAC"
+  if pc_up; then echo "PC: acceso ($HOST), CPU $(pc_cpu)%, soglia $MAX_PC%"; else echo "PC: non risponde ($HOST); si sveglia con winwake al primo giro"; fi
+  exit 0
+fi
+
+DIR=""; WHERE=auto; FORCED=""; GETS=(); MAC_CMD=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -C) DIR="$2"; shift 2 ;;
+    --pc) WHERE=pc; FORCED=1; shift ;;
+    --local) WHERE=local; shift ;;
+    --get) GETS+=("$2"); shift 2 ;;
+    --mac-cmd) MAC_CMD="$2"; shift 2 ;;
+    --) shift; break ;;
+    -h|--help) sed -n 2,17p "$0"; exit 0 ;;
+    *) break ;;
+  esac
+done
+[ $# -gt 0 ] || { sed -n 2,17p "$0" >&2; exit 64; }
+CMD="$*"
+DIR="${DIR:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}"
+DIR="$(cd "$DIR" && pwd)" || exit 66
+
+run_local() { say "Mac ($1)"; cd "$DIR" && exec bash -c "${MAC_CMD:-$CMD}"; }
+
+# decisione
+LOAD=$(mac_load)
+if [ "$WHERE" = auto ]; then
+  if awk -v l="$LOAD" -v m="$MAX_MAC" 'BEGIN{exit !(l <= m)}'; then run_local "carico $LOAD per core"; fi
+  WHERE=pc
+fi
+[ "$WHERE" = local ] && run_local "forzato"
+
+if ! pc_up; then
+  say "PC spento, lo sveglio"
+  ~/.local/bin/winwake >&2 || true
+  if ! pc_up; then
+    [ "${OFFLOAD_STRICT:-}" = 1 ] && { say "PC non raggiungibile"; exit 69; }
+    run_local "PC non raggiungibile, resto qui"
+  fi
+fi
+CPU=$(pc_cpu); CPU=${CPU:-0}
+if [ "$CPU" -gt "$MAX_PC" ] && [ -z "$FORCED" ] && [ "${OFFLOAD_STRICT:-}" != 1 ]; then run_local "PC occupato ($CPU%)"; fi
+
+# copia: file del repo (tracciati + nuovi non ignorati), segreti esclusi
+NAME="$(basename "$DIR" | tr -c 'A-Za-z0-9_-' '_')_$(printf %s "$DIR" | shasum | cut -c1-6)"
+LIST=$(mktemp); trap 'rm -f "$LIST"' EXIT
+( cd "$DIR"
+  if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then git ls-files -co --exclude-standard
+  else find . -type f -not -path '*/node_modules/*' -not -path '*/.git/*' | sed 's|^\./||'; fi
+) | while IFS= read -r f; do [ -f "$DIR/$f" ] && printf '%s\n' "$f"; done | grep -Eiv "$SECRET_RE" > "$LIST"
+SKIPPED=$( cd "$DIR"; (git ls-files -co --exclude-standard 2>/dev/null || true) | grep -Eic "$SECRET_RE" || true)
+say "PC (Mac $LOAD per core, PC $CPU%): copio $(wc -l < "$LIST" | tr -d ' ') file in $ROOT_PC/$NAME${SKIPPED:+, $SKIPPED segreti esclusi}"
+( cd "$DIR" && COPYFILE_DISABLE=1 tar -czf - -T "$LIST" ) \
+  | "${SSH[@]}" "$HOST" "mkdir \"${ROOT_PC//\//\\}\\$NAME\" 2>nul & tar -xzf - -C \"$ROOT_PC/$NAME\"" \
+  || { say "copia fallita"; exit 70; }
+# (mkdir senza if: `if cond mkdir X & tar` lega & dentro l'if e a cartella
+#  esistente non gira nemmeno tar (copia muta); le parentesi inghiottono il
+#  resto della riga via ssh. L'errore di mkdir esistente va in nul. 16/10/26)
+
+# esecuzione: output in diretta, exit code del comando
+"${SSH[@]}" "$HOST" "cd /d \"${ROOT_PC//\//\\}\\$NAME\" && $CMD"
+RC=$?
+
+# ritorno dei file chiesti
+for g in "${GETS[@]+"${GETS[@]}"}"; do
+  if "${SSH[@]}" "$HOST" "tar -czf - -C \"$ROOT_PC/$NAME\" \"$g\"" | ( cd "$DIR" && tar -xzf - ); then say "riportato $g"
+  else say "non riesco a riportare $g"; fi
+done
+say "fine sul PC, exit $RC"
+exit $RC

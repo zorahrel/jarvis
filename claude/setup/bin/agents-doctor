@@ -1,0 +1,115 @@
+#!/bin/zsh
+# Barra dell'hub agenti: exit 0 = ogni harness legge istruzioni, skill e stile da ~/.agents.
+# Ogni controllo nomina il guasto che rileva; nessuno è decorativo.
+#   agents-doctor          tutti i controlli (Codex skills/list compreso, ~5 s)
+#   agents-doctor --fast   senza interrogare Codex
+setopt nullglob
+H=~/.agents; fail=0
+ok(){ print "ok   $1"; }
+ko(){ print "FAIL $1"; fail=1; }
+chk(){ if eval "$2" >/dev/null 2>&1; then ok "$1"; else ko "$1"; fi; }
+
+# 1. un link rotto nell'hub è una skill che un harness elenca e non può aprire
+broken=(${(f)"$(find -L $H/skills ~/.claude/commands ~/.claude/output-styles -maxdepth 1 -type l 2>/dev/null)"})
+(( ${#broken} == 0 )) && ok "nessun link rotto" || ko "link rotti: ${broken:t}"
+# 2. una skill sia nell'hub sia nell'attico torna nel listing che l'attico doveva svuotare
+dup=(); for s in ~/jarvis/skills-attic/*(/); do [[ -e $H/skills/${s:t} ]] && dup+=${s:t}; done
+(( ${#dup} == 0 )) && ok "hub e attico disgiunti" || ko "in hub E attico: $dup"
+# 3. ogni harness punta all'hub
+for l in ~/.claude/skills ~/.jcode/skills ~/.openclaw/skills; do
+  chk "$l → hub" "[[ \$(readlink $l) == $H/skills ]]"; done
+chk "~/.jcode/prompt-overlay.md (jcode) → hub" "[[ \$(readlink -f ~/.jcode/prompt-overlay.md) == $H/AGENTS.md ]]"
+# ~/AGENTS.md non deve tornare: Claude Code lo legge in ~ e sottocartelle e
+# ricaricherebbe ~10k token di doppione di CLAUDE.md in ogni sessione (29/09).
+chk "~/AGENTS.md assente (niente doppione in Claude Code)" "[[ ! -e ~/AGENTS.md && ! -L ~/AGENTS.md ]]"
+chk "~/.codex/AGENTS.md → hub" "[[ \$(readlink -f ~/.codex/AGENTS.md) == $H/AGENTS.md ]]"
+chk "AGENTS.md generato allineato a CLAUDE.md/TOOLS.md/stile" "$H/bin/agents-build --check"
+# Richiamo dinamico della memoria (hook UserPromptSubmit di Claude Code e Codex): recall@3 sui
+# prompt reali di eval.json. Rosso = schede rinominate o descrizioni impoverite.
+chk "memrecall: nessuna regressione sui prompt reali (recall@3, rumore)" "memrecall --eval >/dev/null"
+# TOOLS.md ha due percorsi: CLAUDE.md importa _shared/, agents-build guarda setup/shared/.
+# Se _shared/TOOLS.md torna una copia, AGENTS.md segue l'altra e Codex/jcode perdono le
+# modifiche in silenzio (successo, 03/10). TOOLS_LINK/TOOLS_SRC servono solo a provarlo su una copia.
+TL=${TOOLS_LINK:-$HOME/.claude/jarvis/agents/_shared/TOOLS.md}; TS=${TOOLS_SRC:-$HOME/.claude/setup/shared/TOOLS.md}
+chk "_shared/TOOLS.md è un link a setup/shared/TOOLS.md" "[[ -L $TL && \$(readlink -f $TL) == \$(readlink -f $TS) ]]"
+chk "rigenerazione automatica attiva" "launchctl print gui/$UID/com.jarvis.agents-build"
+# 4. stile e contesto di Claude Code
+S=~/.claude/settings.json
+st=$(python3 -c "import json;print(json.load(open('$S')).get('outputStyle',''))")
+chk "outputStyle=$st ha il suo file" "[[ -n '$st' ]] && grep -qx 'name: $st' ~/.claude/output-styles/*.md"
+chk "schemi MCP differiti (ENABLE_TOOL_SEARCH=true)" "python3 -c \"import json,sys;sys.exit(json.load(open('$S'))['env'].get('ENABLE_TOOL_SEARCH')!='true')\""
+# stessa leva per Jarvis su OpenClaw: un update riscrive dist/ e la patch sparisce in silenzio,
+# tutti gli schemi dei tool OpenClaw tornano su ogni chiamata (29/09). Rimedio: apply + kickstart.
+# OPENCLAW_DIST serve solo a provarlo su una copia di dist/.
+chk "OpenClaw: tool MCP a richiesta (openclaw-mcp-lazy.py check)" "~/.claude/jarvis/scripts/openclaw-mcp-lazy/openclaw-mcp-lazy.py check"
+# idem per la fine dei sottoagenti in chat privata: senza, su WhatsApp arrivava il testo grezzo del
+# figlio col prefisso [truncated-by-retention] (07/10, 6 volte in un giorno). Rimedio: apply + kickstart.
+chk "OpenClaw: fine sottoagenti in privato (openclaw-announce-fix.py check)" "~/.claude/jarvis/scripts/openclaw-announce-fix/openclaw-announce-fix.py check"
+# OpenClaw si aggiorna solo con openclaw-safe-update (04:20, a OpenClaw fermo, con rollback).
+# L'auto-update interno falliva di notte a managed-service-preflight (4 volte fino al 30/09) e
+# un update può rimetterlo a true: allora i due si pestano i piedi. Rimedio: config set + job caricato.
+chk "OpenClaw: auto-update interno spento (update.auto.enabled non true)" "python3 -c \"import json,os,sys;sys.exit(json.load(open(os.path.expanduser('~/.openclaw/openclaw.json'))).get('update',{}).get('auto',{}).get('enabled') is True)\""
+chk "OpenClaw: aggiornamento notturno caricato (com.jarvis.openclaw-safe-update)" "launchctl print gui/$UID/com.jarvis.openclaw-safe-update"
+# 5. MCP user scope: un server stdio lì si moltiplica per ogni sessione aperta
+extra=$(python3 -c "import json;print(' '.join(k for k in json.load(open('$HOME/.claude.json')).get('mcpServers',{}) if k not in ('exa','context7','gateway')))")
+[[ -z $extra ]] && ok "MCP user scope = exa, context7, gateway" || ko "MCP user scope in più: $extra"
+# 5b. stesso scope per muse: senza mcpServers in settings.json muse parte senza tool MCP (06/10)
+mmiss=$(python3 -c "import json;print(' '.join(sorted(set(('exa','context7','gateway'))^set(json.load(open('$HOME/.config/muse/settings.json')).get('mcpServers',{})))))")
+[[ -z $mmiss ]] && ok "muse MCP scope = exa, context7, gateway" || ko "muse MCP scope scostato: $mmiss"
+# 6. servizi KeepAlive com.jarvis.* fermi
+# quelli spenti apposta con `launchctl disable` non contano (es. darkroom-backend, 15/09)
+off=$(launchctl print-disabled gui/$UID 2>/dev/null | grep '=> disabled' | grep -o 'com\.jarvis\.[^"]*')
+down=(); for p in ~/Library/LaunchAgents/com.jarvis.*.plist; do
+  [[ $(plutil -extract KeepAlive raw $p 2>/dev/null) == true ]] || continue
+  lbl=${${p:t}%.plist}; [[ $off == *$lbl* ]] && continue; launchctl print gui/$UID/$lbl 2>/dev/null | grep -q 'state = running' || down+=$lbl; done
+(( ${#down} == 0 )) && ok "servizi KeepAlive in esecuzione" || ko "fermi: $down"
+# 7. backup a mano nelle cartelle di config (quelli gestiti dai tool restano)
+bak=(~/.openclaw/*.bak.20*(N) ~/.openclaw/*.bak-20*(N) ~/.jcode/*.bak-*(N) ~/.jcode/*.json.bak*(N) ~/.claude/*.bak*(N) ~/.claude/jarvis/router/*.bak*(N))
+(( ${#bak} == 0 )) && ok "nessun backup a mano sparso" || ko "${#bak} backup sparsi → ~/.agents/backups/<data>/"
+# 8. indice della memoria: Claude Code inietta MEMORY.md tagliato a 200 righe o 25.000 caratteri
+# (lunghezza di stringa JS, cioè unità UTF-16) con un WARNING che nessuno legge: fra il 21 e il
+# 24/09 70 sessioni hanno avuto l'indice monco. Soglia 150/20.000 per accorgersene prima. Stesso
+# limite per il MEMORY.md di ogni progetto. AGENTS_DOCTOR_PROJECTS serve solo a provarlo su una copia.
+while IFS='|' read -r st msg; do [[ $st == ok ]] && ok "$msg" || ko "$msg"; done < <(
+python3 - ${AGENTS_DOCTOR_PROJECTS:-$HOME/.claude/projects}/*/memory/MEMORY.md <<'PY'
+import os,sys
+R,C=150,20000; top=(-1,); bad=0
+for p in sys.argv[1:]:
+    s=open(p,encoding='utf-8',errors='replace').read()
+    r,c=len(s.splitlines()),len(s.encode('utf-16-le'))//2
+    if r>R or c>C:
+        f=p.replace(os.path.expanduser('~'),'~',1)
+        print(f"ko|{f}: {r}/{R} righe, {c}/{C} caratteri → sposta righe morte in ARCHIVE.md"); bad=1
+    top=max(top,(max(r/R,c/C),p.split('/')[-3],r,c))
+if len(top)>1 and not bad:
+    print(f"ok|{len(sys.argv)-1} MEMORY.md, il più pieno {top[1]}: {top[2]}/{R} righe, {top[3]}/{C} caratteri")
+PY
+)
+# 9. Codex vede davvero le skill dell'hub (lo dice lui, non la cartella)
+if [[ ${1:-} != --fast ]]; then
+  # solo le cartelle con un SKILL.md: `synced/` e' un contenitore di skill, non una skill
+  n=$(ls -d $H/skills/*/SKILL.md(N) | wc -l | tr -d ' ')
+  seen=$(python3 - <<'PY'
+import json,subprocess,select,time,os
+p=subprocess.Popen(["codex","app-server"],stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.DEVNULL,text=True)
+w=lambda o:(p.stdin.write(json.dumps(o)+"\n"),p.stdin.flush())
+w({"jsonrpc":"2.0","id":1,"method":"initialize","params":{"clientInfo":{"name":"agents-doctor","version":"1"}}})
+w({"jsonrpc":"2.0","method":"initialized"})
+w({"jsonrpc":"2.0","id":2,"method":"skills/list","params":{"cwds":["/tmp"]}})
+hub=os.path.realpath(os.path.expanduser("~/.agents/skills"))
+dirs={os.path.realpath(os.path.join(hub,d)) for d in os.listdir(hub)
+      if os.path.isfile(os.path.join(hub,d,"SKILL.md"))}
+end=time.time()+30; out=-1
+while time.time()<end:
+  if not select.select([p.stdout],[],[],1)[0]: continue
+  l=p.stdout.readline()
+  if '"id":2' in l:
+    sk=[s for c in json.loads(l)["result"]["data"] for s in c["skills"]]
+    out=len({os.path.dirname(os.path.realpath(s["path"])) for s in sk} & dirs); break
+p.kill(); print(out)
+PY
+)
+  [[ $seen == $n ]] && ok "Codex vede $seen/$n skill dell'hub" || ko "Codex vede $seen/$n skill dell'hub"
+fi
+print "hub: $(ls $H/skills | wc -l | tr -d ' ') skill · attico: $(ls -d ~/jarvis/skills-attic/*(/) | wc -l | tr -d ' ') · AGENTS.md $(wc -c < $H/AGENTS.md | tr -d ' ') byte"
+exit $fail

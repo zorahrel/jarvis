@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+# scla — Claude Code interattivo sull'abbonamento Max (login OAuth), niente chiavi API né proxy.
+set -euo pipefail
+unset CLAUDECODE ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN ANTHROPIC_BASE_URL ANTHROPIC_PROFILE ANTHROPIC_CUSTOM_HEADERS
+exec claude "$@"

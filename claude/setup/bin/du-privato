@@ -1,0 +1,62 @@
+#!/usr/bin/env python3
+# Spazio che si libera davvero cancellando: du conta per intero anche i cloni APFS
+# (cp -c, bun install), che condividono i blocchi. ATTR_CMNEXT_PRIVATESIZE dà i byte
+# non condivisi con nessun altro file: è il limite inferiore, du quello superiore.
+import ctypes, os, struct, sys
+
+libc = ctypes.CDLL("/usr/lib/libc.dylib", use_errno=True)
+
+class AttrList(ctypes.Structure):
+    _fields_ = [("bitmapcount", ctypes.c_ushort), ("reserved", ctypes.c_uint16),
+                ("commonattr", ctypes.c_uint32), ("volattr", ctypes.c_uint32),
+                ("dirattr", ctypes.c_uint32), ("fileattr", ctypes.c_uint32),
+                ("forkattr", ctypes.c_uint32)]
+
+ATTR_CMN_RETURNED_ATTRS = 0x80000000
+ATTR_CMNEXT_PRIVATESIZE = 0x00000008
+FSOPT_NOFOLLOW, FSOPT_ATTR_CMN_EXTENDED = 0x1, 0x20
+
+al = AttrList(bitmapcount=5, commonattr=ATTR_CMN_RETURNED_ATTRS, forkattr=ATTR_CMNEXT_PRIVATESIZE)
+buf = ctypes.create_string_buffer(64)
+libc.getattrlist.argtypes = [ctypes.c_char_p, ctypes.POINTER(AttrList), ctypes.c_void_p, ctypes.c_size_t, ctypes.c_ulong]
+
+def private_size(path):
+    if libc.getattrlist(os.fsencode(path), ctypes.byref(al), buf, 64, FSOPT_NOFOLLOW | FSOPT_ATTR_CMN_EXTENDED) != 0:
+        return None
+    returned = struct.unpack_from("5I", buf, 4)
+    if not returned[4] & ATTR_CMNEXT_PRIVATESIZE:
+        return None
+    return struct.unpack_from("q", buf, 24)[0]
+
+def walk(root):
+    alloc = priv = unknown = 0
+    stack = [root]
+    while stack:
+        d = stack.pop()
+        try:
+            it = os.scandir(d)
+        except OSError:
+            continue
+        with it:
+            for e in it:
+                if e.is_dir(follow_symlinks=False):
+                    stack.append(e.path)
+                elif e.is_file(follow_symlinks=False):
+                    st = e.stat(follow_symlinks=False)
+                    alloc += st.st_blocks * 512
+                    p = private_size(e.path)
+                    if p is None:
+                        unknown += st.st_blocks * 512
+                    else:
+                        priv += p
+    return alloc, priv, unknown
+
+if __name__ == "__main__":
+    gb = lambda n: f"{n / 1e9:.1f} GB"
+    tot_a = tot_p = 0
+    for root in sys.argv[1:]:
+        a, p, u = walk(root)
+        tot_a += a; tot_p += p
+        print(f"{os.path.basename(root)}  du {gb(a)}  privato {gb(p)}" + (f"  illeggibile {gb(u)}" if u else ""))
+    if len(sys.argv) > 2:
+        print(f"TOTALE  du {gb(tot_a)}  privato {gb(tot_p)}")

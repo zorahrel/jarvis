@@ -1,0 +1,116 @@
+#!/usr/bin/env python3
+"""csess — cosa stanno facendo, adesso, le sessioni Claude Code vive sul Mac.
+
+Verita' di base: i processi + il loro transcript. Nessun registro da tenere allineato:
+/api/cli-sessions del router elenca sessioni morte da ore (alive:false) e
+/api/sessions/snapshot, quello che cerca lo skill orchestrator, non esiste.
+"""
+import json, os, subprocess, sys, time, glob
+
+HOME = os.path.expanduser("~")
+
+def sh(cmd):
+    try: return subprocess.run(cmd, capture_output=True, text=True, timeout=10).stdout
+    except Exception: return ""
+
+def procs():
+    out = []
+    for line in sh(["/bin/ps", "-Ao", "pid,ppid,etime,%cpu,rss,command"]).splitlines()[1:]:
+        f = line.split(None, 5)
+        if len(f) < 6: continue
+        pid, ppid, etime, cpu, rss, cmd = f
+        base = cmd.split()[0].split("/")[-1]
+        if base != "claude": continue
+        headless = " -p " in cmd or cmd.rstrip().endswith(" -p")
+        out.append(dict(pid=int(pid), etime=etime, cpu=float(cpu), rss=int(rss) // 1024,
+                        headless=headless, cmd=cmd))
+    return out
+
+def cwd_of(pid):
+    for l in sh(["/usr/sbin/lsof", "-a", "-p", str(pid), "-d", "cwd", "-Fn"]).splitlines():
+        if l.startswith("n"): return l[1:]
+    return ""
+
+def transcript(cwd):
+    if not cwd: return None
+    slug = cwd.replace("/", "-").replace(".", "-")
+    files = glob.glob(f"{HOME}/.claude/projects/{slug}/*.jsonl")
+    return max(files, key=os.path.getmtime) if files else None
+
+def tail(path, n=40):
+    """Ultime n righe senza rileggere un file da centinaia di MB."""
+    with open(path, "rb") as fh:
+        fh.seek(0, 2)
+        size = fh.tell(); block = 65536; data = b""
+        while fh.tell() > 0 and data.count(b"\n") <= n:
+            step = min(block, fh.tell())
+            fh.seek(-step, 1); data = fh.read(step) + data; fh.seek(-step, 1)
+            if fh.tell() == 0: break
+        del size
+    rows = []
+    for line in data.splitlines()[-n:]:
+        try: rows.append(json.loads(line))
+        except Exception: pass
+    return rows
+
+def read_state(path):
+    rows = [r for r in tail(path) if r.get("type") in ("user", "assistant")]
+    if not rows: return None
+    last = rows[-1]
+    age = time.time() - os.path.getmtime(path)
+    msg = last.get("message") or {}
+    content = msg.get("content")
+    kind, text = "?", ""
+    if isinstance(content, list):
+        for b in content:
+            t = b.get("type")
+            if t == "tool_use":
+                kind, text = "tool", f"{b.get('name')}: {str(b.get('input'))[:70]}"
+            elif t == "tool_result":
+                kind, text = "result", str(b.get("content"))[:70]
+            elif t == "text" and b.get("text", "").strip():
+                kind, text = "text", b["text"].strip().replace("\n", " ")[:90]
+    elif isinstance(content, str):
+        kind, text = "text", content.replace("\n", " ")[:90]
+    return dict(age=age, who=last.get("type"), kind=kind, text=text)
+
+def verdict(cpu, st):
+    if st is None: return "?", "nessun transcript"
+    age = st["age"]
+    if age < 120 and (cpu > 3 or st["kind"] in ("tool", "result")): return "LAVORA", ""
+    if st["who"] == "assistant" and st["kind"] == "text":
+        return ("ASPETTA TE", "ha finito e non ha risposta") if age > 90 else ("LAVORA", "")
+    if age > 900: return "FERMA", "nessun movimento"
+    return "in corso", ""
+
+def human(sec):
+    m = int(sec // 60)
+    return f"{int(sec)}s" if m < 1 else (f"{m}m" if m < 60 else f"{m//60}h{m%60:02d}")
+
+def main():
+    live = procs()
+    if not live:
+        print("Nessuna sessione Claude Code viva."); return
+    rows = []
+    for p in live:
+        cwd = cwd_of(p["pid"]); tp = transcript(cwd)
+        st = read_state(tp) if tp else None
+        v, why = verdict(p["cpu"], st)
+        rows.append((p, cwd, st, v, why))
+    rows.sort(key=lambda r: {"ASPETTA TE": 0, "FERMA": 1, "LAVORA": 2}.get(r[3], 3))
+    if "--json" in sys.argv:
+        print(json.dumps([dict(pid=p["pid"], cwd=c, up=p["etime"], cpu=p["cpu"], rss_mb=p["rss"],
+                               headless=p["headless"], status=v, why=w,
+                               idle_s=round(s["age"]) if s else None,
+                               last=(s or {}).get("text", "")) for p, c, s, v, w in rows], indent=1))
+        return
+    for p, cwd, st, v, why in rows:
+        tag = " [headless]" if p["headless"] else ""
+        print(f"\n{v:<10} {os.path.basename(cwd) or '?':<22} pid {p['pid']}  su da {p['etime']}  "
+              f"cpu {p['cpu']:.0f}%  {p['rss']}MB{tag}")
+        if st:
+            print(f"           fermo da {human(st['age'])} · ultimo: {st['who']}/{st['kind']} — {st['text']}")
+        if why: print(f"           ^ {why}")
+    print()
+
+main()

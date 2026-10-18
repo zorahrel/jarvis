@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+# cercaweb — apre una ricerca web da una frase parlata.
+#
+# Perche' non basta `open "https://...?q=$testo"`: con uno spazio dentro, `open`
+# tratta la stringa come percorso di file e risponde "does not exist" (visto
+# davvero con «cerca Norbert Wiener»). La query va percent-encoded.
+set -uo pipefail
+q="${*:-}"
+[ -n "$q" ] || { echo "uso: cercaweb <termini>" >&2; exit 2; }
+enc=$(printf '%s' "$q" | python3 -c 'import sys,urllib.parse; print(urllib.parse.quote_plus(sys.stdin.read().strip()))')
+open "https://duckduckgo.com/?q=$enc"
+echo "cerco: $q"

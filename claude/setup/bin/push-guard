@@ -1,0 +1,231 @@
+#!/usr/bin/env -S python3 -I
+# Ferma il push verso un repo GitHub pubblico se i commit nuovi portano fuori dati di
+# persone vere (nomi, telefoni, ID WhatsApp e Discord, email) o token.
+#
+# Perché esiste: l'08/10/2026 jarvis-claudecode, che è pubblico, aveva 16 commit pronti
+# con nome, cognome e canale Discord di una persona, e openclaw-workspace la rubrica di
+# cinque. Li ha fermati un grep fatto a mano, che la volta dopo nessuno si ricorda.
+#
+# Lo chiama ~/.config/git/hooks/pre-push prima di git-lfs, con gli stessi argomenti
+# (nome del remote, URL) e le righe dei ref su stdin. I nomi stanno in un file cifrato
+# di ai-config: un elenco di nomi in chiaro sarebbe proprio il dato da proteggere.
+#
+# PUSH_GUARD=off salta il controllo per un push (falso positivo). PUSH_GUARD=force lo
+# fa anche verso un repo privato o fuori da GitHub.
+import json
+import os
+import re
+import subprocess
+import sys
+import urllib.error
+import urllib.request
+
+NAMES_FILE = os.path.expanduser("~/.claude/setup/shared/push-guard-names.txt")
+MAX_SHOWN = 20
+
+# Dei token si mostra solo l'inizio: l'output di un push finisce spesso nel contesto
+# di un agente, e il segreto non deve arrivarci dal messaggio che lo protegge.
+SECRET_RULES = [
+    ("token Anthropic/OpenAI", r"\bsk-[A-Za-z0-9_-]{20,}"),
+    ("token ElevenLabs/Stripe", r"\bsk_(?:live_|test_)?[A-Za-z0-9]{24,}"),
+    ("token GitHub", r"\b(?:gh[pousr]_[A-Za-z0-9]{30,}|github_pat_[A-Za-z0-9_]{40,})"),
+    ("token Slack", r"\bxox[abprs]-[A-Za-z0-9-]{10,}"),
+    ("token Supabase", r"\bsbp_[a-f0-9]{30,}"),
+    ("JWT", r"\beyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}"),
+    ("chiave Google", r"\bAIza[0-9A-Za-z_-]{35}"),
+    ("token bot Discord", r"\b[MN][A-Za-z0-9]{23,25}\.[A-Za-z0-9_-]{6}\.[A-Za-z0-9_-]{27,38}\b"),
+    ("chiave privata", r"-----BEGIN (?:[A-Z]+ )*PRIVATE KEY-----"),
+    ("segreto in chiaro", r"(?i)\b(?:api[_-]?key|secret|token|password)[\"']?\s*[:=]\s*[\"'][A-Za-z0-9_+/=.-]{16,}[\"']"),
+]
+PERSON_RULES = [
+    ("telefono", r"(?<![\w+])\+(?:39[ .-]?\d{2,4}[ .-]?\d{3,4}[ .-]?\d{3,4}|[1-9]\d{9,13})\b"),
+    ("ID WhatsApp", r"\b\d{8,20}(?:-\d+)?@(?:s\.whatsapp\.net|g\.us|c\.us|lid)\b"),
+    ("ID Discord", r"(?<![\w.])\d{17,20}(?![\w.])"),
+]
+RULES = [(label, re.compile(rx)) for label, rx in PERSON_RULES + SECRET_RULES]
+NUMBER_RULES = {label for label, _ in PERSON_RULES}
+# Numeri da test ed esempi: cinque cifre in fila (12345, 98765) o ripetute (00000).
+# Tarato l'08/10 sulla storia dei 18 repo pubblici: in jarvis-claudecode erano finti
+# così quasi tutti i telefoni e gli ID dei test, e la guardia li fermava a ogni modifica.
+SYNTHETIC = re.compile(r"(\d)\1{4}|01234|12345|23456|34567|45678|56789|98765|87654|76543|65432|54321|43210")
+EMAIL = re.compile(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}\b")
+# Indirizzi che non sono di nessuno: il remote ssh di GitHub, i noreply, i ruoli
+# (hello@, support@) e i segnaposto degli esempi, che nella taratura erano tutti i casi.
+EMAIL_OK = re.compile(
+    r"(?i)^(?:git|noreply|no-reply|you|your|yourname|user|username|name|email|me|x|io|test|demo|john|jane|"
+    r"foo|bar|someone|info|hello|hi|contact|support|admin|team|sales)@"
+    r"|@(?:[\w.-]+\.)?(?:example\.(?:com|org|net|it)|noreply\.github\.com|test|test\.it|company\.com|"
+    r"domain\.com|email\.com|y\.it|y\.zz|invalid|s\.whatsapp\.net|g\.us|c\.us)$")
+GITHUB_URL = re.compile(r"^(?:git@github\.com:|ssh://git@github\.com/|https://(?:[^@/]+@)?github\.com/)([\w.-]+)/([\w.-]+?)(?:\.git)?/?$")
+
+
+def git(*args):
+    return subprocess.run(["git", *args], capture_output=True, text=True, encoding="utf-8", errors="replace")
+
+
+def load_names():
+    """Regex dei nomi, o None se il file manca o è ancora cifrato (git-crypt bloccato)."""
+    try:
+        with open(NAMES_FILE, "rb") as f:
+            raw = f.read()
+    except OSError:
+        return None
+    if raw.startswith(b"\0GITCRYPT"):
+        return None
+    names = [n.strip() for n in raw.decode("utf-8", "replace").splitlines()]
+    names = [n for n in names if n and not n.startswith("#")]
+    if not names:
+        return None
+
+    def alternative(name):
+        words = r"\s+".join(map(re.escape, name.split()))
+        # Scritto con una maiuscola nel file = maiuscole esatte: serve ai cognomi che sono
+        # anche parole comuni, come «Leone» contro «il leone» (in darkroom un cognome
+        # dell'elenco compariva come parola qualunque in un'eval, 08/10).
+        return words if name != name.lower() else f"(?i:{words})"
+
+    alternatives = "|".join(map(alternative, names))
+    # Davanti nessuna lettera («Marianna» non contiene Anna); dietro nessuna minuscola,
+    # così passano «anna-check» e «annaDaily» ma non «annalisa».
+    return re.compile(rf"(?<![^\W\d_])(?:{alternatives})(?![a-zà-ÿ])")
+
+
+def visibility(url):
+    """'public', 'private' o 'unknown' per un repo GitHub; None se l'URL non è GitHub."""
+    m = GITHUB_URL.match(url)
+    if not m:
+        return None
+    repo = f"{m[1]}/{m[2]}"
+    # Senza autenticazione l'API risponde 200 solo a un repo pubblico, 404 a un privato.
+    req = urllib.request.Request(f"https://api.github.com/repos/{repo}", method="HEAD",
+                                 headers={"User-Agent": "push-guard"})
+    try:
+        with urllib.request.urlopen(req, timeout=4):
+            return "public"
+    except urllib.error.HTTPError as e:
+        if e.code == 404:
+            return "private"
+    except OSError:
+        pass
+    # Limite di 60 richieste l'ora senza token, o rete instabile: chiedo a gh, autenticato.
+    try:
+        out = subprocess.run(["gh", "api", f"repos/{repo}"], capture_output=True, text=True, timeout=8)
+        if out.returncode == 0:
+            return "private" if json.loads(out.stdout).get("private") else "public"
+    except (OSError, subprocess.TimeoutExpired, ValueError):
+        pass
+    return "unknown"
+
+
+def is_zero(sha):
+    return set(sha) == {"0"}
+
+
+def range_args(local_sha, remote_sha):
+    """Gli argomenti di rev-list per i commit che il remoto non ha ancora."""
+    if not is_zero(remote_sha) and git("cat-file", "-e", f"{remote_sha}^{{commit}}").returncode == 0:
+        return [f"{remote_sha}..{local_sha}"]
+    # Ramo nuovo, o un remoto con commit che qui non ci sono: tutto ciò che nessun remoto
+    # conosciuto ha già. Al primo push di un repo vuol dire tutta la storia, ed è giusto.
+    return [local_sha, "--not", "--remotes"]
+
+
+def mask(text):
+    return text[:4] + "…" if len(text) > 6 else "…"
+
+
+def check(text, sha, where, names, findings):
+    if names:
+        for m in names.finditer(text):
+            findings.append((sha, where, "nome di persona", m.group(0)))
+    for label, rx in RULES:
+        for m in rx.finditer(text):
+            if label in NUMBER_RULES and SYNTHETIC.search(re.sub(r"\D", "", m.group(0))):
+                continue
+            findings.append((sha, where, label, mask(m.group(0))))
+    for m in EMAIL.finditer(text):
+        if not EMAIL_OK.search(m.group(0)):
+            findings.append((sha, where, "email", mask(m.group(0))))
+
+
+def scan(args, names):
+    # --no-textconv: un file cifrato da git-crypt resta binario e non si legge, come su GitHub.
+    out = git("log", "--no-merges", "-p", "-U0", "--no-textconv", "--no-ext-diff", "--no-color",
+              "--format=%x00%H%n%B%x00", *args)
+    if out.returncode != 0:
+        raise RuntimeError(out.stderr.strip() or "git log fallito")
+    findings = []
+    parts = out.stdout.split("\0")
+    for i in range(1, len(parts), 2):
+        sha, _, body = parts[i].partition("\n")
+        for line in body.splitlines():
+            check(line, sha, "messaggio", names, findings)
+        patch = parts[i + 1] if i + 1 < len(parts) else ""
+        path, lineno, in_header = None, 0, False
+        for line in patch.splitlines():
+            if line.startswith("diff --git "):
+                in_header = True
+            elif in_header and line.startswith("+++ "):
+                path = line[6:] if line.startswith("+++ b/") else None
+                # Il nome del file conta quanto il contenuto: lo script trapelato l'08/10
+                # aveva il nome della persona proprio nel nome del file.
+                if path:
+                    check(path, sha, path, names, findings)
+            elif in_header and line.startswith(("rename to ", "copy to ")):
+                target = line.split(" ", 2)[2]
+                check(target, sha, target, names, findings)
+            elif line.startswith("Binary files ") and " and b/" in line:
+                target = line.rsplit(" and b/", 1)[1].removesuffix(" differ")
+                check(target, sha, target, names, findings)
+            elif line.startswith("@@"):
+                in_header = False
+                m = re.search(r"\+(\d+)", line)
+                lineno = int(m[1]) if m else 0
+            elif not in_header and line.startswith("+"):
+                check(line[1:], sha, f"{path}:{lineno}", names, findings)
+                lineno += 1
+    return findings
+
+
+def main():
+    # Lo stdin si legge sempre per intero: git ci scrive i ref e non va lasciato appeso.
+    refs = [line.split() for line in sys.stdin.read().splitlines() if line.strip()]
+    mode = os.environ.get("PUSH_GUARD", "").strip().lower()
+    if mode == "off":
+        print("[push-guard] spento per questo push (PUSH_GUARD=off).", file=sys.stderr)
+        return 0
+    url = sys.argv[2] if len(sys.argv) > 2 else (sys.argv[1] if len(sys.argv) > 1 else "")
+    vis = "force" if mode == "force" else visibility(url)
+    if vis in (None, "private"):
+        return 0
+    names = load_names()
+    findings = []
+    try:
+        for parts in refs:
+            if len(parts) != 4 or is_zero(parts[1]):
+                continue  # riga malformata, o cancellazione di un ramo: niente da portare fuori
+            findings += scan(range_args(parts[1], parts[3]), names)
+    except Exception as e:
+        print(f"\n[push-guard] controllo non riuscito ({e}): push fermato nel dubbio.\n"
+              "    Se sai cosa stai mandando: PUSH_GUARD=off git push\n", file=sys.stderr)
+        return 1
+    if names is None:
+        print(f"[push-guard] elenco dei nomi illeggibile ({NAMES_FILE}): controllo solo numeri, ID e token.",
+              file=sys.stderr)
+    findings = list(dict.fromkeys(findings))
+    if not findings:
+        return 0
+    why = {"public": "è pubblico", "unknown": "forse è pubblico (GitHub non risponde)",
+           "force": "è controllato su richiesta (PUSH_GUARD=force)"}[vis]
+    print(f"\n[push-guard] {url} {why}: push fermato, {len(findings)} dati da non pubblicare.", file=sys.stderr)
+    for sha, where, label, shown in findings[:MAX_SHOWN]:
+        print(f"  {sha[:7]}  {where}  {label}: {shown}", file=sys.stderr)
+    if len(findings) > MAX_SHOWN:
+        print(f"  … e altri {len(findings) - MAX_SHOWN}", file=sys.stderr)
+    print("Togli i dati, riscrivi quei commit e ripusha. Falso positivo: PUSH_GUARD=off git push\n",
+          file=sys.stderr)
+    return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

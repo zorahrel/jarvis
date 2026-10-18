@@ -1,0 +1,56 @@
+#!/usr/bin/env python3
+# Ricompone il git bundle che una sessione cloud senza push ha stampato a pezzi
+# (`sed -n 'Np' /tmp/consegna.b64`, una chiamata Bash per riga): legge le uscite ESATTE degli
+# strumenti dagli eventi della sessione, mai il testo del modello, che ricopiando corrompe.
+# Uso: cloud-bundle <sid> <file.bundle>   Esce 1 se mancano pezzi o lo sha256 non torna.
+import base64, hashlib, json, os, re, subprocess, sys, urllib.request
+sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
+from cloud_conto import oauth as conto_oauth, org as conto_org, cli_env  # CLOUD_ACCOUNT=auto-N: altro account di vdm
+sid, out = sys.argv[1], sys.argv[2]
+tok, org = conto_oauth()["accessToken"], conto_org()
+H = {"Authorization": "Bearer " + tok, "anthropic-version": "2023-06-01", "anthropic-beta": "ccr-byoc-2025-07-29",
+     "x-organization-uuid": org, "User-Agent": "cloud-bundle/1"}
+evs, after = [], None
+while True:
+    q = f"https://api.anthropic.com/v1/sessions/{sid}/events?limit=1000" + (f"&after_id={after}" if after else "")
+    d = json.load(urllib.request.urlopen(urllib.request.Request(q, headers=H), timeout=30))
+    evs += d.get("data", [])
+    if not d.get("has_more"): break
+    after = d.get("last_id") or evs[-1].get("id")
+pezzo, uscita, conta, sha, dichiarato = {}, {}, None, None, None
+for e in evs:
+    m = e.get("message") or {}
+    for b in m.get("content") or [] if isinstance(m.get("content"), list) else []:
+        if b.get("type") == "text":
+            # La riga finale «BUNDLE <righe> <sha256>» vince su wc e sha256sum: un `wc -c` sullo
+            # stesso file ha la stessa forma di `wc -l` (T1, 08/10: 600 mila «pezzi» attesi).
+            for k in re.finditer(r"\bBUNDLE (\d+) ([0-9a-f]{64})\b", b.get("text", "")):
+                dichiarato = (int(k.group(1)), k.group(2))
+        if b.get("type") == "tool_use" and b.get("name") == "Bash":
+            c = b.get("input", {}).get("command", "")
+            k = re.fullmatch(r"\s*sed -n '(\d+)p' /tmp/consegna\.b64\s*", c)
+            if k: pezzo[b["id"]] = int(k.group(1))
+    tur = e.get("tool_use_result")
+    for b in m.get("content") or [] if isinstance(m.get("content"), list) else []:
+        if b.get("type") == "tool_result":
+            txt = tur.get("stdout") if isinstance(tur, dict) and "stdout" in tur else (
+                b["content"] if isinstance(b.get("content"), str) else "".join(x.get("text", "") for x in b.get("content") or []))
+            uscita[b["tool_use_id"]] = txt
+            s = re.search(r"^\s*(\d+) /tmp/consegna\.b64\s*$", txt or "", re.M)
+            if s: conta = int(s.group(1))
+            h = re.search(r"\b([0-9a-f]{64})\s+/tmp/consegna\.bundle", txt or "")
+            if h: sha = h.group(1)
+righe = {}
+for tid, n in pezzo.items():
+    if tid in uscita: righe[n] = uscita[tid].strip()
+if not righe: sys.exit("nessun pezzo stampato")
+# wc -l conta i newline: se l'ultima riga di fold non ne ha, dice una riga in meno (T5, 08/10).
+conta = max(conta or 0, max(righe))
+if dichiarato: conta, sha = dichiarato
+manca = [n for n in range(1, conta + 1) if n not in righe]
+if manca: sys.exit(f"mancano i pezzi {manca} di {conta}")
+dati = base64.b64decode("".join(righe[n] for n in range(1, conta + 1)))
+open(out, "wb").write(dati)
+got = hashlib.sha256(dati).hexdigest()
+print(f"{conta} pezzi, {len(dati)} byte, sha256 {got[:16]}…", "OK" if sha in (None, got) else f"DIVERSO da {sha[:16]}…")
+sys.exit(0 if sha in (None, got) else 1)

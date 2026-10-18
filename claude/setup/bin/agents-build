@@ -1,0 +1,44 @@
+#!/bin/zsh
+# Genera ~/.agents/AGENTS.md e i SKILL.md delle skill nate da slash command.
+# AGENTS.md per gli harness che non leggono CLAUDE.md né gli output style
+# (jcode via ~/.jcode/prompt-overlay.md, Codex via ~/.codex/AGENTS.md): CLAUDE.md con gli
+# @import risolti + il corpo dello stile attention-span. Niente ~/AGENTS.md: Claude Code lo
+# legge in ~ e sottocartelle, e sarebbe un doppione da ~10k token di CLAUDE.md (29/09).
+#   agents-build          rigenera (lo lancia da solo com.jarvis.agents-build quando cambiano le sorgenti)
+#   agents-build --check  exit 1 se il file generato è indietro rispetto alle sorgenti
+set -euo pipefail
+OUT=~/.agents/AGENTS.md
+SRC=~/.claude/CLAUDE.md
+STYLE=~/.agents/vendor/attention-span/output-styles/${ATTENTION_SPAN_STYLE:-attention-kind}.md
+tmp=$(mktemp)
+{
+  print -r -- "<!-- GENERATO da ~/.agents/bin/agents-build: non modificare, cambia ~/.claude/CLAUDE.md o i file importati. -->"
+  print -r -- "<!-- Se leggi questo da Codex o jcode: dove si nominano tool di Claude Code, usa l'equivalente del tuo harness. -->"
+  print
+  while IFS= read -r line; do
+    if [[ $line == @* ]]; then
+      f=${line#@}; f=${f/#\~/$HOME}
+      if [[ -f $f ]]; then cat "$f"; else print -r -- "$line"; fi
+    else
+      print -r -- "$line"
+    fi
+  done < $SRC
+  print; print -r -- "<!-- attention-span:start -->"
+  sed '1,/<!-- body-start -->/d' $STYLE
+  print -r -- "<!-- attention-span:end -->"
+} > $tmp
+# Skill nate da slash command: SKILL.md dev'essere un file vero, Codex salta quelli symlink
+# (misurato 15/09: commit, recap, spec, vai invisibili). La sorgente è il link .source accanto.
+stale=0
+for src in ~/.agents/skills-from-commands/*/.source(N); do
+  dst=${src:h}/SKILL.md
+  cmp -s $src $dst && continue
+  if [[ ${1:-} == --check ]]; then echo "${src:h:t}/SKILL.md indietro"; stale=1; else cp $src $dst; fi
+done
+if [[ ${1:-} == --check ]]; then
+  cmp -s $tmp $OUT || { echo "AGENTS.md indietro: lancia agents-build"; stale=1; }
+  rm $tmp; exit $stale
+fi
+[[ -L $OUT ]] && rm $OUT
+mv $tmp $OUT; chmod 644 $OUT
+echo "AGENTS.md $(wc -c < $OUT | tr -d ' ') byte"

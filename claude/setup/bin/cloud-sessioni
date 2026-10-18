@@ -1,0 +1,111 @@
+#!/usr/bin/env python3
+# Sessioni cloud di Claude Code in sola lettura, senza browser e senza teleport.
+# Usa la stessa API della CLI (/v1/sessions, beta ccr-byoc-2025-07-29) con il token
+# OAuth del Portachiavi, mai stampato.
+#
+#   cloud-sessioni                    ultime 10 sessioni: stato, modello, titolo
+#   cloud-sessioni <id>               stato, costo, ultimi messaggi e comandi
+#   cloud-sessioni <id> --estrai DIR  salva i blocchi «=== percorso ===» dell'ultimo messaggio
+#
+# Il costo è quello che la sessione dichiara nei suoi eventi `result` (total_cost_usd,
+# prezzi di listino): arriva a fine turno, quindi una sessione ancora al lavoro mostra
+# solo i turni chiusi. Il saldo vero del credito lo dà `credito-cloud`.
+import json, os, re, subprocess, sys, time, urllib.request, urllib.error
+sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
+from cloud_conto import oauth as conto_oauth, org as conto_org  # CLOUD_ACCOUNT=auto-N: altro account di vdm
+
+API = "https://api.anthropic.com"
+
+
+def creds():
+    oauth = conto_oauth()
+    if (oauth.get("expiresAt") or 0) / 1000 < time.time() + 30:
+        print("cloud-sessioni: token scaduto, lancia `claude -p ok --max-turns 1` e riprova", file=sys.stderr)
+        sys.exit(3)
+    return oauth["accessToken"], conto_org()
+
+
+TOKEN, ORG = creds()
+
+
+def get(path):
+    req = urllib.request.Request(API + path, headers={
+        "Authorization": "Bearer " + TOKEN, "anthropic-version": "2023-06-01",
+        "anthropic-beta": "ccr-byoc-2025-07-29", "x-organization-uuid": ORG or "",
+        "Content-Type": "application/json", "User-Agent": "cloud-sessioni/1"})
+    try:
+        with urllib.request.urlopen(req, timeout=20) as r:
+            return json.load(r)
+    except urllib.error.HTTPError as e:
+        sys.exit(f"cloud-sessioni: HTTP {e.code} su {path.split('?')[0]}")
+
+
+def events(sid):
+    out, after = [], None
+    while True:
+        q = f"/v1/sessions/{sid}/events?limit=1000" + (f"&after_id={after}" if after else "")
+        page = get(q)
+        out += page.get("data", [])
+        if not page.get("has_more"):
+            return out
+        after = page.get("last_id")
+
+
+def short(s, n):
+    s = " ".join(str(s).split())
+    return s if len(s) <= n else s[: n - 1] + "…"
+
+
+args = [a for a in sys.argv[1:]]
+if not args:
+    for s in get("/v1/sessions?limit=10").get("data", []):
+        ctx = s.get("session_context") or {}
+        print(f"{s['id']}  {s.get('session_status', '?'):9} {s.get('created_at', '')[:16]}  "
+              f"{(ctx.get('model') or '-'):18} {short(s.get('title', ''), 60)}")
+    sys.exit(0)
+
+sid = args[0]
+meta = get(f"/v1/sessions/{sid}")
+evs = events(sid)
+results = [e for e in evs if e.get("type") == "result"]
+cost_last = results[-1].get("total_cost_usd") if results else None
+cost_sum = sum(e.get("total_cost_usd") or 0 for e in results)
+ctx = meta.get("session_context") or {}
+print(f"{sid}  stato={meta.get('session_status')}  modello={ctx.get('model')}  "
+      f"effort={ctx.get('effort_level')}  aggiornata={meta.get('updated_at', '')[:19]}Z")
+print(f"eventi={len(evs)}  turni chiusi={len(results)}  costo dichiarato: ultimo result "
+      f"${cost_last if cost_last is not None else 0:.2f}, somma ${cost_sum:.2f}")
+print(f"https://claude.ai/code/{sid}")
+
+texts, tools = [], []
+for e in evs:
+    if e.get("type") != "assistant":
+        continue
+    for b in (e.get("message") or {}).get("content") or []:
+        if b.get("type") == "text" and b.get("text", "").strip():
+            texts.append(b["text"])
+        elif b.get("type") == "tool_use":
+            inp = b.get("input") or {}
+            tools.append(f"{b.get('name')}: {short(inp.get('command') or inp.get('file_path') or json.dumps(inp), 110)}")
+
+if "--estrai" in args:
+    dest = args[args.index("--estrai") + 1]
+    last = texts[-1] if texts else ""
+    blocks = re.split(r"^=== (.+?) ===\s*$", last, flags=re.M)
+    n = 0
+    for path, body in zip(blocks[1::2], blocks[2::2]):
+        target = os.path.join(dest, path.strip().lstrip("/"))
+        os.makedirs(os.path.dirname(target), exist_ok=True)
+        open(target, "w").write(body.strip("\n") + "\n")
+        print(f"estratto {target}")
+        n += 1
+    if n == 0:
+        sys.exit("cloud-sessioni: nessun blocco «=== percorso ===» nell'ultimo messaggio")
+    sys.exit(0)
+
+print("\nultimi comandi:")
+for t in tools[-6:]:
+    print("  " + t)
+print("\nultimi messaggi:")
+for t in texts[-3:]:
+    print("  · " + short(t, 400))

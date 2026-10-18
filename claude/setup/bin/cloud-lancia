@@ -1,0 +1,81 @@
+#!/bin/bash
+# Crea una sessione cloud di Claude Code da script e stampa il suo id.
+#
+# Perché serve: `claude --cloud` rifiuta di partire senza terminale
+# («--cloud requires an interactive terminal»), quindi da un agente o da cron non va.
+# Qui gira dentro un PTY di `expect`, aspetta l'id della sessione e si stacca: la
+# sessione continua nel cloud. Il testo del compito va SUBITO dopo --cloud (è il valore
+# dell'opzione, non un prompt posizionale).
+#
+# Uso: cloud-lancia [-C repo] [-m modello] [-e effort] <file-prompt>
+#   -C  cartella del repo: la VM clona il ramo corrente da GitHub se l'app GitHub di
+#       Claude è installata sul repo, altrimenti carica uno snapshot senza storia e
+#       senza remote (niente push: il risultato si recupera con `cloud-sessioni --estrai`)
+#   -m  sonnet | opus | id completo (default: opus)
+#   -e  low | medium | high | xhigh | max (default: high)
+# Esce 0 e stampa «SID=session_...» · 1 se la sessione non è stata creata.
+# Il log del PTY e quello di debug restano in $TMPDIR/cloud-lancia-<ora>.*
+set -euo pipefail
+repo=.; model=opus; effort=high
+while getopts "C:m:e:" o; do
+  case $o in C) repo=$OPTARG ;; m) model=$OPTARG ;; e) effort=$OPTARG ;; *) exit 2 ;; esac
+done
+shift $((OPTIND - 1))
+prompt_file=${1:?uso: cloud-lancia [-C repo] [-m modello] [-e effort] <file-prompt>}
+prompt_file=$(cd "$(dirname "$prompt_file")" && pwd)/$(basename "$prompt_file")
+base=${TMPDIR:-/tmp}/cloud-lancia-$(date +%Y%m%d-%H%M%S)
+cd "$repo"
+
+# CLOUD_ACCOUNT=auto-N: la sessione nasce su un altro account di vdm (config isolata e suo token,
+# letto dal file che vdm rinnova; finisce in una variabile d'ambiente, mai a schermo).
+if [ -n "${CLOUD_ACCOUNT:-}" ]; then
+  eval "$(python3 - <<'PY'
+import os, shlex, sys
+sys.path.insert(0, os.path.expanduser("~/.claude/setup/bin"))
+import subprocess
+from cloud_conto import cli_env
+common = subprocess.run(["git", "rev-parse", "--path-format=absolute", "--git-common-dir"], capture_output=True, text=True).stdout.strip()
+e = cli_env(trust=[os.getcwd()] + ([os.path.dirname(common)] if common.endswith("/.git") else []))
+for k in ("CLAUDE_CONFIG_DIR", "CLAUDE_CODE_OAUTH_TOKEN", "CLAUDE_CODE_ORGANIZATION_UUID"): print(f"export {k}={shlex.quote(e[k])}")
+PY
+)"
+fi
+
+# ANTHROPIC_BASE_URL punta al proxy VDM (:3336), che ruota gli account: la sessione deve
+# nascere sull'account loggato, quello del credito cloud, quindi si va diretti all'API.
+cat > "$base.exp" <<'EXP'
+set f [open [lindex $argv 0] r]; set prompt [read $f]; close $f
+set timeout 300
+log_file -noappend [lindex $argv 1]
+spawn -noecho claude --cloud $prompt --model [lindex $argv 2] --effort [lindex $argv 3] \
+  --settings {{"env":{"ANTHROPIC_BASE_URL":"https://api.anthropic.com"}}} --debug-file [lindex $argv 4]
+# (?i) qui non funziona (expect 5.45 di macOS): l'insensibilità alle maiuscole la dà -nocase
+expect {
+  -nocase -re {do you trust|trust this folder} { send "\r"; exp_continue }
+  -re {(session_[A-Za-z0-9]{20,})} { puts "\nSID=$expect_out(1,string)" }
+  -nocase -re {error[^\r\n]*} { puts "\nERR=$expect_out(0,string)"; exp_continue }
+  timeout { puts "\nTIMEOUT"; exit 2 }
+  eof { puts "\nEOF"; exit 3 }
+}
+# lascia finire la parte locale prima di staccarsi: chiudere il PTY non ferma la sessione
+set timeout 60
+expect {
+  -nocase -re {ready|running|cloned|starting claude code|connected} { }
+  timeout { }
+  eof { exit 0 }
+}
+exit 0
+EXP
+expect "$base.exp" "$prompt_file" "$base.pty.log" "$model" "$effort" "$base.debug.log" > "$base.out" 2>&1 || true
+
+sid=$(grep -a -o -E 'SID=session_[A-Za-z0-9]+' "$base.out" | head -1 | cut -d= -f2 || true)
+if [ -z "$sid" ]; then
+  echo "cloud-lancia: sessione non creata. PTY: $base.pty.log  debug: $base.debug.log" >&2
+  grep -a -o -E 'ERR=.*|TIMEOUT|EOF' "$base.out" | head -3 >&2 || true
+  exit 1
+fi
+echo "SID=$sid"
+echo "https://claude.ai/code/$sid"
+bundle=$(grep -a -o -E 'Bundling \(reason: [a-z_]+\)' "$base.debug.log" 2>/dev/null | head -1 || true)
+[ -n "$bundle" ] && echo "origine: snapshot caricato, ${bundle#Bundling }: niente remote, niente push"
+exit 0

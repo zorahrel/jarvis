@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+# oc-key — registra la Cerebras API key per opencode (una volta sola).
+# Uso: oc-key csk-xxxxxxxxxxxxxxxx
+set -euo pipefail
+KEY="${1:-}"
+if [[ -z "$KEY" ]]; then
+  echo "Uso: oc-key <CEREBRAS_API_KEY>   (crea la key gratis su https://cloud.cerebras.ai)" >&2
+  exit 1
+fi
+ENV="$HOME/.claude/jarvis/router/.env"
+ZRC="$HOME/.zshrc"
+# router .env (Jarvis)
+if [[ -f "$ENV" ]]; then
+  grep -q '^CEREBRAS_API_KEY=' "$ENV" \
+    && sed -i '' "s|^CEREBRAS_API_KEY=.*|CEREBRAS_API_KEY=$KEY|" "$ENV" \
+    || printf '\n# Cerebras (opencode free tier)\nCEREBRAS_API_KEY=%s\n' "$KEY" >> "$ENV"
+fi
+# zshrc export (per le shell interattive)
+grep -q '^export CEREBRAS_API_KEY=' "$ZRC" 2>/dev/null \
+  && sed -i '' "s|^export CEREBRAS_API_KEY=.*|export CEREBRAS_API_KEY=$KEY|" "$ZRC" \
+  || printf '\nexport CEREBRAS_API_KEY=%s\n' "$KEY" >> "$ZRC"
+export CEREBRAS_API_KEY="$KEY"
+echo "✓ Key registrata in router/.env + ~/.zshrc (••••${KEY: -4})"

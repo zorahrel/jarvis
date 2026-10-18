@@ -1,0 +1,197 @@
+#!/usr/bin/env python3
+"""schermo — navigare il Mac senza mani: osserva, decide con Jev, clicca, verifica.
+
+    schermo albero Calcolatrice
+    schermo fai Calcolatrice "premi il sette"
+    schermo fai Safari "apri una scheda nuova" --secco     # decide e non tocca
+
+Il ciclo e' osserva -> decide -> agisci -> verifica. L'occhio e' l'albero di
+accessibilita' (testo puro), il cervello e' Jev via `jev pick`, il braccio e'
+il nodo Peekaboo di OpenClaw. Niente screenshot dati a un modello: Jev non vede
+immagini e non gli servono.
+
+Tre cose misurate il 17/09 che sembrano dettagli e invece sono il motivo per cui
+questo file esiste:
+
+1. Il focus non si sposta da Peekaboo. `bring_to_front` va in timeout perche' il
+   nodo ha appleScript=no, e l'albero segue sempre l'app davanti. Quindi il fuoco
+   si mette con `osascript ... activate` dal Mac, che non passa dal nodo.
+
+2. Il parametro `app` di get_accessibility_tree e' ignorato. Serve solo a rendere
+   leggibile il comando: cio' che conta e' chi e' frontmost quando si legge.
+
+3. Tre spazi di coordinate, non due. L'albero parla in punti logici globali
+   (la seconda scrivania ha y negative); il click vuole x/y dentro un frame di
+   riferimento, con `refWidth`/`refHeight` e il `displayFrameId` di uno snapshot
+   fresco. La conversione sta in `a_frame()`, e senza l'origine dello schermo
+   e' sbagliata di 829 punti.
+
+L'albero scade: tra la lettura e il click le finestre si spostano. Qui si rilegge
+sempre subito prima di agire, e non si riusa mai un albero salvato.
+"""
+import json
+import re
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+NODE_CACHE = Path.home() / ".jarvis" / "schermo-node.txt"
+
+
+def sh(cmd, **kw):
+    return subprocess.run(cmd, capture_output=True, text=True, **kw)
+
+
+def nodo():
+    """Id del Mac pairato. In cache: cambia solo se si ri-appaia la macchina."""
+    if NODE_CACHE.exists():
+        return NODE_CACHE.read_text().strip()
+    r = sh(["openclaw", "nodes", "status", "--json"])
+    m = re.search(r'"nodeId"\s*:\s*"([0-9a-f]{64})"', r.stdout)
+    if not m:
+        sys.exit("nessun nodo pairato: `openclaw nodes status`")
+    NODE_CACHE.parent.mkdir(parents=True, exist_ok=True)
+    NODE_CACHE.write_text(m.group(1))
+    return m.group(1)
+
+
+def invoke(comando, params, timeout=45):
+    """Una chiamata al nodo. La CLI stampa righe [openclaw] dopo il JSON in caso
+    d'errore, quindi si taglia li' invece di fidarsi del parser."""
+    r = sh(["openclaw", "nodes", "invoke", "--node", nodo(), "--command", comando,
+            "--params", json.dumps(params), "--invoke-timeout", str(timeout * 1000)],
+           timeout=timeout + 15)
+    testo = r.stdout.split("\n[openclaw]")[0].strip()
+    try:
+        d = json.loads(testo)
+    except json.JSONDecodeError:
+        sys.exit(f"risposta illeggibile dal nodo:\n{(r.stdout + r.stderr)[:400]}")
+    if not d.get("ok"):
+        sys.exit(f"{comando}: {d.get('error', {}).get('message', 'errore')}")
+    return d["payload"]
+
+
+def fuoco(app):
+    """Porta l'app davanti. Passa da osascript e non dal nodo: vedi nota 1.
+
+    Il `with timeout` non e' zelo: senza, un AppleEvent che non torna blocca
+    osascript per due minuti buoni, e l'errore -1712 arriva quando ormai non
+    serve piu'. Usare il nome inglese dell'app (Calculator, non Calcolatrice):
+    quello localizzato fa scadere l'evento.
+    """
+    r = sh(["osascript", "-e",
+            f'with timeout of 8 seconds\ntell application "{app}" to activate\nend timeout'],
+           timeout=15)
+    if r.returncode:
+        sys.exit(f"non riesco ad attivare {app}: {r.stderr.strip()[:200]}")
+    time.sleep(0.6)
+    davanti = sh(["osascript", "-e",
+                  "tell application \"System Events\" to name of first process whose frontmost is true"])
+    return davanti.stdout.strip()
+
+
+def albero(app, max_el=200):
+    return invoke("computer.act", {"action": "get_accessibility_tree",
+                                   "app": app, "maxElements": max_el})
+
+
+def schermo_di(tree):
+    """Origine e dimensione logica dello schermo su cui sta l'app.
+
+    La barra dei menu arriva gratis dentro ogni albero e copre esattamente la
+    larghezza del suo schermo: e' il modo piu' economico di sapere dove comincia
+    la scrivania, senza interrogare CoreGraphics.
+    """
+    for e in tree.get("details", {}).get("elements", []):
+        if e.get("role") == "menu" and e.get("bounds", {}).get("width", 0) > 500:
+            b = e["bounds"]
+            return b["x"], b["y"], b["width"], None
+    return 0, 0, 1728, None
+
+
+def snapshot(indice, max_w=800):
+    return invoke("screen.snapshot", {"screenIndex": indice, "maxWidth": max_w})
+
+
+def a_frame(x, y, ox, oy, larghezza_logica, frame):
+    """Punto logico globale -> pixel del frame di riferimento. Vedi nota 3."""
+    scala = frame["width"] / larghezza_logica
+    return round((x - ox) * scala), round((y - oy) * scala)
+
+
+def valori(tree):
+    return [e.get("value") for e in tree.get("details", {}).get("elements", []) if e.get("value")]
+
+
+def cmd_albero(args):
+    print(f"[fuoco] {fuoco(args.app)}", file=sys.stderr)
+    print(json.dumps(albero(args.app, args.max_elements), ensure_ascii=False, indent=2))
+    return 0
+
+
+def cmd_fai(args):
+    davanti = fuoco(args.app)
+    t = albero(args.app, args.max_elements)
+    n = t.get("details", {}).get("totalElementCount", 0)
+    print(f"[fuoco] {davanti} · {n} elementi", file=sys.stderr)
+
+    p = subprocess.run(["jev", "pick", args.goal, "--tree", "-",
+                        "--gate", str(args.gate), "--max-risk", str(args.max_risk)],
+                       input=json.dumps(t), capture_output=True, text=True)
+    if not p.stdout.strip():
+        sys.exit(f"jev pick muto: {p.stderr.strip()[:300]}")
+    d = json.loads(p.stdout)
+    print(json.dumps(d, ensure_ascii=False, indent=2))
+
+    if d["azione"] != "agisci":
+        # il gate e' il punto dello strumento: una scelta incerta non clicca
+        return 3
+    if args.secco:
+        print("[secco] non clicco", file=sys.stderr)
+        return 0
+
+    ox, oy, lw, _ = schermo_di(t)
+    idx = 0 if ox == 0 and oy == 0 else args.screen
+    frame = snapshot(idx)
+    fx, fy = a_frame(d["click"][0], d["click"][1], ox, oy, lw, frame)
+    invoke("computer.act", {"action": "left_click", "x": fx, "y": fy,
+                            "refWidth": frame["width"], "refHeight": frame["height"],
+                            "displayFrameId": frame["displayFrameId"], "screenIndex": idx})
+    print(f"[click] {d['elemento'].get('label')} @ frame({fx},{fy})", file=sys.stderr)
+
+    time.sleep(0.8)
+    dopo = valori(albero(args.app, args.max_elements))
+    if dopo != valori(t):
+        print(f"[verifica] valori a schermo ora: {dopo}", file=sys.stderr)
+    else:
+        print("[verifica] nessun valore a schermo e' cambiato", file=sys.stderr)
+    return 0
+
+
+def main():
+    import argparse
+    ap = argparse.ArgumentParser(prog="schermo", description=__doc__.split("\n")[0])
+    sub = ap.add_subparsers(dest="cmd", required=True)
+
+    a = sub.add_parser("albero", help="stampa l'albero di accessibilita' dell'app")
+    a.add_argument("app")
+    a.add_argument("--max-elements", type=int, default=200)
+    a.set_defaults(fn=cmd_albero)
+
+    f = sub.add_parser("fai", help="esegui un obiettivo in italiano sull'app")
+    f.add_argument("app")
+    f.add_argument("goal")
+    f.add_argument("--secco", action="store_true", help="decide e mostra, senza cliccare")
+    f.add_argument("--gate", type=float, default=0.75)
+    f.add_argument("--max-risk", type=float, default=1.5)
+    f.add_argument("--screen", type=int, default=1, help="screenIndex per gli schermi esterni")
+    f.add_argument("--max-elements", type=int, default=200)
+    f.set_defaults(fn=cmd_fai)
+
+    args = ap.parse_args()
+    sys.exit(args.fn(args))
+
+
+if __name__ == "__main__":
+    main()

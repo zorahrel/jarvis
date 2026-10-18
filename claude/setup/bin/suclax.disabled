@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+# suclax — passa da VDM: prima abbonamenti disponibili, poi API per priorità.
+# Le chiavi restano nel Keychain; VDM aggiunge il workspace di ogni account.
+# I bonus Max/Team coprono API e SDK/-p, non Claude Code interattivo.
+# Uso: suclax [stessi argomenti di claude]   (senza argomenti: sessione interattiva)
+set -euo pipefail
+unset CLAUDECODE
+unset ANTHROPIC_AUTH_TOKEN ANTHROPIC_PROFILE
+unset ANTHROPIC_CUSTOM_HEADERS
+KEY="$(/usr/bin/security find-generic-password -s 'anthropic' -a 'api-main' -w 2>/dev/null)" || true
+if [[ -z "${KEY:-}" ]]; then
+  echo "suclax: chiave 'anthropic/api-main' non trovata nel Keychain" >&2
+  exit 1
+fi
+export ANTHROPIC_API_KEY="$KEY"
+PROXY="http://127.0.0.1:3336"
+export ANTHROPIC_BASE_URL="$PROXY"
+SETTINGS="$(cd "$(dirname "$0")" && pwd)/suclax-settings.json"
+exec claude --settings "$SETTINGS" --dangerously-skip-permissions "$@"

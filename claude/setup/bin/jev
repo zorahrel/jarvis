@@ -1,0 +1,284 @@
+#!/usr/bin/env python3
+"""jev — CLI per TypeSafe System One (modello Jev).
+
+La chiave sta nel Keychain (-s typesafe -a jev), mai in un file.
+
+L'API non espone nessun endpoint di usage e non manda header di rate limit:
+l'unico dato di consumo e' `usage` dentro ogni risposta. Per questo ogni
+chiamata viene appesa a ~/.jarvis/jev-usage.jsonl, ed e' `jev usage` a fare
+i totali. Senza quel log il consumo e' semplicemente non conoscibile.
+"""
+import argparse, csv, json, os, subprocess, sys, time, urllib.error, urllib.request
+from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
+
+API = "https://api.typesafe.ai/v1"
+LOG = Path.home() / ".jarvis" / "jev-usage.jsonl"
+PRICE_IN = 0.042 / 1_000_000  # $/token input, listino 17/09/2026. Output non fatturato.
+
+
+def key():
+    if os.environ.get("TYPESAFE_API_KEY"):
+        return os.environ["TYPESAFE_API_KEY"]
+    r = subprocess.run(["security", "find-generic-password", "-s", "typesafe", "-a", "jev", "-w"],
+                       capture_output=True, text=True)
+    if r.returncode:
+        sys.exit("chiave assente: security add-generic-password -s typesafe -a jev -w '<key>' -U")
+    return r.stdout.strip()
+
+
+def call(state, questions, model="jev-latest", tag="", retries=3):
+    body = json.dumps({"state": state, "model": model, "questions": questions}).encode()
+    req = urllib.request.Request(f"{API}/systemone", data=body, headers={
+        "Authorization": f"Bearer {key()}", "Content-Type": "application/json"})
+    for n in range(retries):
+        t0 = time.time()
+        try:
+            with urllib.request.urlopen(req, timeout=60) as r:
+                out = json.loads(r.read())
+            out["_ms"] = round((time.time() - t0) * 1000)
+            log(out, tag)
+            return out
+        except urllib.error.HTTPError as e:
+            msg = e.read().decode()[:300]
+            # 429 e 5xx sono transitori, il resto no: inutile ritentare un 400
+            if e.code in (429, 500, 502, 503, 504) and n < retries - 1:
+                time.sleep(2 ** n)
+                continue
+            return {"error": f"HTTP {e.code}", "detail": msg}
+        except Exception as e:
+            if n < retries - 1:
+                time.sleep(2 ** n)
+                continue
+            return {"error": str(e)}
+
+
+def log(resp, tag):
+    u = resp.get("usage") or {}
+    LOG.parent.mkdir(parents=True, exist_ok=True)
+    with LOG.open("a") as f:
+        f.write(json.dumps({"ts": time.time(), "tag": tag, "model": resp.get("model"),
+                            "in": u.get("input_tokens", 0), "out": u.get("output_tokens", 0),
+                            "ms": resp.get("_ms")}) + "\n")
+
+
+def build_questions(args):
+    if args.questions:
+        src = Path(args.questions).read_text() if Path(args.questions).exists() else args.questions
+        return json.loads(src)
+    q = {}
+    for i, n in enumerate(args.noul or []):
+        q[f"noul_{i}" if len(args.noul) > 1 else "noul"] = {"type": "noul", "instructions": n}
+    if args.choice:
+        head, *opts = args.choice
+        q["choice"] = {"type": "choice", "instructions": head,
+                       "criteria": dict(o.split("=", 1) for o in opts)}
+    if args.score:
+        head, *levels = args.score
+        q["score"] = {"type": "score", "instructions": head, "criteria": levels}
+    if not q:
+        sys.exit("serve almeno una domanda: --noul / --choice / --score / --questions")
+    return q
+
+
+def read_state(s):
+    if s == "-":
+        return sys.stdin.read()
+    if s.startswith("@"):
+        return Path(s[1:]).read_text()
+    return s
+
+
+def cmd_ask(args):
+    out = call(read_state(args.state), build_questions(args), args.model, args.tag)
+    print(json.dumps(out, indent=2, ensure_ascii=False))
+    return 1 if "error" in out else 0
+
+
+def cmd_batch(args):
+    questions = json.loads(Path(args.questions).read_text())
+    rows = list(csv.DictReader(open(args.input))) if args.input.endswith(".csv") \
+        else [json.loads(l) for l in open(args.input) if l.strip()]
+    if args.limit:
+        rows = rows[:args.limit]
+    tmpl = args.state_template
+
+    def one(row):
+        state = tmpl.format(**{k: (v or "") for k, v in row.items()})
+        r = call(state, questions, args.model, args.tag or Path(args.input).stem)
+        return {"_row": {k: row.get(k) for k in (args.keep or "").split(",") if k}, **r}
+
+    t0 = time.time()
+    with ThreadPoolExecutor(max_workers=args.workers) as ex:
+        res = list(ex.map(one, rows))
+    with open(args.out, "w") as f:
+        for r in res:
+            f.write(json.dumps(r, ensure_ascii=False) + "\n")
+    ok = sum(1 for r in res if "error" not in r)
+    tok = sum((r.get("usage") or {}).get("input_tokens", 0) for r in res)
+    print(f"{ok}/{len(res)} ok · {time.time()-t0:.1f}s · {tok} token input "
+          f"· ${tok*PRICE_IN:.4f} · -> {args.out}", file=sys.stderr)
+    return 0 if ok == len(res) else 1
+
+
+INTERATTIVI = {"button", "textField", "textArea", "link", "menuItem", "checkBox",
+               "radioButton", "popUpButton", "comboBox", "tab", "slider", "image", "cell"}
+
+
+def elementi(tree, max_el):
+    """Estrae gli elementi cliccabili da un albero di accessibilita' Peekaboo.
+
+    Il filtro non e' cosmetico: un albero reale e' per tre quarti `group` senza
+    label, e darli a Jev come opzioni significa pagarli in token e offrirgli
+    rumore su cui sbagliare.
+    """
+    els = tree.get("details", {}).get("elements", tree) if isinstance(tree, dict) else tree
+    out = []
+    for e in els:
+        lbl = (e.get("label") or e.get("value") or "").strip()
+        if not lbl or lbl in ("group", "image") or e.get("role") not in INTERATTIVI:
+            continue
+        out.append(e)
+        if len(out) >= max_el:
+            break
+    return out
+
+
+def cmd_pick(args):
+    """Jev come layer di decisione: dato un albero di accessibilita' e un
+    obiettivo, dice su cosa cliccare, con che probabilita' e se agire.
+
+    Due trappole misurate il 17/09, entrambe fuori da Jev:
+    - l'albero scade. Tra la lettura e il click le finestre si spostano, quindi
+      l'albero va riletto subito prima di agire, mai riusato.
+    - le coordinate dell'albero sono nello spazio logico del display, quelle di
+      `left_click` nei pixel dello screenshot: vanno scalate (1200/1728 qui).
+    """
+    tree = json.loads(sys.stdin.read() if args.tree == "-" else Path(args.tree).read_text())
+    els = elementi(tree, args.max_elements)
+    if not els:
+        print(json.dumps({"azione": "nessun-elemento", "motivo": "albero senza elementi cliccabili"}))
+        return 2
+    opts = {f"e{i}": json.dumps({k: v for k, v in e.items() if k != "bounds"}, ensure_ascii=False)
+            for i, e in enumerate(els)}
+    q = {
+        "elemento": {"type": "choice", "criteria": opts,
+                     "instructions": "Su quale elemento bisogna cliccare per eseguire l'obiettivo dell'utente?"},
+        "fattibile": {"type": "noul",
+                      "instructions": "L'obiettivo si puo' eseguire cliccando uno degli elementi visibili, "
+                                      "senza cercare in un'altra finestra o schermata."},
+        "rischio": {"type": "score", "criteria": ["innocua", "cambia stato ma si annulla", "irreversibile o pubblica"],
+                    "instructions": "Quanto e' distruttiva o irreversibile l'azione richiesta su questa schermata?"},
+    }
+    state = {"obiettivo_utente": args.goal, "elementi_visibili": els}
+    if args.context:
+        state["contesto"] = args.context
+    r = call(state, q, args.model, args.tag)
+    if "error" in r:
+        print(json.dumps(r, ensure_ascii=False))
+        return 1
+    a = r["answers"]
+    i = int(a["elemento"]["choice"][1:])
+    el, p = els[i], a["elemento"]["probabilities"][a["elemento"]["choice"]]
+    fatt, risk = a["fattibile"]["noul"], a["rischio"]["score"]
+    b = el.get("bounds") or {}
+    # il gate e' il punto dello strumento: senza, una scelta a p=0.28 clicca lo stesso
+    if fatt < args.min_feasible or p < args.gate:
+        azione = "chiedi"
+    elif risk >= args.max_risk:
+        azione = "conferma"
+    else:
+        azione = "agisci"
+    print(json.dumps({
+        "azione": azione, "indice": i, "elemento": el, "p": round(p, 3),
+        "confidence": round(a["elemento"].get("confidence", 0), 3),
+        "fattibile": round(fatt, 3), "rischio": round(risk, 3),
+        "click": [round(b.get("x", 0) + b.get("width", 0) / 2), round(b.get("y", 0) + b.get("height", 0) / 2)]
+        if b else None,
+        "candidati": sorted(((round(v, 3), json.loads(opts[k]).get("label"))
+                             for k, v in a["elemento"]["probabilities"].items() if v >= 0.05), reverse=True)[:5],
+        "ms": r.get("_ms"),
+    }, ensure_ascii=False, indent=2))
+    return 0 if azione == "agisci" else 3
+
+
+def cmd_usage(args):
+    if not LOG.exists():
+        print("nessuna chiamata registrata")
+        return 0
+    rows = [json.loads(l) for l in LOG.open() if l.strip()]
+    if args.since:
+        cut = time.time() - {"h": 3600, "d": 86400, "w": 604800}[args.since[-1]] * int(args.since[:-1])
+        rows = [r for r in rows if r["ts"] >= cut]
+    agg = {}
+    for r in rows:
+        a = agg.setdefault(r.get("tag") or "-", {"n": 0, "in": 0, "ms": 0})
+        a["n"] += 1
+        a["in"] += r.get("in", 0)
+        a["ms"] += r.get("ms") or 0
+    print(f"{'tag':<24}{'chiamate':>10}{'token in':>12}{'$':>10}{'ms medi':>10}")
+    for t, a in sorted(agg.items(), key=lambda x: -x[1]["in"]):
+        print(f"{t:<24}{a['n']:>10}{a['in']:>12}{a['in']*PRICE_IN:>10.4f}{a['ms']//max(a['n'],1):>10}")
+    tot = sum(a["in"] for a in agg.values())
+    n = sum(a["n"] for a in agg.values())
+    print(f"{'TOTALE':<24}{n:>10}{tot:>12}{tot*PRICE_IN:>10.4f}")
+    return 0
+
+
+def cmd_models(args):
+    req = urllib.request.Request(f"{API}/models", headers={"Authorization": f"Bearer {key()}"})
+    with urllib.request.urlopen(req, timeout=20) as r:
+        for m in json.loads(r.read())["models"]:
+            print(f"{m['name']:<16}{m.get('release_date','')[:10]}  {m.get('description','')}")
+    return 0
+
+
+def main():
+    p = argparse.ArgumentParser(prog="jev", description="TypeSafe System One dalla riga di comando")
+    sub = p.add_subparsers(dest="cmd", required=True)
+
+    a = sub.add_parser("ask", help="una domanda su uno stato")
+    a.add_argument("state", help="testo, @file, oppure - per stdin")
+    a.add_argument("--noul", action="append", help="domanda si/no, ripetibile")
+    a.add_argument("--choice", nargs="+", metavar=("ISTRUZIONE", "OPZ=DESC"))
+    a.add_argument("--score", nargs="+", metavar=("ISTRUZIONE", "LIVELLO"))
+    a.add_argument("--questions", help="JSON inline o percorso a un file di domande")
+    a.add_argument("--model", default="jev-latest")
+    a.add_argument("--tag", default="ask")
+    a.set_defaults(fn=cmd_ask)
+
+    b = sub.add_parser("batch", help="molte righe in parallelo, CSV o JSONL")
+    b.add_argument("input")
+    b.add_argument("--questions", required=True, help="file JSON con le domande")
+    b.add_argument("--state-template", required=True, help="template Python .format sui campi della riga")
+    b.add_argument("--out", default="jev-out.jsonl")
+    b.add_argument("--keep", help="campi della riga da riportare in output, separati da virgola")
+    b.add_argument("--limit", type=int)
+    b.add_argument("--workers", type=int, default=8)
+    b.add_argument("--model", default="jev-latest")
+    b.add_argument("--tag")
+    b.set_defaults(fn=cmd_batch)
+
+    k = sub.add_parser("pick", help="scegli su quale elemento cliccare, dato un albero di accessibilita'")
+    k.add_argument("goal", help="obiettivo in italiano, es. 'apri le impostazioni'")
+    k.add_argument("--tree", default="-", help="JSON dell'albero (file, o - per stdin)")
+    k.add_argument("--context", help="una riga su cosa si vede a schermo")
+    k.add_argument("--gate", type=float, default=0.75, help="probabilita' minima per agire")
+    k.add_argument("--min-feasible", type=float, default=0.70, help="soglia di fattibilita'")
+    k.add_argument("--max-risk", type=float, default=1.5, help="oltre questo rischio chiede conferma")
+    k.add_argument("--max-elements", type=int, default=120)
+    k.add_argument("--model", default="jev-latest")
+    k.add_argument("--tag", default="pick")
+    k.set_defaults(fn=cmd_pick)
+
+    u = sub.add_parser("usage", help="consumo, dal log locale (l'API non lo espone)")
+    u.add_argument("--since", help="es. 24h, 7d, 2w")
+    u.set_defaults(fn=cmd_usage)
+
+    sub.add_parser("models").set_defaults(fn=cmd_models)
+    args = p.parse_args()
+    sys.exit(args.fn(args))
+
+
+if __name__ == "__main__":
+    main()

@@ -1,0 +1,15 @@
+#!/bin/zsh
+# cc — apre una sessione Claude dentro tmux, cosi' qualcuno da fuori puo'
+# risponderle. Un `claude` lanciato nudo nel Terminale nessuno lo puo' sbloccare
+# al posto tuo: `rispondi` consegna solo dove lo stdin ce l'ha tmux.
+#
+#   cc                  qui
+#   cc ~/Projects/x     li'
+#   cc . --model opus   il resto va a claude
+#
+# Se la sessione esiste gia' ci si riattacca (-A), non se ne apre una seconda.
+set -e
+DIR="."
+if [[ $# -gt 0 && "$1" != -* ]]; then DIR="$1"; shift; fi
+DIR="$(cd "$DIR" && pwd)"
+exec tmux new-session -A -s "cc-$(basename "$DIR")" -c "$DIR" claude --dangerously-skip-permissions "$@"

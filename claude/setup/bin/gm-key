@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+# gm-key — registra la Google AI Studio (Gemini) API key per opencode.
+# Uso: gm-key AIza...   (crea la key gratis su aistudio.google.com/app/apikey)
+set -euo pipefail
+KEY="${1:-}"
+[[ -z "$KEY" ]] && { echo "Uso: gm-key <GEMINI_API_KEY>" >&2; exit 1; }
+ENV="$HOME/.claude/jarvis/router/.env"; ZRC="$HOME/.zshrc"
+if [[ -f "$ENV" ]]; then
+  grep -q '^GEMINI_API_KEY=' "$ENV" \
+    && sed -i '' "s|^GEMINI_API_KEY=.*|GEMINI_API_KEY=$KEY|" "$ENV" \
+    || printf '\n# Google AI Studio / Gemini (opencode)\nGEMINI_API_KEY=%s\n' "$KEY" >> "$ENV"
+fi
+grep -q '^export GEMINI_API_KEY=' "$ZRC" 2>/dev/null \
+  && sed -i '' "s|^export GEMINI_API_KEY=.*|export GEMINI_API_KEY=$KEY|" "$ZRC" \
+  || printf '\nexport GEMINI_API_KEY=%s\n' "$KEY" >> "$ZRC"
+echo "✓ Gemini key registrata in router/.env + ~/.zshrc (••••${KEY: -4})"

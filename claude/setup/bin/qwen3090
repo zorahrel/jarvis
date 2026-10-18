@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+# qwen3090 — la 3090 e' dietro llm-gate (PC, servizio LlmGate, porta 18080): accende il modello
+# alla prima richiesta (scegliendo dal campo "model") e lo spegne dopo 15 min di inattivita'.
+#   qwen3090            cosa e' acceso adesso e da quanto e' fermo
+#   qwen3090 stock|unc  lo scalda subito (a freddo ~1-4 min) invece di aspettare la prima richiesta
+#   qwen3090 off        lo spegne ora (idle a 1 s per un giro del controllo)
+# Richiede il tunnel com.jcode.llamacpp-3090-tunnel (LAN 192.168.1.2) e il PC acceso.
+set -euo pipefail
+URL=http://127.0.0.1:18080
+case "${1:-}" in
+  "") curl -s -m 5 "$URL/status" || { echo "gate non raggiungibile (PC spento o tunnel giu')"; exit 1; }; echo ;;
+  stock|unc)
+    m=qwen38-27b-200k; [ "$1" = unc ] && m=qwen38-27b-unc
+    curl -s -m 600 "$URL/v1/chat/completions" -H 'Content-Type: application/json' \
+      -d "{\"model\":\"$m\",\"messages\":[{\"role\":\"user\",\"content\":\"ok\"}],\"max_tokens\":1,\"chat_template_kwargs\":{\"enable_thinking\":false}}" >/dev/null \
+      && echo "$m pronto" ;;
+  off) ssh zorah@192.168.1.2 'sc stop LlamaCpp200K & sc stop LlamaCppUnc' >/dev/null 2>&1; echo spento ;;
+  *) echo "uso: qwen3090 [stock|unc|off]"; exit 2 ;;
+esac

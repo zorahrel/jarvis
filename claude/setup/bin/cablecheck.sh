@@ -1,0 +1,1 @@
+../../../Projects/claude-harness/tools/cablecheck.sh

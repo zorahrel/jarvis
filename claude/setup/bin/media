@@ -1,0 +1,119 @@
+#!/usr/bin/env bash
+# media — Play/Pausa e traccia, per i comandi vocali personalizzati.
+#
+# Perche' NON usa i tasti media di sistema: i tasti multimediali sono eventi
+# NX_KEYTYPE del sottosistema HID, e inviarli con CGEventPost richiede il
+# permesso **Accessibilita**, che e' l'unico che macOS non concede via software.
+# Provato: l'evento si crea, ma non viene recapitato e nulla si muove.
+#
+# Quindi si parla direttamente con l'app, via AppleScript: serve il permesso
+# **Automazione**, che macOS chiede con un popup normale la prima volta.
+#
+# Bersaglio dei comandi vocali personalizzati:
+#   Impostazioni → Accessibilita → Controllo vocale → Comandi → +
+#   «metti play» → Esegui flusso di lavoro Automator → Esegui shell script:
+#       ~/bin/media play
+#
+#   media play        avvia (o riprende) l'app che sta suonando
+#   media pausa       mette in pausa
+#   media stop
+#   media avanti|indietro
+#   media stato       chi sta suonando
+#
+# L'app si sceglie da sola: quella che sta gia' suonando, altrimenti Spotify,
+# altrimenti Music. Forzabile con MEDIA_APP=Spotify.
+set -euo pipefail
+
+APPS=("Spotify" "Music")
+
+in_esecuzione() {
+  osascript -e "application \"$1\" is running" 2>/dev/null | grep -q true
+}
+
+stato_di() {
+  osascript -e "tell application \"$1\" to player state as string" 2>/dev/null
+}
+
+# L'app giusta e' quella che sta suonando: se metti in pausa mentre Spotify
+# suona e Music e' aperto ma fermo, comandare Music non farebbe niente.
+scegli() {
+  if [ -n "${MEDIA_APP:-}" ]; then echo "$MEDIA_APP"; return; fi
+  for a in "${APPS[@]}"; do
+    in_esecuzione "$a" && [ "$(stato_di "$a")" = "playing" ] && { echo "$a"; return; }
+  done
+  for a in "${APPS[@]}"; do
+    in_esecuzione "$a" && { echo "$a"; return; }
+  done
+  echo "${APPS[0]}"   # nessuna aperta: la prima verra' lanciata
+}
+
+# Un solo osascript per scegliere l'app e agire: prima erano 5-7 processi in fila (~450 ms),
+# ora uno (13/10: i comandi vocali devono essere istantanei).
+rapido() {
+  osascript - "$1" "${MEDIA_APP:-}" <<'AS'
+on run argv
+	using terms from application "Spotify"
+		set cmd to item 1 of argv
+		set forzata to item 2 of argv
+		set scelta to forzata
+		if scelta is "" then
+			repeat with a in {"Spotify", "Music"}
+				set nome to a as text
+				if application nome is running then
+					tell application nome to set suona to (player state as string)
+					if suona is "playing" then
+						set scelta to nome
+						exit repeat
+					end if
+					if scelta is "" then set scelta to nome
+				end if
+			end repeat
+			if scelta is "" then set scelta to "Spotify"
+		end if
+		if cmd is "scegli" then return scelta
+		tell application scelta
+			if cmd is "play" then
+				play
+			else if cmd is "pausa" then
+				pause
+			else if cmd is "playpause" then
+				playpause
+			else if cmd is "stop" then
+				stop
+			else if cmd is "avanti" then
+				next track
+			else if cmd is "indietro" then
+				previous track
+			end if
+		end tell
+		return scelta
+	end using terms from
+end run
+AS
+}
+
+case "${1:-play}" in
+  play|pausa|pause|playpause|toggle|stop|avanti|next|indietro|prev|scegli)
+    c="${1:-play}"
+    case "$c" in pause) c=pausa;; toggle) c=playpause;; next) c=avanti;; prev) c=indietro;; esac
+    rapido "$c"; exit $? ;;
+esac
+
+app=$(scegli)
+
+case "${1:-play}" in
+  play)              osascript -e "tell application \"$app\" to play" ;;
+  pausa|pause)       osascript -e "tell application \"$app\" to pause" ;;
+  playpause|toggle)  osascript -e "tell application \"$app\" to playpause" ;;
+  stop)              osascript -e "tell application \"$app\" to stop" ;;
+  avanti|next)       osascript -e "tell application \"$app\" to next track" ;;
+  indietro|prev)     osascript -e "tell application \"$app\" to previous track" ;;
+  stato)
+    for a in "${APPS[@]}"; do
+      in_esecuzione "$a" && echo "$a: $(stato_di "$a")" || echo "$a: non in esecuzione"
+    done
+    exit 0 ;;
+  *) echo "uso: media play|pausa|playpause|stop|avanti|indietro|stato" >&2; exit 2 ;;
+esac
+
+echo "$app: $(stato_di "$app")"

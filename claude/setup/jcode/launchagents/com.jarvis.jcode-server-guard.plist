@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.jarvis.jcode-server-guard</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/zorahrel/.jcode/bin/jcode-server-guard.sh</string>
+    </array>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>StandardOutPath</key>
+    <string>/Users/zorahrel/.jcode/logs/server-guard.out.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/zorahrel/.jcode/logs/server-guard.err.log</string>
+</dict>
+</plist>

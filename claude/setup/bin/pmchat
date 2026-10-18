@@ -1,0 +1,8 @@
+#!/bin/zsh
+# pmchat — la chat OpenClaw in una finestra Chrome senza barra, accanto al pannello board.
+# Passa dal profilo Chrome normale, che e' gia' autenticato al gateway.
+URL=$(python3 -c "
+import json;c=json.load(open('$HOME/.openclaw/openclaw.json'))['gateway']
+o=(c.get('controlUi') or {}).get('allowedOrigins') or []
+print(next((x for x in o if x.startswith('https://')), 'http://127.0.0.1:%d' % c.get('port',18789)))")
+exec open -na "Google Chrome" --args --app="$URL" --window-size=900,1000 --window-position=40,60

@@ -1,0 +1,4 @@
+#!/bin/sh
+# CLI di Tailscale: il binario va invocato dal suo percorso reale nel bundle,
+# un symlink rompe la risoluzione del bundle identifier.
+exec "/Applications/Tailscale.app/Contents/MacOS/Tailscale" "$@"

@@ -1,0 +1,60 @@
+#!/bin/bash
+# jsend — consegna un testo a una sessione jcode viva.
+#
+# Perche' esiste: `jcode transcript` cerca il socket del server condiviso in
+# $TMPDIR. Dentro OpenClaw TMPDIR e' /Users/zorahrel/.openclaw/tmp, quindi
+# fallisce con "No such file or directory (os error 2)" prima ancora di
+# risolvere la sessione. Qui TMPDIR viene riportato a quello vero.
+#
+#   jsend                      # elenca le sessioni vive
+#   jsend hamster "testo"      # match parziale sul nome, oppure id intero
+#   jsend hamster < file.txt   # testo da stdin
+set -euo pipefail
+
+REAL_TMPDIR=/var/folders/d8/0rlg1q2x64gbx_cn5y2qjf8w0000gn/T
+PIDS=~/.jcode/active_pids
+
+# Vive = pid registrato ancora in piedi. Attenzione: quasi tutte puntano al
+# pid del server condiviso, quindi "viva" qui vuol dire raggiungibile, non
+# che qualcuno la sta guardando. Per capire quale sia la sessione giusta
+# conta il titolo, non questo elenco.
+vive() {
+  for f in "$PIDS"/session_*; do
+    [ -e "$f" ] || continue
+    pid=$(cat "$f" 2>/dev/null || true)
+    [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null && echo "$(basename "$f")"
+  done
+}
+
+if [ $# -eq 0 ]; then
+  echo "Sessioni jcode raggiungibili (ultime 20 per attivita'):"
+  vive | while read -r s; do
+    j=~/.jcode/sessions/$s.json
+    [ -f "$j" ] || continue
+    python3 -c "
+import json,sys
+d=json.load(open(sys.argv[1]))
+print(f\"{d.get('last_active_at','')[:16]}  {d.get('status',''):8}  {sys.argv[2][8:].split('_')[0]:12} {(d.get('title') or d.get('working_dir') or '')[:60]}\")
+" "$j" "$s" 2>/dev/null
+  done | sort -r | head -20
+  exit 0
+fi
+
+pattern=$1; shift
+match=$(vive | /usr/bin/grep -- "$pattern" || true)
+n=$(printf '%s' "$match" | /usr/bin/grep -c . || true)
+
+if [ "$n" -eq 0 ]; then
+  echo "Nessuna sessione viva corrisponde a '$pattern'." >&2
+  exit 1
+elif [ "$n" -gt 1 ]; then
+  echo "'$pattern' e' ambiguo:" >&2
+  echo "$match" | sed 's/^/  /' >&2
+  exit 1
+fi
+
+if [ $# -gt 0 ]; then testo="$*"; else testo=$(cat); fi
+[ -n "$testo" ] || { echo "Testo vuoto." >&2; exit 1; }
+
+TMPDIR="$REAL_TMPDIR" jcode transcript --session "$match" --mode send "$testo"
+echo "-> consegnato a $match"

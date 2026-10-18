@@ -1,0 +1,202 @@
+#!/usr/bin/env python3
+# insetti — confronta insetti vivi sui negozi italiani, prezzo CONSEGNATO.
+#
+# Perche' esiste: su un ordine da 3 euro la spedizione e' il triplo della merce,
+# quindi il prezzo di listino non decide niente. Qui il totale mostrato e'
+# sempre merce + spedizione, ed e' quello il numero da guardare.
+#
+#   insetti hermetia
+#   insetti "tarme della farina"
+#   insetti camole --qta 2
+#
+# Amazon vende solo insetti ESSICCATI (per polli): un ciliatus ignora una preda
+# che non si muove, quindi Amazon non e' in elenco apposta.
+
+import argparse
+import html
+import re
+import sys
+import urllib.parse
+import urllib.request
+from concurrent.futures import ThreadPoolExecutor
+
+UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15"
+
+# spedizione fino a 3 kg, soglia di gratuita', giorni di partenza.
+# Letti dalle pagine spedizioni il 20/09/2026: se un totale sembra strano,
+# ricontrolla li' prima di dare la colpa allo script.
+SHOPS = [
+    {
+        # Unico negozio che ha insieme bachi da seta e camole, spedizione piu'
+        # bassa di tutti e parte lun-ven invece che lun-mer. Markup Magento,
+        # quindi ha un parser suo (vedi magento_products).
+        "name": "AgriPetGarden",
+        "search": "https://www.agripetgarden.it/catalogsearch/result/?q={q}",
+        "kind": "magento",
+        "ship": 6.90,
+        "free": 69.0,
+        "note": "parte lun-ven, isole +3 €",
+    },
+    {
+        "name": "ReptyFood",
+        "search": "https://reptyfood.com/ricerca?controller=search&s={q}",
+        "ship": 8.90,
+        "free": 65.0,
+        "note": "evasione 1-10 gg lavorativi",
+    },
+    {
+        "name": "INEF",
+        "search": "https://inef.it/ricerca?controller=search&s={q}",
+        "ship": 9.50,
+        "free": None,
+        "note": "parte lun-mer, 24/48h",
+    },
+    {
+        "name": "Bugsnack",
+        "search": "https://www.bugsnack.it/ricerca?controller=search&s={q}",
+        "ship": 7.50,
+        "free": 69.0,
+        "note": "parte lun-mer",
+    },
+    {
+        "name": "ItalianCricketFarm",
+        "search": "https://www.italiancricketfarm.com/?s={q}&post_type=product",
+        "ship": None,  # non pubblicata: si vede solo al carrello
+        "free": 70.0,
+        "note": "spedizione non pubblicata",
+    },
+]
+
+# Il badge sconto e' anch'esso "N,NN €" ma preceduto da un meno: prenderlo per
+# prezzo fa sembrare da 1,00 € una confezione che ne costa 6,50.
+PRICE = re.compile(r"(?<![-−])\b([\d]{1,4}[.,]\d\d)\s*(?:&nbsp;|\xa0|\s)*€")
+OUT = re.compile(r"Esaurito|Non disponibile|out-of-stock|outofstock", re.I)
+
+
+def fetch(url):
+    req = urllib.request.Request(url, headers={"User-Agent": UA})
+    with urllib.request.urlopen(req, timeout=25) as r:
+        return r.read().decode("utf-8", "ignore")
+
+
+def strip_tags(s):
+    s = re.sub(r"<script[\s\S]*?</script>", " ", s)
+    s = re.sub(r"<style[\s\S]*?</style>", " ", s)
+    return html.unescape(re.sub(r"<[^>]+>", "\n", s))
+
+
+def products(page, host):
+    """Un blocco per prodotto. I temi PrestaShop/WooCommerce cambiano classe
+    spesso, quindi si taglia su qualunque marcatore di miniatura invece di
+    inseguire il markup esatto."""
+    blocks = re.split(r"(?=product-miniature|<li[^>]+class=\"[^\"]*product\b)", page)
+    for b in blocks[1:]:
+        link = re.search(r'href="(https?://[^"]+?\.html[^"]*|https?://[^"]*/product/[^"]+)"', b)
+        name = re.search(r'class="[^"]*product-(?:title|name)[^"]*"[^>]*>\s*(?:<a[^>]*>)?\s*([^<]{3,90})', b)
+        if not name:
+            # tema che mette il nome solo nel title= dell'anchor immagine
+            name = re.search(r'<a[^>]+title="([^"]{3,90})"', b) or re.search(
+                r"<h[23][^>]*>\s*(?:<a[^>]*>)?\s*([^<]{3,90})", b
+            )
+        meta = re.search(r'itemprop="price"[^>]*content="([\d.]+)"', b)
+        price = meta or PRICE.search(b)
+        if not (name and price):
+            continue
+        yield {
+            "name": " ".join(html.unescape(name.group(1)).split()),
+            "price": float(price.group(1).replace(",", ".")),
+            "stock": not OUT.search(b),
+            "url": link.group(1) if link else host,
+        }
+
+
+def magento_products(page, host):
+    """Magento (AgriPetGarden). Il prezzo sta in un attributo, non nel testo:
+    leggerlo dal markup evita sia il badge sconto sia il prezzo barrato."""
+    for b in re.split(r'(?=class="product-item-info")', page)[1:]:
+        link = re.search(r'product-item-link"\s+href="([^"]+)"\s*>\s*([^<]{3,90})', b)
+        if not link:
+            continue
+        price = re.search(r'data-price-amount="([\d.]+)"', b)
+        if not price:
+            continue
+        yield {
+            "name": " ".join(html.unescape(link.group(2)).split()),
+            "price": float(price.group(1)),
+            "stock": not re.search(r"stock unavailable|Non Disponibile", b, re.I),
+            "url": link.group(1),
+        }
+
+
+def scan(shop, query, qta):
+    url = shop["search"].format(q=urllib.parse.quote_plus(query))
+    try:
+        page = fetch(url)
+    except Exception as e:
+        return shop, [], f"{type(e).__name__}: {e}"
+    host = "https://" + urllib.parse.urlparse(url).netloc
+    parse = magento_products if shop.get("kind") == "magento" else products
+    # La pagina di ricerca di questi temi porta con se' anche sidebar e
+    # "ultimi prodotti": senza questo filtro il risultato piu' economico
+    # finisce per essere un prodotto che non c'entra niente con la query.
+    tokens = [t.lower() for t in re.findall(r"\w{4,}", query)]
+    seen, rows = set(), []
+    for p in parse(page, host):
+        low = p["name"].lower()
+        if tokens and not any(t in low for t in tokens):
+            continue
+        key = (p["name"].lower(), p["price"])
+        if key in seen:
+            continue
+        seen.add(key)
+        merce = p["price"] * qta
+        ship = shop["ship"]
+        if shop["free"] and merce >= shop["free"]:
+            ship = 0.0
+        p["merce"] = merce
+        p["tot"] = None if ship is None else merce + ship
+        rows.append(p)
+    rows.sort(key=lambda r: (not r["stock"], r["tot"] if r["tot"] is not None else 9e9))
+    return shop, rows[:6], None
+
+
+def main():
+    ap = argparse.ArgumentParser(description="Insetti vivi: prezzo consegnato, non di listino.")
+    ap.add_argument("query", nargs="+")
+    ap.add_argument("--qta", type=int, default=1, help="quante dosi (default 1)")
+    ap.add_argument("--tutti", action="store_true", help="mostra anche gli esauriti")
+    args = ap.parse_args()
+    query = " ".join(args.query)
+
+    with ThreadPoolExecutor(max_workers=len(SHOPS)) as ex:
+        results = list(ex.map(lambda s: scan(s, query, args.qta), SHOPS))
+
+    best = None
+    for shop, rows, err in results:
+        print(f"\n\033[1m{shop['name']}\033[0m  (sped. {shop['ship'] or '?'} €, {shop['note']})")
+        if err:
+            print(f"  ! {err}")
+            continue
+        rows = [r for r in rows if r["stock"] or args.tutti]
+        if not rows:
+            print("  nessun risultato disponibile")
+            continue
+        for r in rows:
+            tot = f"{r['tot']:.2f} €" if r["tot"] is not None else "n/d"
+            flag = "" if r["stock"] else "  ESAURITO"
+            print(f"  {r['merce']:>6.2f} + sped = \033[1m{tot:>9}\033[0m  {r['name'][:52]}{flag}")
+            print(f"           {r['url']}")
+            if r["stock"] and r["tot"] is not None and (best is None or r["tot"] < best[0]):
+                best = (r["tot"], shop["name"], r["name"], r["url"])
+
+    if best:
+        print(f"\n\033[1mPiu' economico consegnato:\033[0m {best[0]:.2f} € — {best[1]}, {best[2]}")
+        print(f"  {best[3]}")
+        print("  open -a Dia '<url>' per aprirlo")
+    else:
+        print("\nNiente di disponibile con un totale calcolabile.", file=sys.stderr)
+        sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()

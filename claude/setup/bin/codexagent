@@ -1,0 +1,4 @@
+#!/bin/bash
+# Alias di delegate (18/10): chi delega non sceglie più l'abbonamento, lo decide il hub (Jev + pacing).
+# Resta per una settimana per chi lo chiama ancora; poi si toglie. Uso: codexagent [-C dir] "task"
+exec "$HOME/bin/delegate" "$@"

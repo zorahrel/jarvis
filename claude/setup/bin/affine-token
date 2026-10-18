@@ -1,0 +1,68 @@
+#!/usr/bin/env python3
+"""Print a valid AFFiNE Cloud access token, reusing the desktop app's session.
+
+The AFFiNE desktop app keeps its session in auth-sessions.json, encrypted with
+Electron safeStorage (Keychain item "AFFiNE Safe Storage"). We decrypt it and,
+if the short-lived access token is expired, exchange the refresh token for a
+new one. Nothing is written back: the app stays the owner of the session.
+"""
+import base64
+import datetime as dt
+import json
+import pathlib
+import subprocess
+import sys
+import urllib.request
+
+BASE = "https://app.affine.pro"
+SESSIONS = pathlib.Path.home() / "Library/Application Support/AFFiNE/auth-sessions.json"
+
+
+def safe_storage_key() -> bytes:
+    from cryptography.hazmat.primitives import hashes
+    from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
+
+    pw = subprocess.run(
+        ["security", "find-generic-password", "-w", "-s", "AFFiNE Safe Storage", "-a", "AFFiNE"],
+        capture_output=True, text=True,
+    )
+    if pw.returncode != 0:
+        sys.exit(f"keychain read failed: {pw.stderr.strip()}")
+    return PBKDF2HMAC(algorithm=hashes.SHA1(), length=16, salt=b"saltysalt", iterations=1003).derive(
+        pw.stdout.strip().encode()
+    )
+
+
+def read_session() -> dict:
+    from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+
+    blob = base64.b64decode(json.loads(SESSIONS.read_text())[BASE])
+    if blob[:3] != b"v10":
+        sys.exit(f"unexpected safeStorage prefix: {blob[:3]!r}")
+    dec = Cipher(algorithms.AES(safe_storage_key()), modes.CBC(b" " * 16)).decryptor()
+    plain = dec.update(blob[3:]) + dec.finalize()
+    return json.loads(plain[: -plain[-1]])
+
+
+def refresh(token: str) -> str:
+    req = urllib.request.Request(
+        f"{BASE}/api/auth/refresh",
+        data=json.dumps({"refreshToken": token}).encode(),
+        headers={"content-type": "application/json"},
+        method="POST",
+    )
+    with urllib.request.urlopen(req, timeout=20) as res:
+        return json.loads(res.read())["accessToken"]
+
+
+def main() -> None:
+    s = read_session()
+    expires = dt.datetime.fromisoformat(s["accessExpiresAt"].replace("Z", "+00:00"))
+    if expires - dt.datetime.now(dt.timezone.utc) > dt.timedelta(seconds=60):
+        print(s["accessToken"])
+        return
+    print(refresh(s["refreshToken"]))
+
+
+if __name__ == "__main__":
+    main()

@@ -1,0 +1,82 @@
+#!/usr/bin/env python3
+"""List WhatsApp group senders that OpenClaw silently drops because of groupAllowFrom.
+
+With channels.whatsapp.groupPolicy = "allowlist", a message from a number that is not in
+groupAllowFrom never reaches the agent and leaves no trace in the gateway log. The only
+footprint is the Baileys store: one sender-key file per (group, participant) and a
+LID -> phone mapping. This reads both and prints who is missing.
+
+    wa-silenced                 # list (numbers masked to the last 3 digits)
+    wa-silenced --apply         # back up openclaw.json, then add them via `openclaw config patch`
+    wa-silenced --config FILE   # read another config (e.g. a backup) — listing only
+"""
+import argparse
+import json
+import os
+import re
+import shutil
+import subprocess
+import sys
+import time
+
+HOME = os.path.expanduser("~/.openclaw/")
+STORE = HOME + "credentials/whatsapp/default/"
+
+
+def digits(value):
+    return re.sub(r"\D", "", str(value))
+
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--apply", action="store_true")
+    ap.add_argument("--config", default=HOME + "openclaw.json")
+    args = ap.parse_args()
+    if args.apply and args.config != HOME + "openclaw.json":
+        sys.exit("--apply works only on the live config")
+
+    wa = json.load(open(args.config))["channels"]["whatsapp"]
+    allowed = list(wa.get("groupAllowFrom", []))
+    have = {digits(x) for x in allowed}
+    groups = set(wa.get("groups", {}))
+    if wa.get("groupPolicy") != "allowlist":
+        print("groupPolicy is %r: nobody is filtered by sender, nothing to do" % wa.get("groupPolicy"))
+        return
+
+    # il numero del bot compare in ogni gruppo: non è una persona zittita
+    me = json.load(open(STORE + "creds.json")).get("me") or {}
+    own = {digits(str(me.get("id", "")).split(":")[0].split("@")[0]), digits(str(me.get("lid", "")).split(":")[0].split("@")[0])}
+
+    missing = {}  # phone -> groups where that person wrote
+    for name in sorted(os.listdir(STORE)):
+        m = re.match(r"sender-key-(\d+@g\.us)--(\d+)_\d+--\d+\.json$", name)
+        if not m or m.group(1) not in groups or m.group(2) in own:
+            continue
+        reverse = STORE + "lid-mapping-%s_reverse.json" % m.group(2)
+        if not os.path.exists(reverse):
+            continue  # LID senza numero noto: il gateway non saprebbe confrontarlo nemmeno con la lista
+        phone = digits(json.load(open(reverse)))
+        if phone and phone not in have and phone not in own:
+            missing.setdefault(phone, set()).add(m.group(1))
+
+    if not missing:
+        print("nobody silenced: every sender seen in the %d configured groups is in groupAllowFrom" % len(groups))
+        return
+    for phone, where in sorted(missing.items(), key=lambda kv: kv[0][-3:]):
+        print("...%s  silenced in %s" % (phone[-3:], ", ".join(g[:6] + "…" + g[-9:] for g in sorted(where))))
+    print("%d people silenced" % len(missing))
+
+    if not args.apply:
+        print("run `wa-silenced --apply` to add them (a backup of openclaw.json is made first)")
+        return
+    backup = HOME + "openclaw.json.bak-wasilenced-" + time.strftime("%Y%m%d-%H%M")
+    shutil.copy2(HOME + "openclaw.json", backup)
+    patch = {"channels": {"whatsapp": {"groupAllowFrom": allowed + ["+" + p for p in sorted(missing)]}}}
+    done = subprocess.run(["openclaw", "config", "patch", "--stdin"], input=json.dumps(patch), text=True, capture_output=True)
+    print("backup:", os.path.basename(backup))
+    print(re.sub(r"\+?\d{9,}", "<N>", (done.stdout + done.stderr).strip().splitlines()[-1] if (done.stdout + done.stderr).strip() else ""))
+    sys.exit(done.returncode)
+
+
+if __name__ == "__main__":
+    main()

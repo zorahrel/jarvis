@@ -1,0 +1,1 @@
+/Users/zorahrel/Projects/claude-harness/workflows/gauntlet.js

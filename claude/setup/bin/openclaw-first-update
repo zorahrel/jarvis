@@ -1,0 +1,12 @@
+#!/bin/sh
+# Primo aggiornamento supervisionato di OpenClaw, «appena può Jarvis» (Attilio, 13/10).
+# launchd lo rilancia ogni 30 min; quando la versione e' quella giusta si toglie da solo.
+# Da li' in poi ci pensa il giro notturno di openclaw-safe-update, che risulta armato.
+TARGET=2026.10.2
+case "$(openclaw --version 2>/dev/null)" in
+  *"$TARGET"*) launchctl bootout gui/$(id -u)/com.jarvis.openclaw-first-update; exit 0 ;;
+esac
+openclaw-safe-update --force-version "$TARGET" --idle-wait 25 > /dev/null 2>&1
+case "$(openclaw --version 2>/dev/null)" in
+  *"$TARGET"*) launchctl bootout gui/$(id -u)/com.jarvis.openclaw-first-update ;;
+esac

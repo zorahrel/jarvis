@@ -1,0 +1,152 @@
+{
+  "skillListingMaxDescChars": 180,
+  "env": {
+    "ANTHROPIC_BASE_URL": "http://127.0.0.1:3336",
+    "BUN_INSTALL": "/Users/zorahrel/.bun",
+    "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "1",
+    "ENABLE_CODE_SECURITY_REVIEW": "0",
+    "ENABLE_TOOL_SEARCH": "true",
+    "PATH": "/opt/homebrew/bin:/Users/zorahrel/bin:/usr/local/bin:/Users/zorahrel/.cargo/bin:/Users/zorahrel/.bun/bin:/Users/zorahrel/.deno/bin:/Users/zorahrel/.omnara/bin:/usr/bin:/bin:/usr/sbin:/sbin:/Users/zorahrel/jarvis/skills-marketplace/bin:/Users/zorahrel/.local/bin"
+  },
+  "permissions": {
+    "allow": [
+      "Bash(rivet *)",
+      "Bash(npx -y rivet-design@latest *)"
+    ],
+    "deny": [
+      "ScheduleWakeup"
+    ],
+    "ask": [
+      "Bash(docker:*)",
+      "Bash(docker-compose:*)",
+      "Bash(orb:*)",
+      "Bash(orbctl:*)",
+      "Bash(open -a OrbStack:*)",
+      "Bash(open -a Docker:*)",
+      "Bash(npx supabase start:*)",
+      "Bash(supabase start:*)",
+      "Bash(pnpm db:prepare:*)"
+    ],
+    "defaultMode": "auto"
+  },
+  "model": "opus[1m]",
+  "skillOverrides": {
+    "config-security-audit": "off",
+    "diffs": "off",
+    "docx": "off",
+    "domain-model": "off",
+    "reel-factory": "off",
+    "suno-hooks": "off",
+    "trend-research": "off",
+    "ubiquitous-language": "off",
+    "webapp-testing": "off",
+    "zoom-out": "off"
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/Users/zorahrel/.claude/hooks/block-coauthor.sh",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "matcher": "startup|resume",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "'/Users/zorahrel/.local/bin/jcode' setup-hotkey --notify-cli-launch claude",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/Users/zorahrel/bin/claude-finish-time.sh",
+            "timeout": 5
+          },
+          {
+            "type": "command",
+            "command": "~/.claude/notify.sh",
+            "timeout": 5
+          }
+        ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "curl -s -m 4 -X POST 'http://localhost:3335/api/session-stop' -H 'Content-Type: application/json' --data-binary @- >/dev/null 2>&1 || true",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "curl -s -m 4 -X POST 'http://localhost:3335/api/session-start' -H 'Content-Type: application/json' --data-binary @- >/dev/null 2>&1 || true",
+            "timeout": 5
+          }
+        ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 -I /Users/zorahrel/.claude/jarvis/memory-recall/recall.py --hook",
+            "timeout": 3
+          }
+        ]
+      }
+    ]
+  },
+  "statusLine": {
+    "type": "command",
+    "command": "/opt/homebrew/bin/node \"/Users/zorahrel/.claude/statusline.js\""
+  },
+  "enabledPlugins": {
+    "code-review@claude-plugins-official": false,
+    "jarvis-custom-skills@jarvis-skills": false,
+    "ralph-loop@claude-plugins-official": false,
+    "rust-analyzer-lsp@claude-plugins-official": false,
+    "security-guidance@claude-plugins-official": true,
+    "swift-lsp@claude-plugins-official": false,
+    "typescript-lsp@claude-plugins-official": true
+  },
+  "extraKnownMarketplaces": {
+    "jarvis-skills": {
+      "source": {
+        "source": "directory",
+        "path": "/Users/zorahrel/jarvis/skills-marketplace"
+      }
+    }
+  },
+  "outputStyle": "Attention-kind",
+  "modelSettings": {
+    "claude-opus-5": {
+      "effortLevel": "medium"
+    }
+  },
+  "autoCompactWindow": 433000,
+  "tui": "fullscreen",
+  "skipDangerousModePermissionPrompt": true,
+  "skipWorkflowUsageWarning": true,
+  "theme": "dark",
+  "preferredNotifChannel": "iterm2_with_bell",
+  "inputNeededNotifEnabled": true,
+  "agentPushNotifEnabled": true,
+  "skipAutoPermissionPrompt": true
+}

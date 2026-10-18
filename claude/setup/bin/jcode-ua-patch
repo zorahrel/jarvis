@@ -1,0 +1,40 @@
+#!/usr/bin/env bash
+# jcode dichiara ad Anthropic la UA "claude-cli/2.1.257". I modelli usciti dopo
+# (opus 5.5 e successivi) rispondono 400 claude_code_version_too_old sotto 2.1.280.
+# La stringa ha la stessa lunghezza, quindi si riscrive in place senza spostare
+# gli offset del Mach-O; serve solo rifirmare ad-hoc.
+# Va rilanciato dopo ogni `jcode update`, che riscarica il binario originale.
+set -euo pipefail
+
+BIN="$(readlink -f "$(command -v jcode)")"
+OLD="2.1.257"
+NEW="2.1.280"
+
+if ! /usr/bin/grep -qa "claude-cli/$OLD" "$BIN"; then
+  if /usr/bin/grep -qa "claude-cli/$NEW" "$BIN"; then
+    echo "gia' patchato: $BIN dichiara $NEW"
+    exit 0
+  fi
+  echo "ne' $OLD ne' $NEW trovati in $BIN: la UA e' cambiata, controlla a mano" >&2
+  exit 1
+fi
+
+BAK="$HOME/.agents/backups/jcode-ua/$(basename "$(dirname "$BIN")")-orig"
+mkdir -p "$(dirname "$BAK")"
+[ -f "$BAK" ] || cp "$BIN" "$BAK"
+
+python3 - "$BIN" "$OLD" "$NEW" <<'PY'
+import sys
+path, old, new = sys.argv[1], sys.argv[2].encode(), sys.argv[3].encode()
+data = open(path, 'rb').read()
+assert len(old) == len(new), 'lunghezze diverse: il patch in place romperebbe il binario'
+n = data.count(old)
+open(path, 'wb').write(data.replace(old, new))
+print(f'sostituzioni: {n}')
+PY
+
+codesign --remove-signature "$BIN" 2>/dev/null || true
+codesign -f -s - "$BIN"
+codesign -v "$BIN"
+echo "ok: $BIN ora dichiara claude-cli/$NEW (backup: $BAK)"
+echo "riavvia il server: jcode server stop --force"

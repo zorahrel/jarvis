@@ -1,0 +1,40 @@
+#!/usr/bin/env bash
+# vocelog — registra e mostra i comandi vocali che hai lanciato.
+#
+# Perche' esiste: Controllo vocale esegue e basta, non tiene un registro di cosa
+# ha fatto. Se un comando non parte non sai se non ti ha sentito, se ha capito
+# un'altra frase, o se l'azione e' fallita. Qui ogni comando personalizzato
+# scrive una riga prima di agire, e `vocelog` te le mostra.
+#
+#   vocelog                  ultime 20 righe
+#   vocelog -f               segue in tempo reale (per provare i comandi)
+#   vocelog registra <cosa>  scrive una riga (lo chiamano i flussi Automator)
+#   vocelog pulisci
+#
+# Il registro NON e' ascolto: viene scritto solo da comandi che lanci tu.
+set -euo pipefail
+
+LOG="$HOME/.vocecomandi.log"
+
+case "${1:-mostra}" in
+  registra)
+    shift
+    printf '%s  %s\n' "$(date '+%H:%M:%S')" "${*:-?}" >> "$LOG"
+    ;;
+  -f|segui)
+    touch "$LOG"
+    echo "In ascolto dei comandi (Ctrl-C per uscire). Parla pure."
+    tail -f "$LOG"
+    ;;
+  pulisci)
+    : > "$LOG"; echo "registro svuotato"
+    ;;
+  *)
+    if [ -s "$LOG" ]; then
+      tail -20 "$LOG"
+    else
+      echo "Nessun comando ancora registrato."
+      echo "Si riempie quando lanci i comandi vocali personalizzati."
+    fi
+    ;;
+esac

@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+# jvdm — jcode passando da VDM (127.0.0.1:3336): Max finché c'è, poi le chiavi API
+# in rotazione. La chiave vera la mette VDM, qui serve solo un segnaposto non vuoto.
+# Il vecchio proxy su :18790 traduceva in formato OpenAI e perdeva i tool.
+set -euo pipefail
+export JCODE_ANTHROPIC_API_BASE=http://127.0.0.1:3336/v1
+export ANTHROPIC_BASE_URL=http://127.0.0.1:3336/v1
+export ANTHROPIC_API_KEY=vdm-placeholder
+unset ANTHROPIC_AUTH_TOKEN
+# Server suo (runtime dir e socket a parte): quello condiviso non ha queste
+# variabili e risponderebbe 404, e due server nello stesso runtime dir non partono.
+export JCODE_RUNTIME_DIR="$HOME/.jcode/vdm-runtime"
+exec jcode --socket "$JCODE_RUNTIME_DIR/jcode.sock" -p anthropic-api -m "${JVDM_MODEL:-claude-opus-5-5}" "$@"

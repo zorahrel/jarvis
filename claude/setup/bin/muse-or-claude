@@ -1,0 +1,12 @@
+#!/bin/sh
+# Uso: muse-or-claude <workspace> <prompt-file> [argomenti extra per muse exec]
+# Prova muse exec; se esce non-zero (quota 429, login scaduto) rimanda lo stesso prompt a Claude.
+# L'output di muse si tiene da parte: se fallisce a metà non finisce in testa alla risposta di Claude.
+ws="$1"; pf="$2"; shift 2
+log="$HOME/.claude/jarvis/logs/openclaw-cron-claude.err.log"
+out=$(mktemp /tmp/muse-out.XXXXXX); trap 'rm -f "$out"' EXIT
+if muse exec --workspace "$ws" --reasoning-effort medium --disable-sandbox --prompt-file "$pf" "$@" >"$out" 2>>"$log" && [ -s "$out" ]; then
+  cat "$out"; exit 0
+fi
+echo "muse-or-claude: $(date '+%F %T') muse fallito, passo a Claude" >>"$log"
+cd "$ws" && claude -p --model claude-sonnet-5-5 --effort medium --permission-mode bypassPermissions <"$pf" 2>>"$log"

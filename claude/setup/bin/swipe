@@ -1,0 +1,122 @@
+#!/usr/bin/env python3
+"""swipe DIR [--port N]: un file alla volta in una pagina locale.
+Freccia sinistra = cestino, destra = tieni, Z = annulla l'ultimo cestino.
+Va aperto in Safari: Chrome non legge HEVC/ProRes dei video iPhone.
+Usa `trash` (recuperabile dal Cestino), mai rm."""
+import json, mimetypes, os, subprocess, sys, urllib.parse
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+ROOT = os.path.realpath(sys.argv[1] if len(sys.argv) > 1 else ".")
+PORT = int(sys.argv[sys.argv.index("--port") + 1]) if "--port" in sys.argv else 8765
+EXT = {".mp4", ".mov", ".m4v", ".webm", ".jpg", ".jpeg", ".png", ".gif", ".webp", ".heic", ".m4a", ".mp3", ".wav"}
+files = sorted(
+    (os.path.join(r, f) for r, _, fs in os.walk(ROOT) for f in fs
+     if os.path.splitext(f)[1].lower() in EXT and not f.startswith(".")),
+    key=lambda p: -os.path.getsize(p))
+import hashlib
+STATE = os.path.expanduser("~/.local/state/swipe/" + hashlib.sha1(ROOT.encode()).hexdigest()[:12] + ".json")
+os.makedirs(os.path.dirname(STATE), exist_ok=True)
+try: kept = set(json.load(open(STATE)))
+except Exception: kept = set()
+trashed = []  # (path) per l'annulla: il file sta nel Cestino, lo riportiamo con mv
+
+PAGE = """<!doctype html><meta charset=utf-8><title>swipe</title>
+<style>body{margin:0;background:#111;color:#eee;font:16px system-ui;display:flex;flex-direction:column;height:100vh}
+#m{flex:1;display:flex;align-items:center;justify-content:center;min-height:0}
+#m video,#m img{max-width:100%;max-height:100%}#m audio{width:80%}
+#bar{padding:12px 16px;display:flex;gap:16px;align-items:center;border-top:1px solid #333}
+#n{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+button{font:inherit;padding:8px 16px;border:0;border-radius:8px;cursor:pointer}
+.d{background:#c33;color:#fff}.k{background:#2a7;color:#fff}</style>
+<div id=m></div><div id=bar><button class=d onclick="act('trash')">&larr; Cestino</button>
+<span id=n></span><button onclick="undo()">Z annulla</button><button class=k onclick="act('keep')">Tieni &rarr;</button></div>
+<script>
+let i=0,list=[];
+const q=p=>'/f?p='+encodeURIComponent(p);
+async function init(){list=await (await fetch('/list')).json();show()}
+function show(){const m=document.getElementById('m');m.innerHTML='';
+ if(i>=list.length){m.textContent='Finito. Tutto deciso.';document.getElementById('n').textContent='';return}
+ const f=list[i],e=f.path.split('.').pop().toLowerCase();let el;
+ if(['mp4','mov','m4v','webm'].includes(e)){el=document.createElement('video');el.controls=true;el.muted=true;el.autoplay=true;el.loop=true;el.playsInline=true;el.preload='auto';el.onerror=()=>{document.getElementById('n').textContent+='  NON SI APRE (codec): scegli tu, o premi O per aprirlo con QuickTime'};el.oncanplay=()=>el.play().catch(()=>{})}
+ else if(['m4a','mp3','wav'].includes(e)){el=document.createElement('audio');el.controls=true;el.autoplay=true}
+ else el=document.createElement('img');
+ el.src=q(f.path);m.appendChild(el);
+ document.getElementById('n').textContent=(i+1)+'/'+list.length+'  '+f.path.replace(f.root,'')+'  ('+(f.size/1048576).toFixed(0)+' MB)'}
+async function act(a){if(i>=list.length)return;
+ if(a=='trash')await fetch('/trash?p='+encodeURIComponent(list[i].path),{method:'POST'});
+ else await fetch('/keep?p='+encodeURIComponent(list[i].path),{method:'POST'});
+ i++;show()}
+async function undo(){const r=await (await fetch('/undo',{method:'POST'})).json();
+ if(r.path){i=Math.max(0,list.findIndex(f=>f.path==r.path));show()}}
+document.onkeydown=e=>{if(e.key=='ArrowLeft')act('trash');else if(e.key=='ArrowRight')act('keep');else if(e.key=='z')undo();else if(e.key=='o')fetch('/open?p='+encodeURIComponent(list[i].path),{method:'POST'})};
+init()
+</script>"""
+
+
+class H(BaseHTTPRequestHandler):
+    def log_message(self, *a): pass
+
+    def send(self, body, ctype="text/html", code=200):
+        b = body if isinstance(body, bytes) else body.encode()
+        self.send_response(code); self.send_header("Content-Type", ctype)
+        self.send_header("Content-Length", str(len(b))); self.end_headers(); self.wfile.write(b)
+
+    def safe(self, p):
+        p = os.path.realpath(p)
+        return p if p.startswith(ROOT + os.sep) else None
+
+    def do_GET(self):
+        u = urllib.parse.urlparse(self.path); q = urllib.parse.parse_qs(u.query)
+        if u.path == "/": return self.send(PAGE)
+        if u.path == "/list":
+            return self.send(json.dumps([{"path": p, "root": ROOT + "/", "size": os.path.getsize(p)} for p in files if os.path.exists(p) and p not in kept]), "application/json")
+        if u.path == "/f":
+            p = self.safe(q["p"][0])
+            if not p or not os.path.isfile(p): return self.send("no", code=404)
+            size = os.path.getsize(p); start, end = 0, size - 1
+            rng = self.headers.get("Range")
+            if rng:
+                a, _, b = rng.replace("bytes=", "").partition("-")
+                start = int(a or 0); end = int(b) if b else size - 1
+            end = min(end, size - 1)
+            self.send_response(206 if rng else 200)
+            self.send_header("Content-Type", mimetypes.guess_type(p)[0] or "application/octet-stream")
+            self.send_header("Accept-Ranges", "bytes"); self.send_header("Content-Length", str(end - start + 1))
+            if rng: self.send_header("Content-Range", f"bytes {start}-{end}/{size}")
+            self.end_headers()
+            with open(p, "rb") as f:
+                f.seek(start); left = end - start + 1
+                try:
+                    while left > 0:
+                        c = f.read(min(1 << 20, left))
+                        if not c: break
+                        self.wfile.write(c); left -= len(c)
+                except (BrokenPipeError, ConnectionResetError): pass
+            return
+        self.send("no", code=404)
+
+    def do_POST(self):
+        u = urllib.parse.urlparse(self.path); q = urllib.parse.parse_qs(u.query)
+        if u.path == "/trash":
+            p = self.safe(q["p"][0])
+            if p and os.path.isfile(p):
+                subprocess.run(["/usr/bin/trash", p], check=True); trashed.append(p)
+            return self.send("{}", "application/json")
+        if u.path == "/keep":
+            p = self.safe(q["p"][0])
+            if p: kept.add(p); json.dump(sorted(kept), open(STATE, "w"))
+            return self.send("{}", "application/json")
+        if u.path == "/open":
+            p = self.safe(q["p"][0])
+            if p: subprocess.Popen(["open", "-a", "QuickTime Player", p])
+            return self.send("{}", "application/json")
+        if u.path == "/undo":
+            if not trashed: return self.send("{}", "application/json")
+            p = trashed.pop(); t = os.path.expanduser("~/.Trash/" + os.path.basename(p))
+            if os.path.exists(t): os.rename(t, p)
+            return self.send(json.dumps({"path": p}), "application/json")
+        self.send("no", code=404)
+
+
+print(f"{len(files)} file in {ROOT}  ->  http://127.0.0.1:{PORT}")
+ThreadingHTTPServer(("127.0.0.1", PORT), H).serve_forever()

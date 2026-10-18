@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+# scrivitesto — inserisce del testo dove sta il cursore.
+#
+# Usato dai comandi vocali parametrici: «come titolo scrivi hello» cattura
+# "hello" e lo passa qui.
+#
+# Perche' via clipboard e Cmd-V e non con `keystroke`: `osascript ... keystroke`
+# richiede il permesso **Accessibilita** (provato: "osascript non e' consentito
+# inviare la pressione di tasti", errore 1002), che macOS non concede via
+# software. La clipboard invece e' libera, e Cmd-V lo puo' battere l'utente o
+# un'app autorizzata. Se l'Accessibilita' viene concessa, la via diretta si
+# attiva da se'.
+set -euo pipefail
+
+testo="${*:-}"
+[ -n "$testo" ] || { echo "uso: scrivitesto <testo>" >&2; exit 2; }
+
+# La clipboard precedente si salva e si rimette: sovrascriverla senza avvisare
+# fa perdere all'utente cio' che aveva copiato.
+prima=$(pbpaste 2>/dev/null || true)
+printf '%s' "$testo" | pbcopy
+
+if osascript -e 'tell application "System Events" to keystroke "v" using command down' 2>/dev/null; then
+  sleep 0.3
+  printf '%s' "$prima" | pbcopy 2>/dev/null || true
+  echo "scritto: $testo"
+else
+  # Senza permesso Accessibilita' il testo resta negli appunti: l'utente fa Cmd-V.
+  # Meglio questo che un silenzio in cui sembra non essere successo nulla.
+  echo "negli appunti (premi Cmd-V): $testo"
+fi

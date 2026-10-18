@@ -1,0 +1,153 @@
+#!/usr/bin/env python3
+# piante — catalogo piante vive AgriPetGarden, solo quelle DISPONIBILI.
+#
+# Perche' esiste: il catalogo ha 127 piante tropicali e 46 sono disponibili.
+# Le altre 81 restano a listino con tanto di prezzo, quindi una ricerca a occhio
+# sul sito fa perdere mezz'ora su piante che non si possono comprare. Qui gli
+# esauriti sono nascosti di default.
+#
+#   piante                       tropicali disponibili, per prezzo
+#   piante --cerca maranta       filtra sul nome
+#   piante --cat muschio         un'altra categoria
+#   piante --max 6               solo sotto i 6 €
+#   piante --foto /tmp/x         scarica anche le immagini
+#   piante --tutti               mostra pure gli esauriti
+#
+# Il sito e' Magento: il prezzo sta in data-price-amount, un attributo, non nel
+# testo. Leggerlo li' evita sia il badge sconto sia il prezzo barrato.
+
+import argparse
+import html
+import json
+import os
+import re
+import sys
+import urllib.request
+
+UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15"
+SHIP = 6.90  # fino a 3 kg, isole +3,00; gratis sopra i 69 €
+FREE = 69.0
+
+BASE = "https://www.agripetgarden.it/prodotti-rettili/arredamento-decoro/piante-vive-terrario/"
+CAT = {
+    "tropicali": BASE + "piante-tropicali.html",
+    "muschio": BASE + "muschio-vivo.html",
+    "carnivore": BASE + "piante-carnivore.html",
+    "deserticole": BASE + "piante-deserticole.html",
+    "alimentazione": BASE + "piante-da-alimentazione.html",
+}
+
+
+def fetch(url):
+    req = urllib.request.Request(url, headers={"User-Agent": UA})
+    with urllib.request.urlopen(req, timeout=40) as r:
+        return r.read().decode("utf-8", "ignore")
+
+
+def parse(page):
+    for b in re.split(r'(?=class="product-item-info")', page)[1:]:
+        link = re.search(r'product-item-link"\s+href="([^"]+)"\s*>\s*([^<]{3,90})', b)
+        price = re.search(r'data-price-amount="([\d.]+)"', b)
+        if not (link and price):
+            continue
+        img = re.search(r'src="(https://www\.agripetgarden\.it/media/catalog/product/cache/[^"]+)"', b)
+        yield {
+            "nome": " ".join(html.unescape(link.group(2)).split()),
+            "prezzo": float(price.group(1)),
+            "disp": not bool(re.search(r"stock unavailable|Non Disponibile", b, re.I)),
+            "url": link.group(1),
+            "img": img.group(1) if img else None,
+        }
+
+
+def categoria(url, pagine=8):
+    """Le pagine oltre l'ultima tornano vuote invece di dare 404, quindi il
+    ciclo si ferma quando smette di aggiungere prodotti nuovi."""
+    items = {}
+    for p in range(1, pagine + 1):
+        try:
+            page = fetch(f"{url}?p={p}&product_list_limit=36")
+        except Exception as e:
+            print(f"! pagina {p}: {e}", file=sys.stderr)
+            break
+        nuovi = 0
+        for it in parse(page):
+            if it["url"] not in items:
+                items[it["url"]] = it
+                nuovi += 1
+        if nuovi == 0:
+            break
+    return list(items.values())
+
+
+def scarica(items, dest):
+    os.makedirs(dest, exist_ok=True)
+    n = 0
+    for i, it in enumerate(items):
+        if not it["img"]:
+            continue
+        # togliendo /cache/<hash>/ si prende l'originale invece della miniatura
+        full = re.sub(r"/cache/[0-9a-f]+/", "/", it["img"])
+        f = os.path.join(dest, f"{i:02d}.jpg")
+        for u in (full, it["img"]):
+            try:
+                d = urllib.request.urlopen(urllib.request.Request(u, headers={"User-Agent": UA}), timeout=40).read()
+                open(f, "wb").write(d)
+                it["file"] = f
+                n += 1
+                break
+            except Exception:
+                continue
+    print(f"\nfoto scaricate in {dest}: {n}", file=sys.stderr)
+
+
+def main():
+    ap = argparse.ArgumentParser(description="Piante vive AgriPetGarden, solo disponibili.")
+    ap.add_argument("--cat", default="tropicali", choices=sorted(CAT), help="categoria (default tropicali)")
+    ap.add_argument("--cerca", help="filtra sul nome")
+    ap.add_argument("--max", type=float, help="prezzo massimo")
+    ap.add_argument("--tutti", action="store_true", help="mostra anche gli esauriti")
+    ap.add_argument("--foto", metavar="DIR", help="scarica le immagini in DIR")
+    ap.add_argument("--json", action="store_true", help="output JSON invece che tabella")
+    args = ap.parse_args()
+
+    items = categoria(CAT[args.cat])
+    if not items:
+        print("Nessun prodotto letto: il markup del sito e' cambiato?", file=sys.stderr)
+        sys.exit(1)
+    tot_cat, disp_cat = len(items), sum(1 for i in items if i["disp"])
+
+    if args.cerca:
+        q = args.cerca.lower()
+        items = [i for i in items if q in i["nome"].lower()]
+    if args.max is not None:
+        items = [i for i in items if i["prezzo"] <= args.max]
+    if not args.tutti:
+        items = [i for i in items if i["disp"]]
+    items.sort(key=lambda i: (not i["disp"], i["prezzo"]))
+
+    if args.foto:
+        scarica(items, args.foto)
+    if args.json:
+        json.dump(items, sys.stdout, ensure_ascii=False, indent=1)
+        print()
+        return
+
+    print(f"\n\033[1m{args.cat}\033[0m — {tot_cat} a catalogo, {disp_cat} disponibili, {len(items)} mostrate")
+    print(f"spedizione {SHIP:.2f} € (gratis sopra {FREE:.0f} €, isole +3,00)\n")
+    for i in items:
+        flag = "" if i["disp"] else "  \033[31mESAURITO\033[0m"
+        print(f"  \033[1m{i['prezzo']:>6.2f} €\033[0m  {i['nome'][:58]}{flag}")
+        print(f"           {i['url']}")
+    if items:
+        m = min(i["prezzo"] for i in items if i["disp"]) if any(i["disp"] for i in items) else None
+        if m is not None:
+            print(f"\n\033[1mUna sola pianta consegnata:\033[0m da {m + SHIP:.2f} €")
+            print(f"  Conviene sempre accorparle a un ordine di insetti: la spedizione si paga una volta.")
+    else:
+        print("  niente che corrisponda.")
+        sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()

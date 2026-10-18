@@ -1,0 +1,91 @@
+#!/usr/bin/env python3
+"""aa-top: i modelli migliori da Artificial Analysis, in un colpo (cache 6 ore).
+
+  aa-top                         primi 15 per AA Intelligence
+  aa-top --by coding|speed|ttft|price|ifbench   altro ordinamento
+  aa-top --free                  solo prezzo 0 (gratis sull'API dichiarata)
+  aa-top --max-price 1           tetto sul prezzo blended $/M token
+  aa-top --fast                  candidati decisori: risposta sotto 1 s, ordinati per intelligenza
+  aa-top claude                  filtra per nome o creatore
+  aa-top -n 30 --json            più righe, uscita JSON
+
+Artificial Analysis non misura i modelli decisionali tipizzati (Jev e simili): per quelli
+c'è il banco ~/Projects/claude-usage-hub/bin/route-bench.mjs. Chiave Keychain artificialanalysis/api.
+"""
+import argparse, json, os, subprocess, sys, time, urllib.request
+
+URL = "https://artificialanalysis.ai/api/v2/data/llms/models"
+CACHE = os.path.expanduser("~/.cache/aa-top/models.json")
+TTL = 6 * 3600
+
+
+def load(refresh=False):
+    if not refresh and os.path.exists(CACHE) and time.time() - os.path.getmtime(CACHE) < TTL:
+        return json.load(open(CACHE))
+    key = subprocess.run(["security", "find-generic-password", "-s", "artificialanalysis", "-a", "api", "-w"],
+                         capture_output=True, text=True).stdout.strip()
+    if not key:
+        sys.exit("aa-top: chiave mancante nel Keychain (artificialanalysis/api)")
+    try:
+        req = urllib.request.Request(URL, headers={"x-api-key": key, "User-Agent": "aa-top"})
+        data = json.load(urllib.request.urlopen(req, timeout=30))["data"]
+    except Exception as e:
+        if os.path.exists(CACHE):  # rete giù: meglio la copia vecchia che niente, e lo si dice
+            print(f"aa-top: API non raggiungibile ({e}), uso la copia del {time.ctime(os.path.getmtime(CACHE))}", file=sys.stderr)
+            return json.load(open(CACHE))
+        sys.exit(f"aa-top: API non raggiungibile: {e}")
+    os.makedirs(os.path.dirname(CACHE), exist_ok=True)
+    json.dump(data, open(CACHE + ".tmp", "w"))
+    os.replace(CACHE + ".tmp", CACHE)
+    return data
+
+
+def row(m):
+    ev, pr = m.get("evaluations") or {}, m.get("pricing") or {}
+    return {
+        "name": m["name"], "creator": (m.get("model_creator") or {}).get("name", "?"), "date": m.get("release_date") or "",
+        "intelligence": ev.get("artificial_analysis_intelligence_index"), "coding": ev.get("artificial_analysis_coding_index"),
+        "ifbench": ev.get("ifbench"), "price": pr.get("price_1m_blended_3_to_1"),
+        "speed": m.get("median_output_tokens_per_second"), "ttft": m.get("median_time_to_first_answer_token") or m.get("median_time_to_first_token_seconds"),
+    }
+
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("query", nargs="?", default="")
+    ap.add_argument("--by", choices=["intelligence", "coding", "speed", "ttft", "price", "ifbench"], default="intelligence")
+    ap.add_argument("--free", action="store_true")
+    ap.add_argument("--max-price", type=float)
+    ap.add_argument("--fast", action="store_true")
+    ap.add_argument("-n", type=int, default=15)
+    ap.add_argument("--json", action="store_true")
+    ap.add_argument("--refresh", action="store_true")
+    a = ap.parse_args()
+
+    rows = [row(m) for m in load(a.refresh)]
+    q = a.query.lower()
+    if q:
+        rows = [r for r in rows if q in r["name"].lower() or q in r["creator"].lower()]
+    if a.free:
+        rows = [r for r in rows if r["price"] == 0 and (r["speed"] or 0) > 0]  # 0 tok/s = nessuna API misurata
+    if a.max_price is not None:
+        rows = [r for r in rows if r["price"] is not None and r["price"] <= a.max_price]
+    by = a.by
+    if a.fast:
+        rows = [r for r in rows if r["ttft"] and 0 < r["ttft"] < 1]
+        by = "intelligence"
+    asc = by in ("ttft", "price")
+    rows = [r for r in rows if r[by] is not None and (r[by] > 0 or by == "price")]
+    rows.sort(key=lambda r: r[by], reverse=not asc)
+    rows = rows[: a.n]
+    if a.json:
+        return print(json.dumps(rows, ensure_ascii=False, indent=1))
+    f = lambda v, fmt: "-" if v is None else format(v, fmt)
+    print(f"{'modello':<44} {'creatore':<12} {'intel':>5} {'code':>5} {'ifb':>5} {'$/M':>6} {'tok/s':>6} {'ttft':>6}")
+    for r in rows:
+        print(f"{r['name'][:44]:<44} {r['creator'][:12]:<12} {f(r['intelligence'], '.1f'):>5} {f(r['coding'], '.1f'):>5} "
+              f"{f(r['ifbench'], '.2f'):>5} {f(r['price'], '.2f'):>6} {f(r['speed'], '.0f'):>6} {f(r['ttft'], '.2f'):>6}")
+
+
+if __name__ == "__main__":
+    main()

@@ -1,0 +1,61 @@
+#!/usr/bin/env python3
+"""Print the app.affine.pro session cookie header from the Dia browser profile.
+
+A web session lasts months, unlike the desktop app's 15-minute access token, and
+it does not require AFFiNE to be running — which is what makes the MCP server
+usable without fighting the desktop client for the realtime channel.
+"""
+import pathlib
+import shutil
+import sqlite3
+import subprocess
+import sys
+
+from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
+
+COOKIES = pathlib.Path.home() / "Library/Application Support/Dia/User Data/Profile 1/Cookies"
+HOST = "app.affine.pro"
+KEYCHAIN_SERVICES = ("Dia Safe Storage", "Chromium Safe Storage")
+
+
+def safe_storage_key() -> bytes:
+    for service in KEYCHAIN_SERVICES:
+        r = subprocess.run(["security", "find-generic-password", "-w", "-s", service],
+                           capture_output=True, text=True)
+        if r.returncode == 0:
+            return PBKDF2HMAC(algorithm=hashes.SHA1(), length=16, salt=b"saltysalt",
+                              iterations=1003).derive(r.stdout.strip().encode())
+    sys.exit("no Safe Storage key found for Dia")
+
+
+def decrypt(blob: bytes, key: bytes) -> str | None:
+    if not blob or blob[:3] not in (b"v10", b"v11"):
+        return None
+    dec = Cipher(algorithms.AES(key), modes.CBC(b" " * 16)).decryptor()
+    plain = dec.update(blob[3:]) + dec.finalize()
+    plain = plain[: -plain[-1]]
+    # Chromium prepends a 32-byte hash of the cookie's domain to the plaintext.
+    return plain[32:].decode("utf-8", "replace")
+
+
+def main() -> None:
+    tmp = pathlib.Path("/tmp/.affine-cookie.db")
+    shutil.copy(COOKIES, tmp)
+    key = safe_storage_key()
+    con = sqlite3.connect(tmp)
+    pairs = []
+    for name, enc in con.execute("select name, encrypted_value from cookies where host_key = ?", (HOST,)):
+        value = decrypt(enc, key)
+        if value:
+            pairs.append(f"{name}={value}")
+    con.close()
+    tmp.unlink(missing_ok=True)
+    if not any(p.startswith("affine_session=") for p in pairs):
+        sys.exit("no affine_session cookie: sign in to app.affine.pro in Dia")
+    print("; ".join(pairs))
+
+
+if __name__ == "__main__":
+    main()
