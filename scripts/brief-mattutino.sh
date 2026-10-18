@@ -98,6 +98,8 @@ fi
 [[ $used == claude ]] && printf '_(brief fatto con Claude: %s)_\n\n' "$reason"
 [[ $used == codex ]] && printf '_(brief fatto con ChatGPT: %s)_\n\n' "$reason"
 cat "$work/out"
+# Lista intera una volta al giorno, qui (Attilio 19/10); negli altri messaggi todo-recap va breve
+printf '\n'; limit 90 todo-recap --full 2>/dev/null || echo "📋 lista task non letta da Promemoria"
 # Il prompt chiede al modello di scrivere il file per «vai archivio»; se non l'ha fatto, almeno il
 # testo inviato c'e' (senza ID: la sessione WhatsApp li cerca con gws-mail).
 if [[ ! $BRIEF_FILE -nt $work/start ]]; then
