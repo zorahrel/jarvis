@@ -1,5 +1,7 @@
 # Jarvis Claude Code
 
+> **Archived (October 2026).** This router is retired: its channels moved to OpenClaw, and the project is no longer maintained. The code stays here as a reference.
+
 <sub>`jarvis-claudecode` · zorahrel/jarvis-claudecode</sub>
 
 > Multi-channel router that brings the **Claude Code CLI** to Telegram, WhatsApp, and Discord — with per-route agents, persistent memory, media processing, a web dashboard, and a native macOS tray app.
