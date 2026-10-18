@@ -8,7 +8,7 @@ export PATH=/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin
 
 log() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*"; }
 
-before=$(df -m / | awk 'NR==2{print $4}')
+before=$(df -m /System/Volumes/Data | awk 'NR==2{print $4}')
 log "start, ${before} MB free"
 
 # 1. jcode scratch: disposable by definition, keep the last 7 days.
@@ -77,7 +77,18 @@ find "$HOME/Projects" "$HOME/Sites" -maxdepth 3 -type d \( -name .next -o -name 
 #     for 24h (7 GB on 03/10/2026). Live sessions are never touched.
 python3 "$HOME/.claude/jarvis/router/scripts/prune_claude_tmp.py" 24 2>&1 | sed 's/^/  claude-tmp: /'
 
-after=$(df -m / | awk 'NR==2{print $4}')
+# 9c. Ad-hoc agent scratch in /private/tmp/q-* (60+ GB on 06/10/2026, nothing
+#     cleaned them). Deleted only when nothing inside is newer than 3 days.
+find /private/tmp -maxdepth 1 -name 'q-*' -exec sh -c '[ -z "$(find "$1" -mtime -3 -print -quit 2>/dev/null)" ] && rm -rf "$1"' _ {} \; 2>/dev/null
+log "  q-tmp without writes in 3d pruned"
+
+# 9d. Anything else in /private/tmp (migration clones, test sandboxes: 34 GB on
+#     13/10/2026, nothing but q-* and claude-501 was ever pruned). Only entries whose
+#     NEWEST file is older than 7 days; --safe keeps worktrees/clones (.git), live
+#     sockets and files owned by other users.
+python3 "$HOME/.claude/jarvis/router/scripts/prune_stale.py" /private/tmp 7 --safe --skip=claude-501 2>&1 | sed 's/^/  tmp-stale: /'
+
+after=$(df -m /System/Volumes/Data | awk 'NR==2{print $4}')
 log "done, ${after} MB free (freed $((after - before)) MB)"
 
 # 10. Alert: last time the disk went from 210 to 75 GB free in one week

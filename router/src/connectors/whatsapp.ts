@@ -512,6 +512,7 @@ export class WhatsAppConnector implements Connector {
 
     // ── DECISION TREE ──────────────────────────────────────
     //
+    // 0. ignoreGroups                                → skip (another agent owns it)
     // 1. Self-chat + fromMe                          → route (from:self → full)
     // 2. alwaysReplyGroups                           → route
     // 3. @jarvis + owner (ONE-SHOT, no session)      → full agent override
@@ -523,9 +524,16 @@ export class WhatsAppConnector implements Connector {
     // processed with the full agent regardless of chat; no 30-min session.
     // The decision is computed BEFORE touching media so we don't drop 👀
     // eyes on attachments that will be ignored.
+    //
+    // ignoreGroups comes first because it must beat the @jarvis one-shot, which
+    // otherwise fires in ANY group the owner writes "Jarvis" in. Those groups are
+    // handed to the OpenClaw agent, which is in them under its OWN number: the
+    // router replies from the owner's account, so a team group would see Attilio
+    // answering himself, and both agents would answer the same message.
     // ───────────────────────────────────────────────────────
     const config = getConfig();
     const alwaysReplyGroups: string[] = (config as any).jarvis?.alwaysReplyGroups ?? [];
+    const ignoreGroups: string[] = (config as any).jarvis?.ignoreGroups ?? [];
     const isBotSent = fromMe && !!msgId && this.sentMsgIds.has(msgId);
     const jarvisInvoked = isJarvisInvocation(text);
 
@@ -538,6 +546,10 @@ export class WhatsAppConnector implements Connector {
       | { kind: "explicitRoute" };
 
     let decision: Decision = { kind: "skip" };
+    if (isGroup && ignoreGroups.includes(jid)) {
+      log.debug({ jid }, "Group owned by another agent (ignoreGroups) — skipping");
+      return;
+    }
     if (selfChat && fromMe) {
       decision = { kind: "self" };
     } else if (isGroup && alwaysReplyGroups.includes(jid)) {

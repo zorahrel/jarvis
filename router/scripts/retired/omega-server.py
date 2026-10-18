@@ -21,6 +21,8 @@ import os
 import sys
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+import idle_serve
 from urllib.parse import parse_qs, urlparse
 
 sys.stdout.reconfigure(line_buffering=True)
@@ -187,10 +189,18 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def main() -> int:
-    server = ThreadingHTTPServer(("127.0.0.1", PORT), Handler)
-    print(f"OMEGA HTTP server listening on http://127.0.0.1:{PORT}", flush=True)
+    # Started by launchd with the socket already open (Sockets in the plist), or
+    # on our own from a shell: idle_serve tells the two apart and the second
+    # case behaves exactly as before.
+    listener = idle_serve.activated_socket()
+    server = ThreadingHTTPServer(("127.0.0.1", PORT), Handler, bind_and_activate=listener is None)
+    if listener is not None:
+        idle_serve.adopt(server, listener)
+    idle_s = idle_serve.idle_seconds("OMEGA_IDLE_EXIT_S") if listener is not None else 0
+    where = f"http://127.0.0.1:{server.server_port}"
+    print(f"OMEGA HTTP server listening on {where} (idle exit: {idle_s or 'off'})", flush=True)
     try:
-        server.serve_forever()
+        idle_serve.serve_until_idle(server, idle_s)
     except KeyboardInterrupt:
         print("Shutting down.", flush=True)
     return 0

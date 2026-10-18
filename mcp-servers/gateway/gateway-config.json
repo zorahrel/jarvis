@@ -107,8 +107,7 @@
       "command": "node",
       "args": [
         "${HOME}/jarvis/mcp-servers/topics-board/server.mjs"
-      ],
-      "autoMount": false
+      ]
     },
     {
       "name": "skills-attic",

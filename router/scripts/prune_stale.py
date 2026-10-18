@@ -1,7 +1,11 @@
 #!/usr/bin/env python3
 """Prune top-level entries of a throwaway directory that nobody touched in N days.
 
-Usage: prune_stale.py <dir> [days=3] [--dry-run]
+Usage: prune_stale.py <dir> [days=3] [--dry-run] [--safe] [--skip=name,...]
+
+--safe (for /private/tmp, shared with live sessions): never touch an entry that
+contains a .git (worktree/clone with possibly unpushed work), a unix socket
+(a daemon may still listen on it) or that is not owned by the current user.
 
 Unlike prune_scratch.py, an entry counts as stale only if its NEWEST file is
 older than the cutoff: a directory's own mtime does not change when files
@@ -12,16 +16,38 @@ update-canary and plugin-build dirs that OpenClaw never deletes.
 """
 import os
 import shutil
+import stat
 import sys
 import time
 
 args = [a for a in sys.argv[1:] if not a.startswith("--")]
 if not args:
-    sys.exit("usage: prune_stale.py <dir> [days] [--dry-run]")
+    sys.exit("usage: prune_stale.py <dir> [days] [--dry-run] [--safe] [--skip=a,b]")
 root = os.path.expanduser(args[0])
 days = int(args[1]) if len(args) > 1 else 3
 dry = "--dry-run" in sys.argv
+safe = "--safe" in sys.argv
+skip = {n for a in sys.argv if a.startswith("--skip=") for n in a[7:].split(",")}
 cutoff = time.time() - days * 86400
+
+
+def protected(p):
+    """True if deleting this entry could hurt someone: see --safe."""
+    st = os.lstat(p)
+    if st.st_uid != os.getuid():
+        return True
+    if not os.path.isdir(p) or os.path.islink(p):
+        return stat.S_ISSOCK(st.st_mode)
+    for r, ds, fs in os.walk(p, onerror=lambda e: None):
+        if ".git" in ds or ".git" in fs:
+            return True
+        for x in fs:
+            try:
+                if stat.S_ISSOCK(os.lstat(os.path.join(r, x)).st_mode):
+                    return True
+            except OSError:
+                pass
+    return False
 
 
 def newest_and_size(p):
@@ -42,11 +68,17 @@ def newest_and_size(p):
 count = freed = kept = 0
 for name in os.listdir(root) if os.path.isdir(root) else []:
     p = os.path.join(root, name)
+    if name in skip:
+        kept += 1
+        continue
     try:
         newest, size = newest_and_size(p)
     except OSError:
         continue
     if newest >= cutoff:
+        kept += 1
+        continue
+    if safe and protected(p):
         kept += 1
         continue
     count += 1

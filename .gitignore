@@ -103,3 +103,8 @@ mcp-needs-auth-cache*.json
 *credential*.json
 relocated-mcp/
 bin-ocr-vision
+
+# memory-recall: eval.json contiene prompt reali (chat di clienti e colleghi, numeri) e
+# hits.log i path delle schede richiamate. Il repo è PUBBLICO: restano solo in locale.
+memory-recall/eval.json
+memory-recall/hits.log

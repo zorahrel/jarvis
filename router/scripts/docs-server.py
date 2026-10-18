@@ -18,6 +18,8 @@ the previous launchd plist brings the old stack back as-is.
 """
 import os, sys, glob, json, time, hashlib, sqlite3, threading
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
+
+import idle_serve
 from urllib.parse import urlparse, parse_qs
 
 import numpy as np
@@ -365,12 +367,18 @@ if __name__ == "__main__":
     # Bind to 127.0.0.1 by default. CHROMA_BIND kept for compat with the old
     # server's env knob; DOCS_BIND wins if both are set.
     host = os.environ.get("DOCS_BIND", os.environ.get("CHROMA_BIND", "127.0.0.1"))
-    server = ThreadingHTTPServer((host, port), Handler)
-    print(f"Docs-index server running on http://{host}:{port} (model: {MODEL_DIR})", flush=True)
+    # launchd may hand us the listening socket (Sockets in the plist); without
+    # it we bind ourselves and stay up, as a manual run expects.
+    listener = idle_serve.activated_socket()
+    server = ThreadingHTTPServer((host, port), Handler, bind_and_activate=listener is None)
+    if listener is not None:
+        idle_serve.adopt(server, listener)
+    idle_s = idle_serve.idle_seconds("DOCS_IDLE_EXIT_S") if listener is not None else 0
+    print(f"Docs-index server running on http://{host}:{server.server_port} (model: {MODEL_DIR}, idle exit: {idle_s or 'off'})", flush=True)
     # Serve the cached snapshot immediately; refresh in the background.
     try:
         _load_snapshot_from_db()
     except Exception as e:
         print(f"Snapshot load error: {e}", flush=True)
     threading.Thread(target=lambda: index_all(), daemon=True).start()
-    server.serve_forever()
+    idle_serve.serve_until_idle(server, idle_s)

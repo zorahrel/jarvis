@@ -45,12 +45,26 @@ NONE_LABEL = "nessuno di questi, non si capisce"
 # questi con un altro nome, e due voti dello stesso modello non sono due voti.
 # Ogni modello Gemini gratuito ha la sua quota del giorno (20 richieste i
 # Flash, 500 i Flash-Lite): chi risponde 429 si salta fino al giorno dopo.
+# 18/10: Codex (abbonamento da 20 €) solo di riserva, dopo i gratuiti, e solo se il gate del pacing lo lascia.
+def codex_braked():
+    """True se il gate del pacing ferma Codex (exit 10). Contatore giu' o hub assente: non frena."""
+    hub = Path.home() / "Projects/claude-usage-hub/bin/usage-hub.mjs"
+    if not hub.exists():
+        return False
+    try:
+        return subprocess.run(["node", str(hub), "gate", "massivo", "--provider", "codex"],
+                              capture_output=True, timeout=30).returncode == 10
+    except Exception:
+        return False
+
+
 READERS = [
-    "gemini-3.8-flash", "codex:gpt-6-luna",
+    "gemini-3.8-flash",
     # senza Gemini bastano questi per 4 famiglie: openai, nvidia, meta, google (Gemma)
     "oai:nim/nvidia/nemotron-3.5-super-vl-120b-a12b", "oai:nim/meta/llama-3.2-90b-vision-instruct",
     "oai:nim/google/gemma-4-31b-it",
-    "oai:or/nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free", "oai:or/google/gemma-4-31b-it:free",
+    # niente OpenRouter: la chiave è di Cifra e serve solo ai prodotti, non a Jarvis (Attilio, 18/10)
+    "codex:gpt-6-luna",
     "gemini-3.1-pro-preview", "gemini-3.7-flash",
     "gemini-robotics-er-2-preview", "gemini-3.6-flash", "gemini-3.5-flash", "gemini-3-flash-preview",
     "gemini-omni-1.1-flash", "gemma-4-31b-it", "gemini-3.5-flash-lite", "gemini-3.1-flash-lite",
@@ -265,8 +279,7 @@ def gemini(model, key, parts, use_schema=True):
 def channel_key(ch):
     """chiave del canale: Keychain, altrimenti il file env di jcode per NIM. Mai stampata."""
     if ch == "or":
-        return subprocess.run(["security", "find-generic-password", "-s", "openrouter", "-w"],
-                              capture_output=True, text=True).stdout.strip()
+        return ""  # chiave di Cifra, riservata ai prodotti (Attilio, 18/10): oai:or/ esce con Skip
     if ch == "nim":
         k = subprocess.run(["security", "find-generic-password", "-s", "nvidia-nim", "-w"],
                            capture_output=True, text=True).stdout.strip()
@@ -534,6 +547,9 @@ def main():
     key = os.environ.get("GEMINI_API_KEY") or subprocess.run(
         ["security", "find-generic-password", "-s", "gemini", "-a", "api-key", "-w"], capture_output=True, text=True).stdout.strip()
     readers = [r.strip() for r in a.lettori.split(",") if r.strip()] or READERS
+    if not a.lettori and codex_braked():
+        readers = [r for r in readers if not r.startswith("codex:")]
+        print("  codex frenato dal pacing: giuria senza Codex", file=sys.stderr)
     if a.senza_gemini or os.environ.get("VIS_GIURIA_SENZA_GEMINI", "").lower() not in ("", "0", "no", "false"):
         readers = [r for r in readers if external(r)]
     ctx = a.contesto.strip()

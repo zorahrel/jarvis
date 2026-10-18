@@ -30,7 +30,7 @@ fi
   printf '%s\n' '{"jsonrpc":"2.0","method":"notifications/initialized"}'
   printf '%s\n' "$REQ"
   sleep 4
-} | "$DIR/start.sh" 2>/dev/null | WANT=$WANT python3 -c '
+} | "$DIR/start.sh" 2>/dev/null | WANT=$WANT DIR="$DIR" python3 -c '
 import sys, json, os
 want = int(os.environ["WANT"])
 for line in sys.stdin:
@@ -40,12 +40,15 @@ for line in sys.stdin:
     except: continue
     if o.get("id") == want:
         if "error" in o:
-            print("ERROR:", json.dumps(o["error"])); break
+            print("ERROR:", json.dumps(o["error"])); sys.exit(1)
         r = o["result"]
         if "tools" in r:
             print("\n".join(t["name"] for t in r["tools"]))
         else:
             for c in r.get("content", []):
                 if c.get("type") == "text": print(c["text"])
-        break
+        sys.exit(1 if r.get("isError") else 0)
+# nessuna risposta: il server non è partito (es. node sbagliato nel PATH). Prima usciva 0 e vuoto.
+print("edm: nessuna risposta dal server, prova " + os.environ.get("DIR", ".") + "/start.sh per vedere il motivo", file=sys.stderr)
+sys.exit(1)
 '

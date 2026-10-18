@@ -235,6 +235,12 @@ export interface JarvisConfig {
   allowedCallers?: string[];
   alwaysReplyGroups?: string[];
   /**
+   * Group JIDs owned by another agent (OpenClaw is in them under its own
+   * number). The router never answers there — not even on `@jarvis` — so the
+   * team doesn't get two replies, one of which arrives from Attilio's account.
+   */
+  ignoreGroups?: string[];
+  /**
    * Telegram numeric user IDs allowed to one-shot the full agent via `@jarvis`
    * mention from any chat (including groups not routed to jarvis). Mirrors the
    * WhatsApp `allowedCallers[0]` owner pattern. Find your ID via @userinfobot.

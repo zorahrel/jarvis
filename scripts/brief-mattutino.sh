@@ -71,7 +71,9 @@ elif [[ -z ${used:-} ]]; then
   fi
 fi
 
-if [[ -z ${used:-} ]]; then
+# Codex solo se il pacing lo lascia passare (18/10); contatore giu' = passa, frenato (exit 10) = si salta.
+codex_ok() { node "$HOME/Projects/claude-usage-hub/bin/usage-hub.mjs" gate massivo --provider codex >/dev/null 2>&1; [[ $? -ne 10 ]]; }
+if [[ -z ${used:-} ]] && codex_ok; then
   # modello esplicito: col login ChatGPT i gpt-6-* danno 400 (provato 04/10), il default
   # gpt-6.1-sol di ~/.codex/config.toml compreso; effort medio perche il default e ultra
   limit "$CODEX_MAX" codex exec -m gpt-5.6-sol -c model_reasoning_effort=medium --skip-git-repo-check --dangerously-bypass-approvals-and-sandbox \
@@ -87,7 +89,7 @@ if [[ -z ${used:-} ]]; then
 fi
 
 if [[ -z ${used:-} ]]; then
-  msg="⚠️ Brief di stamattina non generato: $reason; neanche i piani B (Claude/codex) hanno risposto. Riprovo domani alle 7:30."
+  msg="⚠️ Brief di stamattina non generato: $reason; neanche i piani B (Claude/codex) hanno risposto o codex era frenato dal pacing. Riprovo domani alle 7:30."
   echo "$msg"
   printf '%s\n' "$msg" > "$BRIEF_FILE"
   exit 0

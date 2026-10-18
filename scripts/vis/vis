@@ -307,6 +307,9 @@ PY
       DUR=$(ffprobe -v error -show_entries format=duration -of csv=p=0 "$V" 2>/dev/null)
       [[ -z "$DUR" || "$DUR" == "N/A" ]] && DUR=$(ffmpeg -i "$V" -f null - 2>&1 | sed -n 's/.*time=\([0-9:.]*\).*/\1/p' | tail -1 | awk -F: '{print $1*3600+$2*60+$3}')
       T0="${DA:-0}"; T1="${A:-$(python3 -c "print(max(0, $DUR - 0.1))")}"
+      # Codex col freno del pacing (18/10): frenato = niente ripiego, meglio un errore chiaro che la quota bruciata.
+      node "$HOME/Projects/claude-usage-hub/bin/usage-hub.mjs" gate massivo --provider codex >/dev/null 2>&1
+      [[ $? -eq 10 ]] && die "Gemini non risponde e Codex e' frenato dal pacing: riprova piu' tardi"
       N=$(python3 -c "import math;print(max(2,min(24,math.ceil(($T1-$T0)*$FPS))))")
       TMP=$(mktemp -d -t vis-watch); IMGS=()
       echo "vis watch: ripiego su codex con $N fotogrammi fra ${T0}s e ${T1}s (quota ChatGPT)" >&2
