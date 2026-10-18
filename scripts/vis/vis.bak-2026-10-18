@@ -1,0 +1,450 @@
+#!/usr/bin/env bash
+# vis — la cassetta degli attrezzi visivi, dietro un comando solo.
+#
+# Il problema non era che mancassero i tool: tesseract, imagemagick, ffmpeg,
+# zbar e poppler erano gia' installati e inutilizzati, perche' nel momento in
+# cui servono nessuno si ricorda che ci sono ne' con quale flag. `vis` e' la
+# porta d'ingresso: si ricorda un nome solo e `vis` elenca il resto.
+#
+# Tutto e' LOCALE e GRATUITO: nessuna chiave, nessuna immagine che esce dalla
+# macchina. Le immagini di lavoro sono screenshot di dashboard con dati veri.
+#
+#   vis ocr FILE [--json]        testo da immagine (Vision di Apple)
+#   vis ask FILE "domanda"       domanda in linguaggio naturale (moondream)
+#   vis find FILE "oggetto"      bounding box di un elemento
+#   vis point FILE "oggetto"     coordinate (x,y) di un elemento
+#   vis desc FILE [--long]       descrizione dell'immagine
+#   vis diff A B [--soglia N]    quanto differiscono due immagini + mappa
+#   vis frames VIDEO [--ogni N]  estrae fotogrammi da un video
+#   vis sheet VIDEO              contact sheet: un video in una immagine sola
+#   vis watch VIDEO "domanda"    guarda il video in movimento (Gemini, gratis)
+#                                [--fps N] fotogrammi al secondo letti (5; 10-24 per
+#                                animazioni veloci) · [--modello M] · [--da S --a S]
+#                                ESCE DALLA MACCHINA: va a Google, e col piano gratuito
+#                                Google puo' usarlo per addestrare. Niente dati veri.
+#   vis giuria VIDEO --atteso "X" --scelte "A; B; X; ..." [--controllo VIDEO]
+#                                piu' modelli guardano il video alla cieca e scelgono
+#                                da un elenco rimescolato; il controllo smaschera chi
+#                                tira a indovinare, [--positivo VIDEO] chi non vede
+#                                quel tipo di gesto. Esce 0 VERDE, 1 ROSSO, 3 INCERTO.
+#                                Per dire «si legge» di un'animazione: mai una lettura
+#                                sola. Esce dalla macchina come watch.
+#   vis qr FILE                  legge QR e codici a barre
+#   vis meta FILE                dimensioni, formato, EXIF
+#   vis crop FILE X Y W H        ritaglia (coordinate 0-1 o pixel)
+#   vis shrink FILE [--max N]    rimpicciolisce per farla stare nel contesto
+#   vis doctor                   dice cosa e' installato e cosa manca
+#
+set -uo pipefail
+
+VIS_HOME="$HOME/.claude/jarvis/scripts/vis"
+OCR_BIN="$VIS_HOME/bin-ocr-vision"
+# I binari di brew non sono nel PATH di un contesto non interattivo (launchd,
+# hook, agenti): senza questo `vis` funziona nel tuo terminale e fallisce
+# ovunque altro, che e' il modo peggiore di rompersi. $HOME/bin ci sta perche'
+# e' li' che vive il wrapper `moondream`.
+export PATH="/opt/homebrew/bin:/usr/local/bin:$HOME/bin:$PATH"
+
+die() { echo "vis: $*" >&2; exit 1; }
+have() { command -v "$1" >/dev/null 2>&1; }
+need() { have "$1" || die "manca '$1' — installa con: brew install $2"; }
+need_file() { [[ -f "$1" ]] || die "file non trovato: $1"; }
+
+usage() { sed -n '2,/^set -/p' "$0" | sed 's/^# \{0,1\}//; s/^set -.*//' >&2; exit 64; }
+
+cmd="${1:-}"; shift || true
+[[ -z "$cmd" || "$cmd" == "-h" || "$cmd" == "--help" ]] && usage
+
+case "$cmd" in
+
+  ocr)
+    F="${1:-}"; shift || true
+    [[ -z "$F" ]] && die "uso: vis ocr FILE [--json] [--fast] [--lang it,en]"
+    need_file "$F"
+    [[ -x "$OCR_BIN" ]] || die "OCR non compilato — esegui: vis doctor"
+    "$OCR_BIN" "$F" "$@"
+    ;;
+
+  ask|query)
+    F="${1:-}"; Q="${2:-}"
+    [[ -z "$F" || -z "$Q" ]] && die "uso: vis ask FILE \"domanda\""
+    need_file "$F"
+    moondream "$F" "$Q"
+    ;;
+
+  find|detect)
+    F="${1:-}"; Q="${2:-}"
+    [[ -z "$F" || -z "$Q" ]] && die "uso: vis find FILE \"cosa cercare\""
+    need_file "$F"
+    moondream "$F" --detect "$Q"
+    ;;
+
+  point)
+    F="${1:-}"; Q="${2:-}"
+    [[ -z "$F" || -z "$Q" ]] && die "uso: vis point FILE \"cosa cercare\""
+    need_file "$F"
+    moondream "$F" --point "$Q"
+    ;;
+
+  desc|caption)
+    F="${1:-}"; shift || true
+    [[ -z "$F" ]] && die "uso: vis desc FILE [--long]"
+    need_file "$F"
+    if [[ "${1:-}" == "--long" ]]; then moondream "$F" -l; else moondream "$F"; fi
+    ;;
+
+  diff)
+    A="${1:-}"; B="${2:-}"; shift 2 2>/dev/null || true
+    [[ -z "$A" || -z "$B" ]] && die "uso: vis diff A B [--soglia 0.1] [--out mappa.png]"
+    need_file "$A"; need_file "$B"; need magick imagemagick
+    SOGLIA="0.1"; OUT=""
+    while [[ $# -gt 0 ]]; do
+      case "$1" in
+        --soglia) SOGLIA="${2:-0.1}"; shift 2 ;;
+        --out)    OUT="${2:-}"; shift 2 ;;
+        *) shift ;;
+      esac
+    done
+    [[ -z "$OUT" ]] && OUT="$(mktemp -t vis-diff).png"
+    # Due screenshot dello stesso schermo possono differire di un pixel di
+    # dimensione (scrollbar, chrome del browser): senza questo controllo
+    # `compare` esce in errore e sembra che il confronto sia fallito.
+    DA=$(magick identify -format "%wx%h" "$A")
+    DB=$(magick identify -format "%wx%h" "$B")
+    if [[ "$DA" != "$DB" ]]; then
+      echo "dimensioni diverse: $A e' $DA, $B e' $DB — le confronto ridimensionando B" >&2
+      TMPB="$(mktemp -t vis-diff-b).png"
+      magick "$B" -resize "$DA!" "$TMPB"; B="$TMPB"
+    fi
+    # `compare -metric AE` stampa DUE numeri: "654.505 (0.000628944)" — il
+    # conteggio assoluto e la frazione gia' normalizzata. Il primo e' frazionario
+    # (conta i sub-pixel dei canali), il secondo e' esattamente il rapporto che
+    # serve: si prende quello invece di ricalcolarlo dividendo per w*h, che
+    # oltretutto `identify` restituisce in notazione scientifica su immagini
+    # grandi (1.04064e+06) rompendo ogni confronto numerico a valle.
+    RAW=$(magick compare -metric AE "$A" "$B" "$OUT" 2>&1 >/dev/null)
+    PIXDIFF=$(printf '%s' "$RAW" | awk '{print $1}')
+    RATIO=$(printf '%s' "$RAW" | sed -n 's/.*(\([0-9.e+-]*\)).*/\1/p')
+    # `%[fx:w*h]` stampa 1.04064e+06 anche dentro int(): l'espressione fx torna
+    # sempre in virgola mobile. Il prodotto lo fa awk, che di interi ne sa.
+    TOTPX=$(magick identify -format "%w %h" "$A" | awk '{ printf "%d", $1*$2 }')
+    # Senza parentesi (versioni vecchie di IM) si ricade sul rapporto calcolato.
+    if [[ -z "$RATIO" ]]; then
+      RATIO=$(awk -v d="${PIXDIFF:-0}" -v t="${TOTPX:-0}" 'BEGIN{ printf "%.8f", (t>0? d/t : 0) }')
+    fi
+    PERC=$(awk -v r="$RATIO" 'BEGIN{ printf "%.4f", r*100 }')
+    echo "pixel diversi: ${PIXDIFF:-0} / ${TOTPX}  (${PERC}%)"
+    echo "mappa: $OUT"
+    # Exit non-zero sopra soglia: cosi' `vis diff` si usa come gate in uno
+    # script senza dover interpretare il testo.
+    if awk -v r="$RATIO" -v s="$SOGLIA" 'BEGIN{ exit (r>s ? 0 : 1) }'; then
+      echo "OLTRE SOGLIA ($SOGLIA)" >&2
+      exit 1
+    fi
+    echo "entro soglia ($SOGLIA)"
+    ;;
+
+  frames)
+    V="${1:-}"; shift || true
+    [[ -z "$V" ]] && die "uso: vis frames VIDEO [--ogni SECONDI] [--out DIR]"
+    need_file "$V"; need ffmpeg ffmpeg
+    OGNI="2"; OUT=""
+    while [[ $# -gt 0 ]]; do
+      case "$1" in
+        --ogni) OGNI="${2:-2}"; shift 2 ;;
+        --out)  OUT="${2:-}"; shift 2 ;;
+        *) shift ;;
+      esac
+    done
+    [[ -z "$OUT" ]] && OUT=$(mktemp -d -t vis-frames)
+    mkdir -p "$OUT"
+    ffmpeg -loglevel error -i "$V" -vf "fps=1/$OGNI" "$OUT/frame-%03d.png" </dev/null
+    N=$(find "$OUT" -name 'frame-*.png' | wc -l | tr -d ' ')
+    echo "$N fotogrammi (uno ogni ${OGNI}s) in: $OUT"
+    ;;
+
+  sheet)
+    V="${1:-}"; shift || true
+    [[ -z "$V" ]] && die "uso: vis sheet VIDEO [--n 12] [--out FILE]"
+    need_file "$V"; need ffmpeg ffmpeg; need magick imagemagick
+    N="12"; OUT=""
+    while [[ $# -gt 0 ]]; do
+      case "$1" in
+        --n)   N="${2:-12}"; shift 2 ;;
+        --out) OUT="${2:-}"; shift 2 ;;
+        *) shift ;;
+      esac
+    done
+    [[ -z "$OUT" ]] && OUT="$(mktemp -t vis-sheet).jpg"
+    DUR=$(ffprobe -v error -show_entries format=duration -of csv=p=0 "$V")
+    [[ -z "$DUR" ]] && die "non riesco a leggere la durata di $V"
+    TMP=$(mktemp -d -t vis-sheet)
+    # Un frame ogni DUR/N secondi: il contact sheet copre TUTTO il video invece
+    # dei primi N secondi, che e' il modo giusto di capire cosa succede dentro.
+    # Su un video CORTO (3s) un passo minimo di 1s darebbe 3 frame invece di 8,
+    # quindi il passo resta frazionario: fps accetta i decimali.
+    STEP=$(awk -v d="$DUR" -v n="$N" 'BEGIN{ s=d/n; if (s<0.04) s=0.04; printf "%.4f", s }')
+    ffmpeg -loglevel error -i "$V" -vf "fps=1/$STEP" -frames:v "$N" "$TMP/f-%03d.png" </dev/null
+    GOT=$(find "$TMP" -name 'f-*.png' | wc -l | tr -d ' ')
+    [[ "$GOT" -eq 0 ]] && { rm -rf "$TMP"; die "nessun fotogramma estratto da $V"; }
+    # Griglia quadrata invece di una striscia: con -tile 4x e 8 frame venivano
+    # 1952x127, cioe' otto francobolli illeggibili. Le colonne si calcolano dai
+    # frame che si sono DAVVERO ottenuti (un video corto ne da' meno di N).
+    COLS=$(awk -v n="$GOT" 'BEGIN{ c=int(sqrt(n)+0.999); print (c<1?1:c) }')
+    # `montage` stampa "unable to read font" su un sistema senza font
+    # configurati anche quando NON gli si chiede un'etichetta, e produce
+    # comunque il montaggio: e' rumore su stderr, non un errore, e va tolto
+    # perche' un warning ignorabile insegna a ignorare i warning.
+    magick montage "$TMP"/f-*.png -tile "${COLS}x" -geometry '400x+6+6' \
+      -background '#1a1a1a' "$OUT" 2>/dev/null
+    [[ -f "$OUT" ]] || die "montage non ha prodotto $OUT"
+    rm -rf "$TMP"
+    SZ=$(magick identify -format "%wx%h" "$OUT")
+    echo "contact sheet: $GOT frame su ${DUR}s, griglia ${COLS} colonne, $SZ"
+    echo "$OUT"
+    ;;
+
+  watch|video)
+    # PERCHE': un contact sheet ferma il tempo, e i difetti di un'animazione
+    # (una mano che scatta, due che si compenetrano a meta' corsa) stanno nel
+    # movimento. Gemini legge il video intero ai fps che chiedi, gratis, e
+    # chi lo usa (Claude, Codex, OpenClaw) paga solo la risposta in testo.
+    V="${1:-}"; shift || true
+    Q="${1:-}"; [[ $# -gt 0 ]] && shift
+    [[ -z "$V" || -z "$Q" ]] && die 'uso: vis watch VIDEO "domanda" [--fps N] [--modello M] [--da S --a S]'
+    need_file "$V"
+    FPS="5"; MODEL="${VIS_WATCH_MODEL:-gemini-3.8-flash}"; DA=""; A=""
+    while [[ $# -gt 0 ]]; do
+      case "$1" in
+        --fps) FPS="${2:-5}"; shift 2 ;;
+        --modello|--model) MODEL="${2:-$MODEL}"; shift 2 ;;
+        --da) DA="${2:-}"; shift 2 ;;
+        --a) A="${2:-}"; shift 2 ;;
+        *) shift ;;
+      esac
+    done
+    KEY="${GEMINI_API_KEY:-$(security find-generic-password -s gemini -a api-key -w 2>/dev/null)}"
+    [[ -z "$KEY" ]] && die "manca la chiave: Keychain servizio 'gemini' account 'api-key' (o GEMINI_API_KEY)"
+    # VIS_WATCH_BACKEND=codex salta Gemini (quota del giorno gia' finita)
+    [[ "${VIS_WATCH_BACKEND:-}" == codex ]] && KEY=skip
+    [[ "$KEY" == skip ]] || VIS_KEY="$KEY" python3 - "$V" "$Q" "$FPS" "$MODEL" "$DA" "$A" <<'PY'
+import base64, json, mimetypes, os, sys, time, urllib.request, urllib.error
+path, q, fps, model, da, a = sys.argv[1:7]
+key = os.environ["VIS_KEY"]
+base = "https://generativelanguage.googleapis.com"
+mime = mimetypes.guess_type(path)[0] or "video/mp4"
+if path.endswith(".webm"): mime = "video/webm"
+size = os.path.getsize(path)
+def call(url, data=None, headers=None, method=None):
+    req = urllib.request.Request(url, data=data, headers=headers or {}, method=method)
+    try:
+        with urllib.request.urlopen(req, timeout=300) as r:
+            return r.headers, r.read()
+    except urllib.error.HTTPError as e:
+        sys.exit(f"vis watch: HTTP {e.code} da Gemini: {e.read().decode()[:400]}")
+# sotto i 18 MB il video va dentro la richiesta; sopra si carica e si aspetta
+if size < 18 * 1024 * 1024:
+    part = {"inline_data": {"mime_type": mime, "data": base64.b64encode(open(path, "rb").read()).decode()}}
+else:
+    h, _ = call(f"{base}/upload/v1beta/files?key={key}", json.dumps({"file": {"display_name": os.path.basename(path)}}).encode(),
+                {"X-Goog-Upload-Protocol": "resumable", "X-Goog-Upload-Command": "start",
+                 "X-Goog-Upload-Header-Content-Length": str(size), "X-Goog-Upload-Header-Content-Type": mime,
+                 "Content-Type": "application/json"})
+    _, body = call(h["X-Goog-Upload-URL"], open(path, "rb").read(),
+                   {"X-Goog-Upload-Command": "upload, finalize", "X-Goog-Upload-Offset": "0"})
+    f = json.loads(body)["file"]
+    while f.get("state") == "PROCESSING":
+        time.sleep(2)
+        _, body = call(f"{base}/v1beta/{f['name']}?key={key}")
+        f = json.loads(body)
+    if f.get("state") != "ACTIVE": sys.exit(f"vis watch: il file non e' pronto ({f.get('state')})")
+    part = {"file_data": {"mime_type": mime, "file_uri": f["uri"]}}
+meta = {"fps": float(fps)}
+if da: meta["start_offset"] = f"{float(da)}s"
+if a: meta["end_offset"] = f"{float(a)}s"
+part["video_metadata"] = meta
+req = {"contents": [{"parts": [part, {"text": q}]}]}
+# 503/429/404 (sovraccarico, quota, modello ritirato): si scende la catena;
+# se cadono tutti per sovraccarico si ripassa, fino a 3 giri con pause crescenti
+r = None
+chain = list(dict.fromkeys([model, "gemini-3.8-flash", "gemini-3.7-flash", "gemini-3.5-flash", "gemini-flash-latest"]))
+last = ""
+for turn in range(3):
+    busy = False   # un 503 passa da solo; una quota finita (429) o un modello ritirato no
+    for m in chain:
+        try:
+            rq = urllib.request.Request(f"{base}/v1beta/models/{m}:generateContent?key={key}", json.dumps(req).encode(), {"Content-Type": "application/json"})
+            with urllib.request.urlopen(rq, timeout=300) as resp:
+                r = json.loads(resp.read()); model = m
+            break
+        except urllib.error.HTTPError as e:
+            last = f"HTTP {e.code} ({m}): {e.read().decode()[:300]}"
+            if e.code not in (404, 429, 500, 503):
+                sys.exit(f"vis watch: {last}")
+            busy = busy or e.code in (500, 503)
+            print(f"vis watch: {m} risponde {e.code}", file=sys.stderr)
+    if r is not None or not busy: break
+    if turn < 2:
+        print(f"vis watch: tutti occupati, riprovo fra {20 * (turn + 1)} s", file=sys.stderr)
+        time.sleep(20 * (turn + 1))
+if r is None:
+    print(f"vis watch: nessun modello API risponde dopo 3 giri; ultimo: {last}", file=sys.stderr)
+    sys.exit(75)
+try:
+    print("".join(p.get("text", "") for p in r["candidates"][0]["content"]["parts"]).strip())
+except (KeyError, IndexError):
+    sys.exit(f"vis watch: risposta senza testo: {json.dumps(r)[:400]}")
+u = r.get("usageMetadata", {})
+print(f"\n[{model} · {fps} fps · {u.get('promptTokenCount','?')} token letti da Google, 0 da chi chiama]", file=sys.stderr)
+PY
+    rc=$?; [[ "$KEY" == skip ]] && rc=75
+    # RIPIEGO: la chiave gratuita ha 20 richieste al giorno per modello e nelle
+    # ore piene risponde 503. Allora i fotogrammi (fino a 24, con l'ora stampata)
+    # vanno a codex: quota fissa ChatGPT, ancora zero token Claude. La CLI gemini
+    # non serve da ripiego: usa la stessa quota della chiave (misurato 12/10).
+    if [[ $rc -eq 75 ]] && have codex; then
+      need ffmpeg ffmpeg; need magick imagemagick
+      DUR=$(ffprobe -v error -show_entries format=duration -of csv=p=0 "$V" 2>/dev/null)
+      [[ -z "$DUR" || "$DUR" == "N/A" ]] && DUR=$(ffmpeg -i "$V" -f null - 2>&1 | sed -n 's/.*time=\([0-9:.]*\).*/\1/p' | tail -1 | awk -F: '{print $1*3600+$2*60+$3}')
+      T0="${DA:-0}"; T1="${A:-$(python3 -c "print(max(0, $DUR - 0.1))")}"
+      N=$(python3 -c "import math;print(max(2,min(24,math.ceil(($T1-$T0)*$FPS))))")
+      TMP=$(mktemp -d -t vis-watch); IMGS=()
+      echo "vis watch: ripiego su codex con $N fotogrammi fra ${T0}s e ${T1}s (quota ChatGPT)" >&2
+      for i in $(seq 0 $((N - 1))); do
+        T=$(python3 -c "print(round($T0 + ($T1 - $T0) * $i / ($N - 1 if $N > 1 else 1) * 0.999, 2))")
+        F="$TMP/f$(printf %02d $i).png"
+        ffmpeg -loglevel error -ss "$T" -i "$V" -frames:v 1 -vf scale=480:-2 "$F" </dev/null || continue
+        # l'ora stampata e' un aiuto: se il font manca, il fotogramma va lo stesso
+        magick "$F" -font /System/Library/Fonts/Supplemental/Arial.ttf -gravity NorthWest -fill yellow \
+          -undercolor black -pointsize 18 -annotate +4+4 "t=${T}s" "$F" 2>/dev/null
+        IMGS+=(-i "$F")
+      done
+      [[ ${#IMGS[@]} -eq 0 ]] && die "nessun fotogramma estratto da $V"
+      # in una cartella vuota: senza, codex va a cercare il video nel repo da cui lo si chiama
+      (cd "$TMP" && codex exec -m "${VIS_WATCH_CODEX_MODEL:-gpt-6-luna}" --skip-git-repo-check -s read-only "${IMGS[@]}" -o "$TMP/out.txt" \
+        "Sono $((${#IMGS[@]} / 2)) fotogrammi in ordine di tempo dallo stesso video, allegati qui (l'ora e' stampata in alto a sinistra). Guarda solo quelli, non cercare file. $Q" </dev/null >/dev/null 2>&1)
+      rc=$?
+      [[ $rc -eq 0 && -s "$TMP/out.txt" ]] && cat "$TMP/out.txt" && printf '\n[codex · %s fotogrammi · 0 token Claude]\n' "$N" >&2
+    fi
+    exit $rc
+    ;;
+
+  giuria|jury|verdetto)
+    need ffmpeg ffmpeg; need magick imagemagick
+    exec python3 "$VIS_HOME/giuria.py" "$@"
+    ;;
+
+  qr|barcode)
+    F="${1:-}"
+    [[ -z "$F" ]] && die "uso: vis qr FILE"
+    need_file "$F"; need zbarimg zbar
+    zbarimg -q --raw "$F" || die "nessun codice trovato"
+    ;;
+
+  meta|info)
+    F="${1:-}"
+    [[ -z "$F" ]] && die "uso: vis meta FILE"
+    need_file "$F"; need magick imagemagick
+    magick identify -format "file:      %f\nformato:   %m\ndimensioni: %wx%h\nprofondita: %z bit\ncolore:    %[colorspace]\npeso:      %b\n" "$F"
+    ;;
+
+  crop)
+    F="${1:-}"; X="${2:-}"; Y="${3:-}"; W="${4:-}"; H="${5:-}"; OUT="${6:-}"
+    [[ -z "$H" ]] && die "uso: vis crop FILE X Y W H [OUT]  (0-1 normalizzate o pixel)"
+    need_file "$F"; need magick imagemagick
+    [[ -z "$OUT" ]] && OUT="$(mktemp -t vis-crop).png"
+    IW=$(magick identify -format "%w" "$F"); IH=$(magick identify -format "%h" "$F")
+    # Coordinate normalizzate (0-1) o pixel: si accettano entrambe perche'
+    # moondream restituisce 0-1 e uno le incolla direttamente qui.
+    read -r PX PY PW PH <<<"$(awk -v x="$X" -v y="$Y" -v w="$W" -v h="$H" -v iw="$IW" -v ih="$IH" \
+      'BEGIN{ n=(x<=1 && y<=1 && w<=1 && h<=1);
+              printf "%d %d %d %d", (n?x*iw:x), (n?y*ih:y), (n?w*iw:w), (n?h*ih:h) }')"
+    magick "$F" -crop "${PW}x${PH}+${PX}+${PY}" +repage "$OUT"
+    echo "$OUT"
+    ;;
+
+  shrink)
+    F="${1:-}"; shift || true
+    [[ -z "$F" ]] && die "uso: vis shrink FILE [--max 1400] [--out FILE]"
+    need_file "$F"; need magick imagemagick
+    MAX="1400"; OUT=""
+    while [[ $# -gt 0 ]]; do
+      case "$1" in
+        --max) MAX="${2:-1400}"; shift 2 ;;
+        --out) OUT="${2:-}"; shift 2 ;;
+        *) shift ;;
+      esac
+    done
+    [[ -z "$OUT" ]] && OUT="$(mktemp -t vis-shrink).png"
+    magick "$F" -resize "${MAX}x${MAX}>" -strip "$OUT"
+    echo "$(magick identify -format '%wx%h %b' "$F") -> $(magick identify -format '%wx%h %b' "$OUT")"
+    echo "$OUT"
+    ;;
+
+  pdf)
+    F="${1:-}"; shift || true
+    [[ -z "$F" ]] && die "uso: vis pdf FILE.pdf [--pagina N] [--out DIR]"
+    need_file "$F"; need pdftoppm poppler
+    PAG=""; OUT=""
+    while [[ $# -gt 0 ]]; do
+      case "$1" in
+        --pagina) PAG="${2:-}"; shift 2 ;;
+        --out)    OUT="${2:-}"; shift 2 ;;
+        *) shift ;;
+      esac
+    done
+    [[ -z "$OUT" ]] && OUT=$(mktemp -d -t vis-pdf)
+    mkdir -p "$OUT"
+    if [[ -n "$PAG" ]]; then
+      pdftoppm -png -r 150 -f "$PAG" -l "$PAG" "$F" "$OUT/pagina"
+    else
+      pdftoppm -png -r 150 "$F" "$OUT/pagina"
+    fi
+    N=$(find "$OUT" -name 'pagina*.png' | wc -l | tr -d ' ')
+    # "0 pagine" con exit 0 e' lo stesso difetto del cieco che risponde: chi
+    # incatena questo comando crederebbe di avere le pagine e troverebbe una
+    # cartella vuota. Un PDF da 0 byte, cifrato o corrotto deve FALLIRE.
+    if [[ "$N" -eq 0 ]]; then
+      echo "vis: nessuna pagina estratta da $F" >&2
+      [[ -s "$F" ]] || echo "  il file e' VUOTO (0 byte)" >&2
+      exit 1
+    fi
+    echo "$N pagine in: $OUT"
+    ;;
+
+  doctor)
+    echo "vis — stato della cassetta"
+    echo
+    printf "  %-14s " "OCR Apple"
+    if [[ -x "$OCR_BIN" ]]; then echo "OK  ($OCR_BIN)"
+    else
+      echo "da compilare..."
+      if have swiftc; then
+        swiftc -O "$VIS_HOME/ocr-vision.swift" -o "$OCR_BIN" 2>&1 | head -5 \
+          && echo "                 compilato ora: OK"
+      else echo "                 manca swiftc (installa Xcode CLT)"; fi
+    fi
+    for pair in "moondream:vision AI (domande, detect, point)" \
+                "magick:imagemagick (diff, crop, resize)" \
+                "ffmpeg:video (frames, contact sheet)" \
+                "ffprobe:durata video" \
+                "security:chiave Gemini per watch (Keychain gemini/api-key)" \
+                "zbarimg:QR e barcode" \
+                "pdftoppm:PDF in immagini" \
+                "tesseract:OCR di riserva"; do
+      c="${pair%%:*}"; d="${pair#*:}"
+      printf "  %-14s %s  %s\n" "$c" "$(have "$c" && echo OK || echo '--')" "$d"
+    done
+    echo
+    echo "  moondream backend:"
+    if curl -sS -m 2 -o /dev/null http://127.0.0.1:2020/docs 2>/dev/null; then
+      echo "    locale ATTIVO su :2020 (gratis, offline)"
+    else
+      echo "    locale spento — riparte da solo alla prima chiamata (~12s)"
+    fi
+    ;;
+
+  *)
+    die "comando sconosciuto: $cmd (esegui 'vis' per la lista)"
+    ;;
+esac

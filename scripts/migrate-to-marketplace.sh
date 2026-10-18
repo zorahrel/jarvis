@@ -1,1 +1,0 @@
-../../setup/marketplace/upstream/scripts/migrate-to-marketplace.sh

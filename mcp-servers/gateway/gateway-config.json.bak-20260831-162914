@@ -1,0 +1,199 @@
+{
+  "children": [
+    {
+      "name": "edm",
+      "transport": "stdio",
+      "command": "${HOME}/.claude/jarvis/mcp-servers/edm-mail/start.sh",
+      "autoMount": false
+    },
+    {
+      "name": "beeper",
+      "transport": "http",
+      "url": "http://127.0.0.1:23373/v0/mcp",
+      "headers": {
+        "Authorization": "Bearer ${BEEPER_TOKEN}"
+      },
+      "autoMount": false
+    },
+    {
+      "name": "cf",
+      "transport": "stdio",
+      "command": "npx",
+      "args": [
+        "-y",
+        "mcp-remote",
+        "https://mcp.cloudflare.com/mcp"
+      ],
+      "autoMount": false
+    },
+    {
+      "name": "omega",
+      "transport": "stdio",
+      "command": "node",
+      "args": [
+        "${HOME}/.claude/jarvis/mcp-servers/omega-search/index.mjs"
+      ],
+      "autoMount": false
+    },
+    {
+      "name": "distilled",
+      "transport": "stdio",
+      "command": "node",
+      "args": [
+        "${HOME}/.claude/jarvis/mcp-servers/distilled/index.mjs"
+      ]
+    },
+    {
+      "name": "chrome-devtools",
+      "transport": "stdio",
+      "command": "npx",
+      "args": [
+        "-y",
+        "chrome-devtools-mcp@latest",
+        "--headless",
+        "--isolated",
+        "--viewport",
+        "1728x1000"
+      ],
+      "autoMount": false
+    },
+    {
+      "name": "flights",
+      "transport": "stdio",
+      "command": "uvx",
+      "args": [
+        "--from",
+        "flights[mcp]",
+        "fli-mcp"
+      ],
+      "autoMount": false
+    },
+    {
+      "name": "airbnb",
+      "transport": "stdio",
+      "command": "npx",
+      "args": [
+        "-y",
+        "@openbnb/mcp-server-airbnb",
+        "--ignore-robots-txt"
+      ],
+      "autoMount": false
+    },
+    {
+      "name": "qlik",
+      "transport": "stdio",
+      "command": "bash",
+      "args": [
+        "/private/tmp/claude-501/-Users-zorahrel-Projects-guidoai/61abb9ce-76cf-4591-a65b-ce877b9394ae/scratchpad/qlik-launch.sh"
+      ],
+      "autoMount": false
+    },
+    {
+      "name": "kiwi",
+      "transport": "http",
+      "url": "https://mcp.kiwi.com/",
+      "autoMount": false
+    },
+    {
+      "name": "board",
+      "transport": "stdio",
+      "command": "node",
+      "args": [
+        "${HOME}/Projects/spec-flow/mcp-board/index.js"
+      ],
+      "autoMount": false
+    },
+    {
+      "name": "higgsfield",
+      "transport": "http",
+      "url": "https://mcp.higgsfield.ai/mcp",
+      "headers": {
+        "Authorization": "Bearer ${HIGGSFIELD_TOKEN}",
+        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0 Safari/537.36"
+      },
+      "autoMount": false
+    },
+    {
+      "name": "wigolo",
+      "transport": "stdio",
+      "command": "/opt/homebrew/bin/wigolo",
+      "args": [],
+      "autoMount": false
+    },
+    {
+      "name": "topics-board",
+      "transport": "stdio",
+      "command": "node",
+      "args": [
+        "${HOME}/jarvis/mcp-servers/topics-board/server.mjs"
+      ],
+      "autoMount": false
+    },
+    {
+      "name": "skills-attic",
+      "transport": "stdio",
+      "command": "node",
+      "args": [
+        "${HOME}/jarvis/mcp-servers/skills-attic/index.mjs"
+      ],
+      "env": {
+        "SKILLS_ATTIC_ROOTS": "${HOME}/Projects/topics-app/.claude/skills:${HOME}/Projects/topics-app/.claude/commands"
+      }
+    },
+    {
+      "name": "rivet",
+      "transport": "stdio",
+      "command": "/opt/homebrew/Cellar/node/25.9.0_3/bin/node",
+      "args": [
+        "/opt/homebrew/lib/node_modules/rivet-design/bin/rivet.js",
+        "mcp",
+        "serve",
+        "--caller-agent",
+        "claude"
+      ],
+      "autoMount": false
+    },
+    {
+      "name": "affine",
+      "transport": "stdio",
+      "command": "/Users/zorahrel/bin/affine-mcp-jarvis",
+      "autoMount": false
+    },
+    {
+      "name": "viaggi",
+      "transport": "stdio",
+      "command": "/Users/zorahrel/.bun/bin/bun",
+      "args": [
+        "run",
+        "/Users/zorahrel/Projects/viaggi-mcp/src/index.ts"
+      ]
+    },
+    {
+      "name": "darkroom",
+      "transport": "stdio",
+      "command": "/Users/zorahrel/.bun/bin/bun",
+      "args": [
+        "/Users/zorahrel/Projects/darkroom/mcp/server.ts"
+      ],
+      "env": {
+        "DARKROOM_API": "http://localhost:3737"
+      },
+      "autoMount": false
+    },
+    {
+      "name": "idealo",
+      "transport": "http",
+      "url": "https://mcp.idealo.com/mcp"
+    },
+    {
+      "name": "shopping",
+      "transport": "stdio",
+      "command": "/Users/zorahrel/.bun/bin/bun",
+      "args": [
+        "run",
+        "/Users/zorahrel/Projects/shopping-mcp/src/index.ts"
+      ],
+      "autoMount": false
+    }
+  ]
+}
