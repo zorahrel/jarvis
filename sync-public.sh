@@ -17,12 +17,12 @@ cd "$(dirname "$0")"
 public_claude() {
   git -C "$HOME/.claude" ls-files -z | xargs -0 git -C "$HOME/.claude" check-attr filter -- \
     | awk -F': filter: ' '$2 != "git-crypt" {print $1}' \
-    | grep -v -E '(^|/)\.git(ignore|attributes)$'
+    | grep -v -E '(^|/)\.git(ignore|attributes)$|^setup/bin/aac$'
 }
 
 # Da OpenClaw solo cio' che non parla di persone: workflow, test e script del gateway.
 public_openclaw() {
-  git -C "$HOME/.openclaw" ls-files | grep -E '^(workflows|tests)/|^bin/stall-capture\.py$' | grep -v -E '\.jsonl$|^workflows/push\.py$'
+  git -C "$HOME/.openclaw" ls-files | grep -E '^(workflows|tests)/|^bin/stall-capture\.py$' | grep -v -E '\.jsonl$|^workflows/push(-mac)?\.py$'
 }
 
 mirror() { # $1 sorgente, $2 destinazione, stdin = elenco
