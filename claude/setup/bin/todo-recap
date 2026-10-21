@@ -71,7 +71,11 @@ def usage():
                              capture_output=True, text=True, timeout=30).stdout
         m = re.search(r"~([\d.]+)% della settimana", pop)
         if m:
-            parts.append(f"PoP ~{m.group(1)}% su 10%")
+            try:
+                lim = json.load(open(os.path.expanduser("~/.config/claude-usage-hub/budgets.json")))["projects"]["PrinceOfPersia"]["budgetPct"]
+            except Exception:
+                lim = "?"
+            parts.append(f"PoP ~{m.group(1)}% su {lim:g}%" if isinstance(lim, (int, float)) else f"PoP ~{m.group(1)}%")
     except Exception:
         pass
     return "📊 " + " · ".join(parts) if parts else "📊 Usage: nessun dato"
@@ -98,6 +102,11 @@ mine.sort(key=lambda r: (ORDER.find(r["title"][:1]) % 9, due(r) or now.replace(y
 for r in mine:
     t = CODE.sub(r"\1 ", r["title"])
     sym = t[:1]
+    # ■ e ☐ devono avere una data di ripartenza: senza, o con la data passata, sono lavoro perso
+    # (21/10: PMI ■ senza data, fermo 7 giorni senza che nessuno lo vedesse) -> esce sempre
+    if sym in "■☐" and (not due(r) or due(r) < now):
+        lines.append("⏰ senza ripartenza: " + t[1:].strip(" :") + (f" (era {when(due(r), now)})" if due(r) else ""))
+        continue
     if not FULL:
         if sym == "⚠":
             # la stessa domanda non si ripete a ogni messaggio: torna solo se cambia testo o nota
