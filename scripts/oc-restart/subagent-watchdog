@@ -1,0 +1,91 @@
+#!/usr/bin/env python3
+"""Guardiano dei sottoagenti OpenClaw morti senza che il genitore lo sappia.
+
+Il 19/10 due sottoagenti sono finiti in timeout con consegna fallita e anche il turno del genitore
+e' morto: nessuno se n'e' accorto per 1h30. oc-restart riprende i figli solo dopo un riavvio del
+gateway; questo copre il resto. Ogni 5 minuti (launchd com.jarvis.subagent-watchdog) cerca le run
+terminate con esito timeout/error e consegna failed/pending, non ancora segnalate, e manda al
+genitore la stessa «Nota di servizio» di oc-restart (stesso testo, resume_message), che lo sveglia.
+
+  subagent-watchdog                 manda le note e segna le run come segnalate
+  subagent-watchdog --dry-run       stampa cosa farebbe, non scrive nulla
+  subagent-watchdog --mark          segna come segnalate le run trovate senza mandare niente
+  subagent-watchdog --since N       finestra in minuti (default 120)
+
+Stato: ~/.claude/jarvis/state/subagent-watchdog.json (run gia' segnalate)."""
+import importlib.machinery, importlib.util, json, subprocess, sys, time
+from pathlib import Path
+
+HERE = Path(__file__).resolve().parent
+STATE = Path.home() / ".claude/jarvis/state"
+SEEN = STATE / "subagent-watchdog.json"
+SETTLE_S = 180      # una consegna "pending" appena finita puo' ancora arrivare: si aspetta
+BAD_OUTCOME = ("timeout", "error")
+BAD_DELIVERY = ("failed", "pending")
+
+# riuso di rows() e resume_message() di oc-restart, senza riscriverli
+_l = importlib.machinery.SourceFileLoader("oc_restart", str(HERE / "oc-restart"))
+_spec = importlib.util.spec_from_loader("oc_restart", _l)
+ocr = importlib.util.module_from_spec(_spec)
+_l.exec_module(ocr)
+
+
+def find(since_min, now_ms):
+    since = now_ms - since_min * 60_000
+    out = []
+    for p in ocr.rows("select payload_json, run_id, requester_session_key from subagent_runs "
+                      "where coalesce(json_extract(payload_json,'$.execution.endedAt'), created_at) >= ?", (since,)):
+        ex, dl = p.get("execution") or {}, p.get("delivery") or {}
+        if p.get("parentCompletion") or not p.get("label") or not p["_req"]:
+            continue
+        if ex.get("status") != "terminal" or (ex.get("outcome") or {}).get("status") not in BAD_OUTCOME:
+            continue
+        if p.get("endedReason") in ocr.BAD_END:
+            continue  # interrotti da un riavvio: li riprende gia' oc-restart
+        if dl.get("status") not in BAD_DELIVERY:
+            continue
+        if now_ms - (ex.get("endedAt") or 0) < SETTLE_S * 1000:
+            continue
+        out.append(p)
+    return out
+
+
+def main():
+    a = sys.argv[1:]
+    known = ("--dry-run", "--mark", "--since")
+    unknown = [x for x in a if x.startswith("-") and x not in known]
+    if unknown:
+        print(__doc__)
+        return 0 if set(unknown) <= {"-h", "--help"} else 2
+    dry, mark = "--dry-run" in a, "--mark" in a
+    since = float(a[a.index("--since") + 1]) if "--since" in a else 120
+    now_ms = time.time() * 1000
+    seen = set(json.loads(SEEN.read_text())) if SEEN.exists() else set()
+    new = [p for p in find(since, now_ms) if p["_run"] not in seen]
+    print(f"{len(new)} sottoagenti da segnalare (finestra {since:g} min, {len(seen)} gia' segnalati)")
+    by_req = {}
+    for p in new:
+        by_req.setdefault(p["_req"], []).append(p)
+    for req, items in by_req.items():
+        print(f"{req}: " + ", ".join(f"{p['_run'][:8]} «{p['label']}» ({p['execution']['outcome']['status']}, "
+                                      f"consegna {p['delivery']['status']})" for p in items))
+        if dry:
+            continue
+        if not mark:
+            msg = ocr.resume_message(items, "un sottoagente e' morto senza consegnare, rilevato dal guardiano")
+            STATE.mkdir(parents=True, exist_ok=True)
+            out = STATE / f"subagent-watchdog-{time.strftime('%Y%m%d-%H%M%S')}-{req.rsplit(':', 1)[-1]}.log"
+            subprocess.Popen(["sh", "-c", 'for i in 1 2 3; do openclaw agent --session-key "$1" --message "$2" '
+                              '--timeout 1800 --json && exit 0; echo "tentativo $i fallito"; sleep 30; done; exit 1',
+                              "subagent-watchdog", req, msg],
+                             stdout=open(out, "w"), stderr=subprocess.STDOUT, start_new_session=True)
+            print(f"  nota inviata, esito in {out}")
+        seen.update(p["_run"] for p in items)
+    if not dry and new:
+        STATE.mkdir(parents=True, exist_ok=True)
+        SEEN.write_text(json.dumps(sorted(seen)))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

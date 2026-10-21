@@ -167,21 +167,26 @@ def discord_catchup(since_ms, until_ms, dry):
     return procs
 
 
+def resume_message(items, why):
+    """Testo della nota di servizio al genitore; usato anche da subagent-watchdog."""
+    lines = [f"- «{p['label']}» (run {p['_run'][:8]}, partito alle "
+             f"{time.strftime('%H:%M', time.localtime(p.get('createdAt', 0) / 1000))}, "
+             f"{p.get('endedReason') or (p.get('execution') or {}).get('status')}, "
+             f"consegna {(p.get('delivery') or {}).get('status')})" for p in items]
+    return (f"Nota di servizio ({why}): questi tuoi sottoagenti sono stati "
+            "interrotti prima di finire, o il loro resoconto non e' arrivato.\n" + "\n".join(lines) +
+            "\n\nPer ciascuno: controlla cosa c'e' gia' (git, worktree, file), poi rilancialo con lo stesso "
+            "compito dicendogli di riprendere da li', non da zero. Se risulta gia' finito, riporta l'esito "
+            "nel canale come faresti normalmente. Non serve rispondere a questa nota.")
+
+
 def resume(lost, when, dry):
     by_req = {}
     for p in lost:
         by_req.setdefault(p["_req"], []).append(p)
     procs = []
     for req, items in by_req.items():
-        lines = [f"- «{p['label']}» (run {p['_run'][:8]}, partito alle "
-                 f"{time.strftime('%H:%M', time.localtime(p.get('createdAt', 0) / 1000))}, "
-                 f"{p.get('endedReason') or (p.get('execution') or {}).get('status')}, "
-                 f"consegna {(p.get('delivery') or {}).get('status')})" for p in items]
-        msg = (f"Nota di servizio (riavvio del gateway delle {when}): questi tuoi sottoagenti sono stati "
-               "interrotti prima di finire, o il loro resoconto non e' arrivato.\n" + "\n".join(lines) +
-               "\n\nPer ciascuno: controlla cosa c'e' gia' (git, worktree, file), poi rilancialo con lo stesso "
-               "compito dicendogli di riprendere da li', non da zero. Se risulta gia' finito, riporta l'esito "
-               "nel canale come faresti normalmente. Non serve rispondere a questa nota.")
+        msg = resume_message(items, f"riavvio del gateway delle {when}")
         print(f"{req}: {len(items)} da riprendere")
         if dry:
             continue
