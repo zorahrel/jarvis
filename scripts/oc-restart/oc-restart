@@ -5,8 +5,9 @@ OpenClaw non riprende i sottoagenti che un riavvio interrompe: li segna interrup
 subagent-error, e nessuno li rilancia (misurato 15/10: 7 su 7 fermi). Aspettare che finiscano non
 serve, durano 30-80 minuti (--safe ha atteso 10 minuti e li ha interrotti lo stesso). Quindi:
 
-  oc-restart                 fotografa i sottoagenti vivi, riavvia subito (restart --force), aspetta
-                             gateway e WhatsApp, poi chiede a ogni canale di rilanciare i suoi
+  oc-restart                 fotografa i sottoagenti vivi, aspetta che nessuna chat stia rispondendo
+                             (max 2 min), riavvia (restart --force), aspetta gateway e WhatsApp,
+                             poi chiede a ogni canale di rilanciare i suoi
   oc-restart --resume-since N  solo la ripresa: sottoagenti finiti male negli ultimi N minuti
   oc-restart --dry-run       dice cosa farebbe, non riavvia e non scrive a nessuno
 
@@ -52,6 +53,35 @@ def lost_since(ms):
         if bad or undelivered:
             out.append(p)
     return out
+
+
+TERMINAL = (None, "done", "failed", "interrupted", "killed", "timeout")  # isTerminalSessionStatus di OpenClaw
+REPLY_WAIT_S = 120
+
+
+def replying():
+    """Chat con un turno in corso (sottoagenti e cron esclusi: per loro c'e' la ripresa).
+    Un riavvio a meta' risposta lascia la consegna «incerta» e alla prossima domanda OpenClaw manda
+    «I couldn't confirm whether my previous reply reached this chat» (22/10, 16:30 dopo un oc-restart)."""
+    out = subprocess.run(["openclaw", "sessions", "--active", "15", "--all-agents", "--json"],
+                         capture_output=True, text=True, timeout=60).stdout
+    try:
+        d = json.loads(out)
+    except ValueError:
+        return []
+    ss = d.get("sessions", []) if isinstance(d, dict) else d
+    return [s["key"] for s in ss if s.get("status") not in TERMINAL
+            and ":subagent:" not in s.get("key", "") and ":cron:" not in s.get("key", "")]
+
+
+def wait_replies(dry):
+    end = time.time() + REPLY_WAIT_S
+    busy = replying()
+    while busy and not dry and time.time() < end:
+        time.sleep(5)
+        busy = replying()
+    if busy:
+        print(f"risposta ancora in corso in {', '.join(busy)}" + ("" if dry else f": riavvio dopo {REPLY_WAIT_S} s lo stesso"))
 
 
 def gateway_pid():
@@ -218,6 +248,7 @@ def main():
         return 0
     alive = running()
     print(f"{len(alive)} sottoagenti vivi: " + ", ".join(p.get("label", "?") for p in alive))
+    wait_replies(dry)
     if dry:
         return 0
     STATE.mkdir(parents=True, exist_ok=True)
