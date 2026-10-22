@@ -34,14 +34,14 @@ def find(since_min, now_ms):
     since = now_ms - since_min * 60_000
     out = []
     for p in ocr.rows("select payload_json, run_id, requester_session_key from subagent_runs "
-                      "where coalesce(json_extract(payload_json,'$.execution.endedAt'), created_at) >= ?", (since,)):
+                      f"where {ocr.ENDED} >= ?", (since,)):
         ex, dl = p.get("execution") or {}, p.get("delivery") or {}
-        if p.get("parentCompletion") or not p.get("label") or not p["_req"]:
+        if not p.get("label") or not p["_req"]:
             continue
         if ex.get("status") != "terminal" or (ex.get("outcome") or {}).get("status") not in BAD_OUTCOME:
             continue
-        if p.get("endedReason") in ocr.BAD_END:
-            continue  # interrotti da un riavvio: li riprende gia' oc-restart
+        if p.get("endedReason") == "subagent-killed" or "Gateway restart" in ocr.why_failed(p):
+            continue  # ucciso apposta, o interrotto da un riavvio: lo riprende oc-restart
         if dl.get("status") not in BAD_DELIVERY:
             continue
         if now_ms - (ex.get("endedAt") or 0) < SETTLE_S * 1000:

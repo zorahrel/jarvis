@@ -27,26 +27,43 @@ DISCORD_AGENT = {"default": "main", "visione": "gtm"}  # account Discord -> agen
 ACTIVE_DAYS = 3               # canali con una sessione viva negli ultimi giorni
 
 
+# Con completionTarget «parent» il record del sottoagente sta dentro parentCompletion (81 righe al 22/10):
+# il filtro lo prendeva per una riga di servizio e Note spese, morto nel riavvio delle 12:56, non e' ripartito.
+STATUS = ("coalesce(json_extract(payload_json,'$.execution.status'), "
+          "json_extract(payload_json,'$.parentCompletion.execution.status'))")
+ENDED = ("coalesce(json_extract(payload_json,'$.execution.endedAt'), "
+         "json_extract(payload_json,'$.parentCompletion.execution.endedAt'), created_at)")
+
+
+def payload(raw):
+    d = json.loads(raw)
+    return d.get("parentCompletion") or d
+
+
+def why_failed(p):
+    return (((p.get("execution") or {}).get("outcome") or {}).get("error") or "")[:120]
+
+
 def rows(sql, args=()):
     con = sqlite3.connect(f"file:{DB}?mode=ro", uri=True, timeout=10)
     try:
-        return [json.loads(r[0]) | {"_run": r[1], "_req": r[2]} for r in con.execute(sql, args)]
+        return [payload(r[0]) | {"_run": r[1], "_req": r[2]} for r in con.execute(sql, args)]
     finally:
         con.close()
 
 
 def running():
     return rows("select payload_json, run_id, requester_session_key from subagent_runs "
-                "where json_extract(payload_json,'$.execution.status') not in ('terminal')")
+                f"where {STATUS} not in ('terminal')")
 
 
 def lost_since(ms):
     """Finiti male (errore/ucciso) o mai consegnati, partiti o chiusi dopo ms."""
     out = []
     for p in rows("select payload_json, run_id, requester_session_key from subagent_runs "
-                  "where coalesce(json_extract(payload_json,'$.execution.endedAt'), created_at) >= ?", (ms,)):
+                  f"where {ENDED} >= ?", (ms,)):
         ex, dl = p.get("execution") or {}, p.get("delivery") or {}
-        if p.get("parentCompletion") or not p.get("label"):
+        if not p.get("label"):
             continue  # righe di servizio senza compito proprio
         bad = p.get("endedReason") in BAD_END or ex.get("status") == "interrupted"
         undelivered = ex.get("status") == "terminal" and dl.get("status") not in ("delivered", None)
@@ -218,12 +235,15 @@ def resume_message(items, why):
     lines = [f"- «{p['label']}» (run {p['_run'][:8]}, partito alle "
              f"{time.strftime('%H:%M', time.localtime(p.get('createdAt', 0) / 1000))}, "
              f"{p.get('endedReason') or (p.get('execution') or {}).get('status')}, "
-             f"consegna {(p.get('delivery') or {}).get('status')})" for p in items]
+             f"consegna {(p.get('delivery') or {}).get('status')})" + (f": {why_failed(p)}" if why_failed(p) else "")
+             for p in items]
     return (f"Nota di servizio ({why}): questi tuoi sottoagenti sono stati "
             "interrotti prima di finire, o il loro resoconto non e' arrivato.\n" + "\n".join(lines) +
             "\n\nPer ciascuno: controlla cosa c'e' gia' (git, worktree, file), poi rilancialo con lo stesso "
             "compito dicendogli di riprendere da li', non da zero. Se risulta gia' finito, riporta l'esito "
-            "nel canale come faresti normalmente. Non serve rispondere a questa nota.")
+            "nel canale come faresti normalmente. Se l'errore accanto dice che rilanciarlo uguale fallirebbe "
+            "di nuovo (quota, credito, lo stesso bug), non rilanciarlo: scrivilo nel canale. "
+            "Non serve rispondere a questa nota.")
 
 
 def resume(lost, when, dry):
