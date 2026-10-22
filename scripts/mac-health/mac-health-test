@@ -1,0 +1,178 @@
+#!/usr/bin/env python3
+"""Barra di mac-health: findings() con fatti finti, ogni soglia provata da tutte e due le parti.
+Esce 0 se tutto passa. I fatti veri li prova il giro su questo Mac, non questa suite."""
+import copy
+import os
+import plistlib
+import sys
+import tempfile
+import time
+from importlib.machinery import SourceFileLoader
+from pathlib import Path
+
+mh = SourceFileLoader("mh", str(Path(__file__).resolve().parent / "mac-health")).load_module()
+NOW = time.time()
+DAY = 86400
+
+BASE = dict(
+    now=NOW, weekly=True, uptime_h=720, ram_mb=32768,
+    disk=dict(free_gb=200, total_gb=1000),
+    startup=[dict(id="8.com.x.ok", name="ok", type="legacy agent", enabled=True, exe="/bin/ls", plist=None, missing=None)],
+    failures=[], posture=dict(filevault=True, firewall=True, sip=True, gatekeeper=True),
+    lan={}, odd=[], net=[dict(key="/Applications/A.app", name="A", signer="A Inc")],
+    extensions=[dict(id="Chrome:aaa", browser="Chrome", name="uBlock", enabled=True, store=True)],
+    backup=dict(tm_dest=1, tm_last=NOW - DAY, private_last=NOW - 3600, icloud_docs=True, unpushed=[], noremote=[]),
+    blind=[], blind_keys=[],
+    baseline=dict(startup=["8.com.x.ok"], ext=["Chrome:aaa"], net=["/Applications/A.app"]),
+)
+
+fails = 0
+
+
+def check(name, facts, expect_substr):
+    """expect_substr None = nessuna riga; altrimenti una riga deve contenerlo."""
+    global fails
+    lines = [x[2] for x in mh.findings(facts)]
+    ok = (not lines) if expect_substr is None else any(expect_substr in l for l in lines)
+    print(f"{'ok  ' if ok else 'FAIL'} {name}" + ("" if ok else f"  -> {lines}"))
+    fails += not ok
+
+
+def f(**patch):
+    x = copy.deepcopy(BASE)
+    for k, v in patch.items():
+        cur = x
+        *path, last = k.split("__")
+        for p in path:
+            cur = cur[p]
+        cur[last] = v
+    return x
+
+
+check("macchina sana: silenzio", f(), None)
+
+loop = dict(label="com.x.loop", exit=78, why="EX_CONFIG", runs=720, rate=1.0, running=True)
+check("crash loop a 1/ora: segnalato", f(failures=[loop]), "riparte in loop")
+check("0,9/ora e in esecuzione: zitto", f(failures=[dict(loop, rate=0.9)]), None)
+check("fermo dopo un errore: segnalato", f(failures=[dict(loop, rate=0.1, running=False)]), "ultimo giro e' fallito")
+check("fermato da un segnale: zitto", f(failures=[dict(loop, rate=0.1, running=False, exit=-15)]), None)
+
+new_item = dict(BASE["startup"][0], id="8.com.y.new", name="new")
+check("nuovo all'avvio: segnalato", f(startup=BASE["startup"] + [new_item]), "nuovo all'avvio")
+check("senza base nessun «nuovo»", f(startup=BASE["startup"] + [new_item], baseline=None), None)
+check("nuovo ma spento: zitto", f(startup=BASE["startup"] + [dict(new_item, enabled=False)]), None)
+check("eseguibile sparito: segnalato", f(startup=[dict(BASE["startup"][0], missing="/x/venv/bin/python")]), "non esiste piu'")
+
+check("disco al 14%: segnalato", f(disk=dict(free_gb=140, total_gb=1000)), "lo swap resta senza spazio")
+check("disco al 16%: zitto", f(disk=dict(free_gb=160, total_gb=1000)), None)
+
+check("Time Machine assente", f(backup__tm_dest=0), "Time Machine non e' configurato")
+check("Time Machine di 8 giorni", f(backup__tm_last=NOW - 8 * DAY), "8 giorni fa")
+check("private fermo da 49 ore", f(backup__private_last=NOW - 49 * 3600), "fermo da 49 ore")
+check("private di 47 ore: zitto", f(backup__private_last=NOW - 47 * 3600), None)
+check("commit non spinti da 8 giorni", f(backup__unpushed=[("r", 3, NOW - 8 * DAY)]), "1 repo in ~/Projects")
+check("commit non spinti da 6 giorni: zitto", f(backup__unpushed=[("r", 3, NOW - 6 * DAY)]), None)
+check("repo senza remote", f(backup__noremote=["solo-qui"]), "solo-qui")
+
+check("estensione fuori store attiva", f(extensions=[dict(BASE["extensions"][0], store=False)]), "fuori dallo store")
+check("estensione fuori store spenta: zitto", f(extensions=[dict(BASE["extensions"][0], store=False, enabled=False)]), None)
+check("estensione nuova", f(extensions=BASE["extensions"] + [dict(BASE["extensions"][0], id="Chrome:bbb", name="Nuova")]), "estensione nuova")
+check("porta in LAN", f(lan={"jcode": ["7643"]}), "jcode ascolta sulla rete locale")
+check("nuovo in rete", f(net=BASE["net"] + [dict(key="/opt/x", name="x", signer="firma ad hoc")]), "nuovo in rete: x")
+check("binario non firmato in /tmp", f(odd=[dict(path="/tmp/x", signer="non firmato")]), "cartella temporanea")
+check("binario firmato in /tmp: zitto", f(odd=[dict(path="/tmp/x", signer="Bit4id srl")]), None)
+check("FileVault spento", f(posture__filevault=False), "FileVault spento")
+
+proc = dict(pid=1, name="Parsec", what="firmato Parsec", avg=5.0, hours=7, fp=100, hot=True, heavy=False)
+check("CPU media 5% da 7 ore", f(weekly=False, procs=[proc]), "5% di CPU in media")
+check("memoria oltre il 5%", f(weekly=False, procs=[dict(proc, hot=False, heavy=True, fp=2000)]), "GB di memoria")
+
+st = dict(top=[], big=[], old_downloads=[("~/Downloads/x", 6 << 20, 200)], installers=[], dupes=[], trash_kb=0, logs=[])
+check("6 GB di download vecchi", f(weekly=False, storage=st), "Download piu' vecchi")
+check("4 GB di download vecchi: zitto", f(weekly=False, storage=dict(st, old_downloads=[("~/Downloads/x", 4 << 20, 200)])), None)
+check("app non usate per 3 GB", f(weekly=False, apps=[dict(name="Steam", kb=3 << 20, days=200, category="gioco")]), "Steam 3,0 GB")
+check("app non usate per 100 MB: zitto", f(weekly=False, apps=[dict(name="Mini", kb=100 << 10, days=200, category="")]), None)
+check("CPU e memoria nella stessa riga", f(weekly=False, procs=[dict(proc, heavy=True, fp=2000)]), "ore, 2,0 GB di memoria")
+
+# messaggio: tre righe per sezione, nessuna sezione sparisce
+def say(name, ok):
+    global fails
+    print(f"{'ok  ' if ok else 'FAIL'} {name}")
+    fails += not ok
+
+
+many = [("backup", f"backup:b{i}", "lunga " * 20, f"repo numero {i} senza remote", None) for i in range(12)] + [("app", "app:x", "x", "app-riga", None)]
+m = mh.message(many, False, Path("/x"))
+say("messaggio: 12 righe di backup non nascondono l'ultima sezione", "app-riga" in m and "+" in m)
+
+# il caso vero del 23/10: tutte le righe del mensile di oggi, in forma breve, sotto i 600 caratteri
+big = f(weekly=False,
+        failures=[dict(loop, label="com.microsoft.teams2.agent", runs=89913), dict(loop, label="com.jcode.llamacpp-3090-tunnel", runs=21412, exit=255),
+                  dict(loop, label="com.jarvis.agents-build", rate=0.1, running=False, exit=1)],
+        lan={"Spotify": ["57621"], "Sunshine": ["47984", "47989", "47990", "48010"], "bun": ["3333"], "jcode": ["7643"]},
+        net=BASE["net"] + [dict(key=f"/opt/x{i}", name=f"x{i}", signer="firma ad hoc") for i in range(3)],
+        backup__tm_dest=0, backup__unpushed=[("r", 3, NOW - 8 * DAY)] * 13, backup__noremote=["a", "b"],
+        procs=[dict(proc, name=f"proc{i}", avg=10 + i) for i in range(7)])
+keep, _ = mh.split_accepted(mh.findings(big), [])
+m = mh.message(keep, False, Path("/Users/u/.claude/jarvis/logs/mac-health/2026-11-01.md"))
+say(f"mensile con 20 righe: {len(m)} caratteri, esito in testa", len(m) <= 600 and m.startswith("Mac, mensile: 20 cose"))
+
+wide = [(sec, f"{sec}:{i}", "x", f"{sec} voce lunga numero {i} " + "z" * 30, None) for sec in mh.SECTIONS for i in range(6)]
+m = mh.message(wide, False, Path("/x"))
+say(f"sette sezioni piene: tagliato a {len(m)} caratteri, il resto e' nominato", len(m) <= 600 and "altre sezioni nel rapporto" in m)
+say("lo stato ricorda le righe dette", mh.snapshot(big, keep)["reported"] == sorted(k[1] for k in keep))
+
+# settimanale: solo cio' che non era gia' stato detto
+keys = [k[1] for k in keep]
+say("settimanale con tutto gia' detto: zitto", mh.message(keep, True, Path("/x"), keys) == "")
+m = mh.message(keep, True, Path("/x"), [k for k in keys if k != "backup:tm"])
+say("settimanale: una riga nuova, le altre contate", "Time Machine assente" in m and "1 cosa" in m and "gia' dette" in m and "jcode" not in m)
+say("mensile: ripete tutto anche se gia' detto", "jcode" in mh.message(keep, False, Path("/x"), keys))
+say("primo giro, nessun inviato: dice tutto", "jcode" in mh.message(keep, True, Path("/x"), None))
+blind = keep + [("cieco", "cieco:lsof muto", "lsof muto", "lsof muto", None)]
+say("riga [cieco] sempre detta", "lsof muto" in mh.message(blind, True, Path("/x"), keys + ["cieco:lsof muto"]))
+k1 = [k for _, k, _, _ in mh.findings(f(failures=[dict(loop, runs=720)]))]
+k2 = [k for _, k, _, _ in mh.findings(f(failures=[dict(loop, runs=99999)]))]
+say("chiave stabile: piu' avvii non e' una riga nuova", k1 == k2 == ["avvio:loop:com.x.loop"])
+
+# accettate: la riga resta nel rapporto, esce dal messaggio
+lines = mh.findings(f(lan={"Spotify": ["57621"]}))
+keep, quiet = mh.split_accepted(lines, [{"match": "Spotify ascolta", "why": "Spotify Connect"}])
+ok = not keep and quiet and quiet[0][4] == "Spotify Connect"
+print(f"{'ok  ' if ok else 'FAIL'} riga accettata: fuori dal messaggio, dentro il rapporto")
+fails += not ok
+ok = mh.message([], True, Path("/x")) == ""
+print(f"{'ok  ' if ok else 'FAIL'} niente da dire: messaggio vuoto, WhatsApp non parte")
+fails += not ok
+
+# una sonda cieca non deve azzerare la base
+x = f(net=[], blind_keys=["net"])
+ok = mh.snapshot(x, [])["net"] == ["/Applications/A.app"]
+print(f"{'ok  ' if ok else 'FAIL'} sonda cieca: la base di rete resta quella di prima")
+fails += not ok
+
+k1 = mh.net_key("/Users/u/Library/Application Support/Claude/claude-code/2.1.308/a93ded4b1b47/claude.app/Contents/MacOS/claude")
+k2 = mh.net_key("/Users/u/Library/Application Support/Claude/claude-code/2.1.310/b81f00c2aa10/claude.app/Contents/MacOS/claude")
+ok = k1 == k2 and mh.net_key("/opt/homebrew/Cellar/node/26.9.0/bin/node") == mh.net_key("/opt/homebrew/Cellar/node/27.0.1/bin/node")
+ok = ok and mh.net_name(mh.net_key("/Users/u/.local/share/claude/versions/2.1.308")) == "claude"
+print(f"{'ok  ' if ok else 'FAIL'} un aggiornamento non e' un programma nuovo in rete")
+fails += not ok
+
+H = mh.HOME
+dirs = {H + "/a": 100, H + "/a/b": 90, H + "/a/b/c": 50, H + "/a/b/d": 40, H + "/z": 30}
+top = [p for p, _, _ in mh.top_folders(dirs, 3)]
+ok = top == [H + "/a/b", H + "/z"]
+print(f"{'ok  ' if ok else 'FAIL'} cartelle: secondo livello, piu' le foglie di primo  {top if not ok else ''}")
+fails += not ok
+
+with tempfile.TemporaryDirectory() as d:
+    pl = os.path.join(d, "x.plist")
+    plistlib.dump({"Label": "x", "ProgramArguments": ["/bin/bash", d + "/sparito.sh"]}, open(pl, "wb"))
+    ok = mh.launch_target(pl, "/bin/bash") == (d + "/sparito.sh", d + "/sparito.sh")
+    plistlib.dump({"Label": "x", "ProgramArguments": ["/bin/bash", "-lc", "echo"]}, open(pl, "wb"))
+    ok = ok and mh.launch_target(pl, "/bin/bash") == ("/bin/bash", None)
+print(f"{'ok  ' if ok else 'FAIL'} plist: lo script dietro l'interprete conta, -lc no")
+fails += not ok
+
+print(f"\n{'tutto verde' if not fails else f'{fails} rossi'}")
+sys.exit(1 if fails else 0)

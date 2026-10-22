@@ -39,7 +39,7 @@ RUNTIMES = re.compile(
 
 def sh(cmd):
     try:
-        return subprocess.run(cmd, shell=True, capture_output=True, text=True,
+        return subprocess.run(cmd, shell=True, capture_output=True, text=True, errors="replace",
                               timeout=20).stdout
     except Exception:
         return ""
