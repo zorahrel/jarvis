@@ -131,6 +131,19 @@ def snowflake(ms):
     return str((int(ms) - 1420070400000) << 22)
 
 
+def resolve_token(tok):
+    """Stringa o SecretRef del Keychain ({"provider": "keychain", "id": "servizio/account"}). Dal passaggio dei
+    token al Keychain discord_missed saltava in silenzio ogni account: «0 messaggi» anche quando ce n'erano."""
+    if isinstance(tok, str):
+        return tok
+    if isinstance(tok, dict) and tok.get("provider") == "keychain" and "/" in tok.get("id", ""):
+        service, _, account = tok["id"].partition("/")
+        r = subprocess.run(["/usr/bin/security", "find-generic-password", "-s", service, "-a", account, "-w"],
+                           capture_output=True, text=True)
+        return r.stdout.strip() if r.returncode == 0 else None
+    return None
+
+
 def discord_missed(since_ms, until_ms):
     """Messaggi umani arrivati su Discord a gateway giu' e mai registrati nella sessione del canale.
     Discord non riconsegna gli eventi persi: senza questo un messaggio scritto durante il riavvio
@@ -141,8 +154,9 @@ def discord_missed(since_ms, until_ms):
     try:
         cutoff = (time.time() - ACTIVE_DAYS * 86400) * 1000
         for acc, agent in DISCORD_AGENT.items():
-            token = (accounts.get(acc) or {}).get("token")
-            if not isinstance(token, str):
+            token = resolve_token((accounts.get(acc) or {}).get("token"))
+            if not token:
+                print(f"  discord {acc}: token non leggibile, canali non controllati")
                 continue
             keys = [r[0] for r in con.execute(
                 "select session_key from session_state_heads where agent_id=? and session_key like ? and updated_at>=?",
