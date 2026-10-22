@@ -196,7 +196,9 @@ def discord_catchup(since_ms, until_ms, dry):
     for key, lines in missed.items():
         msg = ("Nota di servizio (riavvio del gateway): mentre era giu' in questo canale sono arrivati questi "
                "messaggi, che non hai ricevuto. Trattali come appena arrivati, con le regole di questo canale "
-               "(menzioni comprese): se non ti riguardano, NO_REPLY.\n\n" + "\n".join(lines))
+               "(menzioni comprese): se non ti riguardano, NO_REPLY. La tua risposta finale arriva nel canale cosi' "
+               "com'e': scrivila per chi e' nel canale e non mandarla anche con message(send), senza riepiloghi per me "
+               "(22/10: un riepilogo in inglese e' finito in #mooncircles-development).\n\n" + "\n".join(lines))
         print(f"  {key}: {len(lines)}")
         if dry:
             continue
