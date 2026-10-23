@@ -143,6 +143,10 @@
   "area": "manutenzione",
   "seSiRompe": "Attilio potrebbe perdere spazio sul disco per cache, temporanei e build abbandonate accumulati."
  },
+ "launchd:com.jarvis.manutenzione": {
+  "area": "manutenzione",
+  "seSiRompe": "Attilio potrebbe perdere in una volta foto della memoria di OpenClaw, pulizia del disco, log accorciati, browser degli agenti aggiornato, prova di ripristino di Quadra e backup nel repo privato."
+ },
  "launchd:com.jarvis.jcode-auth-sync": {
   "area": "jarvis-agenti",
   "seSiRompe": "Attilio potrebbe avere sessioni di jcode non operative dopo il cambio delle credenziali."

@@ -143,6 +143,28 @@ function whoOfArgs(args) {
   return `script: ${path.basename(file || args[0] || '')}`;
 }
 
+// Un job a passi (oggi solo com.jarvis.manutenzione) scrive accanto al suo log un runs.jsonl, una riga per passo:
+// {run, step, label, at, ms, outcome: ok|error|skipped, note}. Da lì vengono i passi dell'ultimo giro e lo storico dei giri.
+export function readStepRuns(file) {
+  let text; try { text = fs.readFileSync(file, 'utf8'); } catch { return null; }
+  const by = new Map();
+  for (const line of text.split('\n')) {
+    let e; try { e = JSON.parse(line); } catch { continue; }
+    if (!e || !e.run || !e.step) continue;
+    if (!by.has(e.run)) by.set(e.run, []);
+    by.get(e.run).push(e);
+  }
+  if (!by.size) return null;
+  const runs = [...by.values()].map((rows) => ({
+    at: Math.min(...rows.map((r) => r.at || Infinity)),
+    outcome: rows.some((r) => r.outcome === 'error') ? 'error' : 'ok',
+    rows,
+  })).sort((a, b) => b.at - a.at);
+  const steps = runs[0].rows.map((r) => ({ id: r.step, label: r.label || r.step, executor: null, model: null, tokens: null, costUsd: null,
+    outcome: r.outcome, durationMs: r.ms ?? null, note: r.note || null }));
+  return { runs, steps };
+}
+
 export function readLaunchd({ dir = path.join(os.homedir(), 'Library/LaunchAgents'), launchctlList = null, now = Date.now(), plutil = defaultPlutil } = {}) {
   try {
     const text = launchctlList ?? execFileSync('launchctl', ['list'], { encoding: 'utf8' });
@@ -199,6 +221,8 @@ export function readLaunchd({ dir = path.join(os.homedir(), 'Library/LaunchAgent
       }
       const runsToday = p.StartInterval ? Math.floor((now - midnightMs) / (p.StartInterval * 1000))
         : cal.length ? calTodayCount(cal, now) : 0;
+      const stepped = p.StandardOutPath ? readStepRuns(path.join(path.dirname(p.StandardOutPath), 'runs.jsonl')) : null;
+      if (stepped && outcome !== 'running') { lastAt = stepped.runs[0].at; outcome = stepped.runs[0].outcome; }
       const args = (p.ProgramArguments || (p.Program ? [p.Program] : [])).map(String);
       const sched = {};
       if (p.StartInterval != null) sched.StartInterval = p.StartInterval;
@@ -214,7 +238,8 @@ export function readLaunchd({ dir = path.join(os.homedir(), 'Library/LaunchAgent
         next,
         expectedLast,
         last: { at: lastAt, outcome, delivered: null, error: null, ...(atUnknown ? { atUnknown: true } : {}) },
-        runs: lastAt != null ? [{ at: lastAt, outcome }] : [],
+        runs: stepped ? stepped.runs.slice(0, 10).map((r) => ({ at: r.at, outcome: r.outcome })) : lastAt != null ? [{ at: lastAt, outcome }] : [],
+        ...(stepped ? { steps: stepped.steps } : {}),
         runsToday,
         who: whoOfArgs(args),
         reportsTo: 'nessun messaggio',

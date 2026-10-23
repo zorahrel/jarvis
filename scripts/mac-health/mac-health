@@ -784,7 +784,7 @@ def findings(f):
         add("backup", "tm-old", f"ultimo backup Time Machine di {dd} giorni fa", f"Time Machine fermo da {dd} gg")
     if b["private_last"] is None or now - b["private_last"] > PRIVATE_MAX_H * 3600:
         when = "mai spinto" if b["private_last"] is None else f"fermo da {int((now - b['private_last']) / 3600)} ore"
-        add("backup", "private", f"backup notturno di jarvis-private {when} (launchd com.jarvis.private-backup)", f"jarvis-private {when}")
+        add("backup", "private", f"backup notturno di jarvis-private {when} (manutenzione notturna, launchd com.jarvis.manutenzione)", f"jarvis-private {when}")
     stale = [u for u in b["unpushed"] if now - u[2] > UNPUSHED_DAYS * DAY]
     if stale:
         top = ", ".join(f"{n} ({c}, dal {datetime.date.fromtimestamp(t).strftime('%d/%m')})" for n, c, t in stale[:5])
