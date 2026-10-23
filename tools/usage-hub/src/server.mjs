@@ -124,11 +124,19 @@ export function createServer(config, deps = {}) {
   const trustAlert = createTrustAlert({ send: deps.sendNotice || sendWhatsApp, file: deps.inProcess || deps.noLive ? null : path.join(os.homedir(), '.cache', 'claude-usage-hub', 'trust-alerts.json') });
   const trustTick = () => trust.scan().then((r) => trustAlert(r.items)).then((n) => { if (n) console.log(`[trust] avviso WhatsApp: ${n} processi sospetti`); }).catch(() => {});
   if (!deps.noLive && !deps.inProcess) { setTimeout(trustTick, 15000).unref(); setInterval(trustTick, 120000).unref(); }
-  const shedDigest = createShedDigest({ send: deps.sendNotice || sendWhatsApp, hogs: async () => topHogs(await processTable(), 3) });
+  const shedDigest = createShedDigest({
+    send: deps.sendNotice || sendWhatsApp, log: (l) => console.log('[shed] ' + l), hogs: async () => topHogs(await processTable(), 5),
+    // i giri di `offload` finiti sul PC (una riga per giro in ~/.cache/offload/runs.jsonl, la scrive offload stesso)
+    offloads: async (from, to) => { try { return fs.readFileSync(path.join(os.homedir(), '.cache', 'offload', 'runs.jsonl'), 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l)).filter((r) => r.at >= from && r.at <= to); } catch { return []; } },
+    // oc-restart senza opzioni non taglia turni: se il gateway lavora si stacca e riavvia appena è libero (max 6 h)
+    restartGateway: deps.restartGateway || (async () => { const { spawn } = await import('node:child_process'); const bin = path.join(os.homedir(), 'bin', 'oc-restart'); if (!fs.existsSync(bin)) return false;
+      const out = fs.openSync(path.join(os.homedir(), '.claude', 'jarvis', 'state', `oc-restart-hub-${Date.now()}.log`), 'w');
+      spawn(bin, [], { detached: true, stdio: ['ignore', out, out] }).unref(); return true; }),
+  });
   macShed = createShed({ probe: macWatch.probe, log: (l) => console.log('[shed] ' + l), onEvent: (e) => shedDigest.event(e), enabled: !(config.shed && config.shed.enabled === false) });
   if (!deps.noLive && !deps.inProcess) {
     macShed.thawAll('avvio del hub').catch(() => {});
-    const shedTick = () => macShed.tick().catch(() => {});
+    const shedTick = () => macShed.tick().then((st) => shedDigest.tick(st)).catch(() => {});
     setInterval(shedTick, 30000).unref(); setInterval(() => shedDigest.flush().catch(() => {}), 60000).unref(); setTimeout(shedTick, 2000).unref();
     // Spegnendo il hub niente resta fermo: un processo in SIGSTOP per sempre è peggio del carico.
     for (const sg of ['SIGTERM', 'SIGINT']) process.on(sg, () => { macShed.thawAll('spegnimento del hub').finally(() => process.exit(0)); });

@@ -73,7 +73,8 @@ export function strain(sample, verdict, { maxLoadPerCore = MAX_LOAD_PER_CORE } =
   const parts = [];
   if (sample.loadPerCore >= maxLoadPerCore) parts.push(`Mac a ${fmt(sample.loadPerCore)} per core`);
   if (verdict && verdict.sustained) parts.push(`memoria sotto pressione (${Math.round(verdict.pagesReadBackPerS)} pagine/s rilette da disco)`);
-  return { strained: parts.length > 0, reason: parts.join(' e '), calm: sample.loadPerCore < maxLoadPerCore && !(verdict && verdict.sustained) };
+  const byLoad = sample.loadPerCore >= maxLoadPerCore, byMem = !!(verdict && verdict.sustained);
+  return { strained: parts.length > 0, reason: parts.join(' e '), byLoad, byMem, calm: !byLoad && !byMem };
 }
 
 // ---- sforzo: un solo indicatore al posto di CPU, RAM, GPU e disco separati ----
@@ -214,7 +215,22 @@ export async function cwdOf(pids) {
 
 export async function startTime(pid) { return (await run('ps', ['-o', 'lstart=', '-p', String(pid)], 2000)).trim(); }
 
-// Chi pesa di più sul Mac: scrematura su RSS, footprint vero sui primi (stessa strada di memhog), raggruppati per programma.
+// Nome da persona per un processo pesante: «node 6,6 GB» il 23/10 sommava tre node diversi (gateway OpenClaw e due server
+// TypeScript), e nessuno dei tre si capiva. `kind` dice al freno cosa può fare: 'gateway' si riavvia, il resto si segnala.
+export function hogName(command) {
+  const c = command || '';
+  if (/openclaw\/dist\/index\.js gateway|openclaw-gateway/.test(c)) return { name: 'gateway OpenClaw', kind: 'gateway' };
+  const ts = c.match(/\/([^/\s]+)\/node_modules\/typescript\/lib\/tsserver\.js/);
+  if (ts) return { name: `server TypeScript di ${ts[1]}`, kind: 'tsserver' };
+  const app = (c.match(/\/([^/]+)\.app\//) || [])[1];
+  if (app) return { name: app, kind: 'app' };
+  const k = classify({ command: c });
+  if (k === 'interattivo') return { name: 'sessione Claude', kind: 'sessione' };
+  if (k !== 'altro') return { name: k === 'codex-exec' ? 'Codex' : k === 'muse-job' ? 'Muse' : 'Claude in background', kind: 'agente' };
+  return { name: c.split(' ')[0].split('/').pop(), kind: 'altro' };
+}
+
+// Chi pesa di più sul Mac: scrematura su RSS, footprint vero sui primi (stessa strada di memhog), raggruppati per nome da persona.
 export async function topHogs(table, n = 3) {
   const cand = [...table].sort((a, b) => b.rssKB - a.rssKB).slice(0, 12);
   const fps = await footprintMap(cand.map((r) => r.pid));
@@ -222,8 +238,8 @@ export async function topHogs(table, n = 3) {
   for (const r of cand) {
     const fp = fps.get(r.pid);
     // Le app hanno spazi nel percorso («Google Chrome.app»): il nome è quello del bundle, non il primo pezzo prima dello spazio.
-    const app = (r.command.match(/\/([^/]+)\.app\//) || [])[1];
-    out.push({ pid: r.pid, name: app || r.command.split(' ')[0].split('/').pop(), full: r.command.slice(0, 80), cpu: r.cpu / 100, memMB: fp || r.rssKB / 1024 });
+    const h = hogName(r.command);
+    out.push({ pid: r.pid, name: h.name, kind: h.kind, full: r.command.slice(0, 80), cpu: r.cpu / 100, memMB: fp || r.rssKB / 1024 });
   }
   const by = {};
   for (const o of out) { const k = o.name; by[k] = by[k] ? { ...by[k], memMB: by[k].memMB + o.memMB, cpu: by[k].cpu + o.cpu, n: by[k].n + 1 } : { ...o, n: 1 }; }

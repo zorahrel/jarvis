@@ -31,7 +31,7 @@ test('swap sostenuta: pagine rilette ≥ 10/s con debito ≥ 0,5 GB/min, oppure 
   assert.equal(run(at(1000 + 61 * 5, 99999, 9999, 61000)).sustained, false);    // sotto 10/s mai
 });
 
-const C = (o) => ({ pid: 1, kind: 'sottoagente', priority: 'normale', cls: null, memMB: 100, project: 'p', ...o });
+const C = (o) => ({ pid: 1, kind: 'sottoagente', priority: 'normale', cls: null, cpu: 2, memMB: 100, project: 'p', ...o });
 
 test('chi si può fermare: interattivi e priorità alta mai; ordine bassa → normale, batch → massivo', () => {
   assert.equal(eligible(C({ kind: 'interattivo' })), false);
@@ -138,22 +138,83 @@ test('classificazione dei processi e risorse per agente', () => {
   assert.equal(agents[1].res.memMB, 300);
 });
 
-test('riassunto: un messaggio per episodio, niente sotto 3 pause', async () => {
-  const { createShedDigest } = await import('../src/shed.mjs');
-  let t = 0; const sent = [];
-  const d = createShedDigest({ send: (x) => sent.push(x), now: () => t, hogs: async () => [{ name: 'Chrome', memMB: 3200 }] });
-  const L = 'openclaw/sottoagenti · sottoagente';
-  for (let i = 0; i < 5; i++) d.event({ type: 'pause', at: i * 60000, label: L, reason: i % 2 ? 'memoria sotto pressione' : 'Mac a 2,7 per core' });
-  for (let i = 0; i < 5; i++) d.event({ type: 'resume', at: i * 60000 + 30000, label: L });
-  t = 5 * 60000; assert.equal(await d.flush(), null); // episodio ancora aperto
-  t = 20 * 60000; const msg = await d.flush();
+import { createShedDigest } from '../src/shed.mjs';
+test('peso altrove: un agente leggero non va in pausa, uno che pesa sì', async () => {
+  // il caso del 23/10: Mac a 2,3 per core, agenti quasi fermi, il peso in un server TypeScript e nel gateway
+  const light = harness({ cands: [C({ pid: 10, kind: 'codex-exec', cls: 'batch', cpu: 0.05, memMB: 300 }), C({ pid: 20, cpu: 0.4, memMB: 900 })] });
+  await light.shed.tick();
+  assert.deepEqual(light.sent, [], 'nessun SIGSTOP a chi non pesa');
+  assert.match(light.shed.status.note, /pesano poco/);
+  // memoria piena: un albero grosso ma fermo non si tocca (SIGSTOP non libera RAM), uno grosso e al lavoro sì
+  const { weighs } = await import('../src/shed.mjs');
+  const mem = { byLoad: false, byMem: true };
+  assert.equal(weighs(C({ cpu: 0.05, memMB: 4000 }), mem), false);
+  assert.equal(weighs(C({ cpu: 0.5, memMB: 4000 }), mem), true);
+  assert.equal(weighs(C({ cpu: 1.5, memMB: 100 }), mem), false, 'sforzo di memoria: la CPU da sola non basta');
+  const heavy = harness({ cands: [C({ pid: 10, kind: 'codex-exec', cls: 'batch', cpu: 0.05 }), C({ pid: 30, kind: 'codex-exec', cls: 'batch', cpu: 2.5 })] });
+  heavy.shed.tick && (await heavy.shed.tick());
+  assert.equal(heavy.shed.paused.length, 1);
+  assert.equal(heavy.shed.paused[0].pid, 30, 'si ferma quello che pesa, non il primo della lista');
+});
+
+test('nomi da persona per chi pesa: niente «node 6,6 GB»', async () => {
+  const { hogName } = await import('../src/mac.mjs');
+  assert.deepEqual(hogName('/opt/homebrew/opt/node/bin/node --max-old-space-size=8192 /opt/homebrew/lib/node_modules/openclaw/dist/index.js gateway --port 18789'), { name: 'gateway OpenClaw', kind: 'gateway' });
+  assert.deepEqual(hogName('/opt/homebrew/Cellar/node/26.9.0/bin/node /Users/x/Projects/armonia-agency/armonia-site/node_modules/typescript/lib/tsserver.js --useInferredProjectPerProjectRoot'), { name: 'server TypeScript di armonia-site', kind: 'tsserver' });
+  assert.equal(hogName('/Applications/Google Chrome.app/Contents/MacOS/Google Chrome').name, 'Google Chrome');
+});
+
+// 23/10 23:32 a Roma = 21:32 UTC
+const T0 = Date.UTC(2026, 9, 23, 21, 32);
+const strained = { strained: true, byLoad: true, byMem: true };
+async function episode(d, { minutes, hogs = null, pauses = [] }) {
+  for (let m = 0; m <= minutes; m++) await d.tick(strained, T0 + m * 60000);
+  for (const p of pauses) d.event(p);
+  return d.flush(T0 + (minutes + 11) * 60000);
+}
+
+test('episodio vero del 23/10: dice chi pesava e cosa fare, una riga, niente id', async () => {
+  const sent = [], logs = [];
+  const d = createShedDigest({ send: (x) => sent.push(x), log: (x) => logs.push(x), restartGateway: () => { throw new Error('non va riavviato'); },
+    hogs: async () => [
+      { name: 'server TypeScript di armonia-site', kind: 'tsserver', memMB: 3037 },
+      { name: 'gateway OpenClaw', kind: 'gateway', memMB: 2929 },
+      { name: 'Beeper Desktop', kind: 'app', memMB: 1500 },
+    ] });
+  const r = await episode(d, { minutes: 28 });
+  assert.equal(r.push, true);
+  assert.equal(r.text, '⚠️ Mac carico 23:32–00:00: pesava server TypeScript di armonia-site (3,0 GB) e gateway OpenClaw (2,9 GB) → riavvia la sessione che lo usa, se non ti serve più.\nNessun agente fermato: non pesavano loro.');
+  assert.doesNotMatch(r.text, /openclaw-isolated|m-critic|[0-9a-f]{8}/);
   assert.equal(sent.length, 1);
-  assert.match(msg, /5 volte i sottoagenti di OpenClaw/);
-  assert.match(msg, /processore al limite e memoria piena|memoria piena e processore al limite/);
-  assert.match(msg, /Chrome 3,1 GB/);
-  assert.match(msg, /tutto ripartito/);
-  d.event({ type: 'pause', at: t, label: L, reason: 'x' }); t += 30 * 60000;
-  assert.equal(await d.flush(), null); assert.equal(sent.length, 1); // una pausa sola: niente messaggio
+  // stesso consiglio il giorno stesso: niente secondo messaggio
+  const again = await (async () => { for (let m = 0; m <= 15; m++) await d.tick(strained, T0 + (60 + m) * 60000); return d.flush(T0 + 90 * 60000); })();
+  assert.equal(again.push, false); assert.equal(sent.length, 1);
+});
+
+test('gateway OpenClaw oltre 4 GB per 5 minuti: un riavvio sicuro, poi il messaggio lo dice', async () => {
+  const sent = []; let restarts = 0;
+  const d = createShedDigest({ send: (x) => sent.push(x), restartGateway: () => { restarts++; return true; },
+    hogs: async () => [{ name: 'gateway OpenClaw', kind: 'gateway', memMB: 6758 }],
+    offloads: async () => [{ at: T0 + 60000, dir: 'zeno' }] });
+  const r = await episode(d, { minutes: 20, pauses: [
+    { type: 'pause', at: T0 + 120000, label: 'zeno · codex-exec' }, { type: 'resume', at: T0 + 180000, label: 'zeno · codex-exec' },
+    { type: 'pause', at: T0 + 400000, label: 'zeno · codex-exec' }, { type: 'resume', at: T0 + 500000, label: 'zeno · codex-exec' },
+    { type: 'pause', at: T0 + 600000, label: 'jarvis · muse-job' } ] });
+  assert.equal(restarts, 1, 'un solo riavvio per episodio (e al più ogni 6 h)');
+  assert.equal(r.text, '⚠️ Mac carico 23:32–23:52: pesava gateway OpenClaw (6,6 GB) → riavvio sicuro del gateway (parte a lavori finiti).\n2 lavori in background in pausa breve, 1 ancora fermo, riparte da solo. 1 lavoro pesante spostato sul PC.');
+  assert.equal(sent.length, 1);
+});
+
+test('episodio che si sistema da solo: niente WhatsApp, solo log; un picco breve non è un episodio', async () => {
+  const sent = [], logs = [];
+  const d = createShedDigest({ send: (x) => sent.push(x), log: (x) => logs.push(x), hogs: async () => [{ name: 'Codex', kind: 'agente', memMB: 900 }] });
+  const r = await episode(d, { minutes: 15, pauses: [{ type: 'pause', at: T0, label: 'zeno · codex-exec' }, { type: 'resume', at: T0 + 90000, label: 'zeno · codex-exec' }] });
+  assert.equal(r.push, false); assert.equal(sent.length, 0);
+  assert.match(logs.at(-1), /1 lavoro in background in pausa breve, ripartito/);
+  assert.equal(d.recent.length, 1);
+  const d2 = createShedDigest({ send: (x) => sent.push(x), hogs: async () => [{ name: 'Google Chrome', kind: 'app', memMB: 5000 }] });
+  assert.equal(await episode(d2, { minutes: 4 }), null);
+  assert.equal(sent.length, 0);
 });
 
 import { effort } from '../src/mac.mjs';

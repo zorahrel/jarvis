@@ -53,7 +53,7 @@ export function createMacWatch({ groups = [], priorityOf = () => 'normale', getS
     table: processTable,
     startTime,
     tree: (table, pid) => descendants(table, pid).map((r) => r.pid),
-    candidates: async (table) => (await trees(table, false)).map((t) => ({ ...t, priority: priorityOf(t.project), cls: t.kind === 'sottoagente' ? null : 'batch' })),
+    candidates: async (table) => (await trees(table, true)).map((t) => ({ ...t, priority: priorityOf(t.project), cls: t.kind === 'sottoagente' ? null : 'batch' })),
   };
 
   return {
