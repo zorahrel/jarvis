@@ -53,6 +53,7 @@ main { max-width:1000px; margin:0 auto; padding:22px 18px 64px; }
 .badge.te { background:color-mix(in srgb,var(--te) 16%,transparent); color:var(--te); }
 .badge.bad { background:color-mix(in srgb,var(--bad) 16%,transparent); color:var(--bad); }
 .badge.q { background:color-mix(in srgb,var(--warn) 14%,transparent); color:var(--warn); }
+.badge.n { background:var(--s3); color:var(--fg2); }
 .big { display:flex; align-items:baseline; gap:8px; }
 .big b { font-family:var(--mono); font-size:30px; font-weight:500; letter-spacing:-.04em; line-height:1; }
 .big span { color:var(--mut); }
@@ -138,7 +139,7 @@ function tone(g) { return g.te ? 'te' : g.rotto ? 'bad' : H.down(g.source) ? 'q'
 function tile(g, now) {
   var tot = g.cards.length, t = tone(g);
   var badge = g.te ? '<span class="badge te">' + g.te + ' ti aspetta</span>' : g.rotto ? '<span class="badge bad">' + g.rotto + (g.rotto === 1 ? ' rotta' : ' rotte') + '</span>' :
-    t === 'q' ? '<span class="badge q">' + (g.source.pending ? 'in lettura' : 'non risponde') + '</span>' : tot ? '<span class="badge">a posto</span>' : '<span class="badge q">vuoto</span>';
+    t === 'q' ? '<span class="badge q">' + (g.source.pending ? 'in lettura' : 'non risponde') + '</span>' : tot ? '<span class="badge">a posto</span>' : '<span class="badge n">' + (g.name === 'PC di casa' && (model.footer || {}).pcAsleep ? 'dorme' : 'nessuna') + '</span>';
   var w = function (n) { return tot ? (n / tot * 100) + '%' : '0'; };
   var pbs = g.cards.filter(function (c) { return c.level === 'te' || c.level === 'rotto'; }).slice(0, 3).map(function (c) {
     return '<div><span class="g ' + (c.level === 'te' ? 'te' : 'x') + '" aria-hidden="true">' + (c.level === 'te' ? '◆' : '■') + '</span><span>' + H.esc(c.title) + '</span></div>';
