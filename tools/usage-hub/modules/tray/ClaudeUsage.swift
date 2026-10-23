@@ -1119,8 +1119,14 @@ func statusRow(_ snapshot: Overview?) -> NSMenuItem {
     let (lv, title, why) = overallStatus(snapshot)
     let (name, tone) = lv == .ok ? ("checkmark.circle.fill", toneOK) : lv == .warn ? ("exclamationmark.triangle.fill", toneWarn) : ("hand.raised.fill", toneBad)
     // una riga sola, piccola: il dettaglio di ogni account sta già nella sua card, qui basta dire cosa succede
+    // la riga non deve allargare il menu oltre le card (blockW): il perché si accorcia a misura, intero nel suggerimento
     let line = NSMutableAttributedString(attributedString: txt(title, .systemFont(ofSize: 12, weight: .semibold), lv == .ok ? .labelColor : tone))
-    if !why.isEmpty { line.append(txt("  " + (why.count > 70 ? String(why.prefix(69)) + "…" : why), rowSmall, .secondaryLabelColor)) }
+    let room = menuTextMax - line.size().width
+    if !why.isEmpty && room > 60 {
+        var w = why
+        while w.count > 8 && txt("  " + w + "…", rowSmall).size().width > room { w = String(w.dropLast()) }
+        line.append(txt("  " + (w == why ? why : w.trimmingCharacters(in: .whitespaces) + "…"), rowSmall, .secondaryLabelColor))
+    }
     return richRow(icon: sym(name, pt: 11, color: tone), line,
                    tip: (why.isEmpty ? "" : why + "\n\n") + "Verde = tutto in linea · arancione = un account ha superato la quota di oggi · rosso = un abbonamento è frenato e il lavoro rimandabile aspetta. Le sessioni aperte non vengono mai bloccate.")
 }
@@ -1366,6 +1372,8 @@ let macProcs = MacProcMenu()
 // MARK: abbonamenti (livello 1): una sezione compatta per account (settimana, oggi, 5 ore)
 
 let blockW: CGFloat = 540
+// AppKit mette ~103 pt attorno al testo di una riga (immagine, margini): oltre questo il menu si allarga più delle card
+let menuTextMax: CGFloat = blockW - 104
 // Una riga del blocco: etichetta, barra (con tacca), numero in grassetto, grafico dell'andamento, scadenza in breve.
 // Il grafico sta accanto al numero: si legge «quanto» e «come ci sono arrivato» nello stesso colpo d'occhio.
 struct BarSpec {
@@ -2005,7 +2013,7 @@ func liveAgentRows(actionTarget: AnyObject?) -> [NSMenuItem] {
     let all = everyone.filter { ($0.1.depth ?? 0) == 0 }.sorted { $0.1.lastActivity > $1.1.lastActivity }
     let subs = everyone.count - all.count
     var out: [NSMenuItem] = [headRow(all.isEmpty ? ["NESSUN AGENTE AL LAVORO"] : ["AL LAVORO ADESSO · \(all.count)" + (subs > 0 ? " + \(subs) SOTTOAGENTI" : "")], tabs: [])]
-    let tabs: [CGFloat] = [330, 460]
+    let tabs: [CGFloat] = [300, menuTextMax]
     // Agenti uguali (stesso progetto, titolo, modello e tipo) in una riga con ×N: 23/10 i 7 Codex di un lotto in /tmp/zgen
     // erano 7 righe identiche «17 cartelle temporanee · K4-P9» e coprivano tutti gli altri progetti.
     var rows: [(pr: LiveProject, g: AgentInfo, n: Int)] = []
