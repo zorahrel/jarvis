@@ -295,6 +295,12 @@ class UsageBarView: NSView {
     private let timeGap: CGFloat = 3
     private let acctGap: CGFloat = 6    // uguale ovunque: niente separatori
     private let padX: CGFloat = 4
+    // Tetto della barra: oltre, con troppi account, macOS la mette fuori schermo (23/10: 8 account = 970 pt, x -4411, invisibile).
+    // Entrano gli account che stanno nel tetto (prima quelli attivi e quelli più carichi), il resto è «+N» e sta nel menu.
+    // Il tetto è il 30% dello schermo principale (max 520 pt): la barra deve restare accanto alle altre icone e al notch.
+    private var barMaxW: CGFloat { min(520, (NSScreen.main?.frame.width ?? 1440) * 0.3) }
+    private var hiddenAccts = 0
+    private var plusX: CGFloat = 0
 
     private func flat() -> [(Provider, Account)] {
         var out: [(Provider, Account)] = []
@@ -409,19 +415,14 @@ class UsageBarView: NSView {
     }
 
     private func computeLayout() -> (groups: [GroupFrame], width: CGFloat, macW: CGFloat) {
-        var groups: [GroupFrame] = []
-        var x = padX
         let mw = macCellWidth()
-        if mw > 0 { x += mw + acctGap }
         let pw = paceCellWidth()
-        if pw > 0 { x += pw + acctGap }
-        for p in snapshot?.providers ?? [] {
-            if p.menuOnly == true { continue }
-            let accs = p.accounts ?? []
-            if accs.isEmpty { continue }
-            let gx = x
-            var frames: [AcctFrame] = []
-            for a in accs {
+        // Prima passata: larghezza di ogni account, senza posizioni.
+        struct Cand { let acct: Account; let header: String; let badge: String; let w: CGFloat; let pi: Int; let ai: Int }
+        var cands: [[Cand]] = []
+        for (pi, p) in (snapshot?.providers ?? []).enumerated() {
+            if p.menuOnly == true { cands.append([]); continue }
+            cands.append((p.accounts ?? []).enumerated().map { (ai, a) in
                 // larghezza = riga quota più larga; la mail si taglia a misura,
                 // mai oltre. Le righe non si tagliano mai. Il badge non si taglia:
                 // ruba spazio alla mail, non alle righe.
@@ -432,15 +433,45 @@ class UsageBarView: NSView {
                 let hw = iconIndent
                     + (header as NSString).size(withAttributes: [.font: headerFont]).width
                     + badgeW
-                let cw = max(hw, qw)
-                frames.append(AcctFrame(acct: a, header: header, badge: badge, x: x, w: cw))
-                x += cw + acctGap
+                return Cand(acct: a, header: header, badge: badge, w: max(hw, qw), pi: pi, ai: ai)
+            })
+        }
+        // Quanti entrano nel tetto: prima gli attivi, poi chi ha la quota più alta. Si rimettono in ordine dopo.
+        let start = padX + (mw > 0 ? mw + acctGap : 0) + (pw > 0 ? pw + acctGap : 0)
+        let plusW = ("+9" as NSString).size(withAttributes: [.font: headerFont]).width + acctGap
+        let all = cands.flatMap { $0 }
+        let room = barMaxW - start - padX - plusW
+        let ranked = all.sorted { x, y in
+            if x.acct.active != y.acct.active { return x.acct.active }
+            return (x.acct.quotas.map { $0.usedPct }.max() ?? 0) > (y.acct.quotas.map { $0.usedPct }.max() ?? 0)
+        }
+        var keep = Set<String>(), used: CGFloat = 0
+        for c in ranked {
+            let need = c.w + (keep.isEmpty ? 0 : acctGap)
+            if used + need <= room || keep.isEmpty { keep.insert("\(c.pi).\(c.ai)"); used += need }
+        }
+        let total = all.count
+        hiddenAccts = total - keep.count
+        // Seconda passata: posizioni solo per chi resta, nell'ordine dei provider.
+        var groups: [GroupFrame] = []
+        var x = padX
+        if mw > 0 { x += mw + acctGap }
+        if pw > 0 { x += pw + acctGap }
+        for (pi, p) in (snapshot?.providers ?? []).enumerated() {
+            let shown = cands[pi].filter { keep.contains("\(pi).\($0.ai)") }
+            if shown.isEmpty { continue }
+            let gx = x
+            var frames: [AcctFrame] = []
+            for c in shown {
+                frames.append(AcctFrame(acct: c.acct, header: c.header, badge: c.badge, x: x, w: c.w))
+                x += c.w + acctGap
             }
             x -= acctGap
             groups.append(GroupFrame(prov: p, x: gx, w: x - gx, accts: frames))
             x += acctGap
         }
         if !groups.isEmpty { x -= acctGap }
+        if hiddenAccts > 0 { plusX = x + acctGap; x = plusX + plusW - acctGap }
         return (groups, x + padX, mw)
     }
 
@@ -549,6 +580,9 @@ class UsageBarView: NSView {
                                  font: timeFont, color: white, shadow: true)
                 }
             }
+        }
+        if hiddenAccts > 0 {
+            drawBaseline("+\(hiddenAccts)", x: plusX, baseline: headerBaseline, font: headerFont, color: .white, shadow: true)
         }
     }
 }
