@@ -1170,9 +1170,8 @@ func pcRow() -> [NSMenuItem] {
     let a = NSMutableAttributedString()
     a.append(txt("PC di casa  ")); a.append(txt(p.pc, .systemFont(ofSize: 13, weight: .semibold), col))
     // il perché arriva da Windows: si tengono le parti brevi, la «richiesta di alimentazione» col nome grezzo del driver resta fuori
-    let why = (p.pc == "lavora" ? p.perche : nil).map { $0.components(separatedBy: "; ").filter { !$0.contains("[") && !$0.contains("\\") && $0.count <= 40 }.suffix(2).joined(separator: " · ") } ?? ""
-    a.append(txt("\t" + why, smallNum, .secondaryLabelColor))
-    var rows = [richRow(icon: nil, styled(a, rightTab), enabled: false,
+    let why = (p.pc == "lavora" ? p.perche : nil).map { $0.components(separatedBy: "; ").filter { !$0.contains("[") && !$0.contains("\\") && $0.count <= 40 }.prefix(3).joined(separator: " · ") } ?? ""
+    var rows = [richRow(icon: sym("desktopcomputer", color: col), a, detail: why, enabled: false,
                         tip: "dorme dopo 20 minuti senza lavoro; offload e winwake lo svegliano")]
     if p.avviso, let m = p.mac, let s = p.soglia {
         rows.append(noteRow("Mac a " + String(format: "%.1f", m).replacingOccurrences(of: ".", with: ",") + " per core (soglia "
@@ -1194,7 +1193,7 @@ func automationsRow(actionTarget: AnyObject?) -> NSMenuItem {
         if !parts.isEmpty { text = "Automazioni · " + parts.joined(separator: " · ") }
         else if !stale { text = "Automazioni · tutto a posto"; gray = true }
     }
-    let row = richRow(icon: nil, txt(text, rowFont, gray ? .secondaryLabelColor : .labelColor),
+    let row = richRow(icon: sym("clock.arrow.circlepath"), txt(text, rowFont, gray ? .secondaryLabelColor : .labelColor),
                       tip: "Apre le automazioni nella dashboard")
     row.action = #selector(AppDelegate.openAutomations); row.target = actionTarget
     return row
@@ -1827,16 +1826,14 @@ func projectsMenuItem(actionTarget: AnyObject?) -> NSMenuItem? {
         for pr in dead { all.addItem(projectRow(pr, actionTarget: actionTarget, dim: true)) }
     }
     let braked = alive.filter { $0.state == "frenato" }.count
-    let it = richRow(icon: nil, txt("Progetti", rowFont), detail: nil)
-    let pa = NSMutableAttributedString(attributedString: txt("Progetti", rowFont)); pa.append(txt("\t\(alive.count) attivi" + (braked > 0 ? " · \(braked) frenati" : ""), smallNum, braked > 0 ? toneWarn : .secondaryLabelColor))
-    it.attributedTitle = styled(pa, rightTab)
+    let it = richRow(icon: sym("folder"), txt("Progetti, budget e priorità", rowFont), detail: "\(alive.count) attivi" + (braked > 0 ? " · \(braked) frenati" : ""))
     it.submenu = all
     return it
 }
 
 // MARK: chi lavora adesso: gli agenti vivi di tutti i progetti in una lista sola
 
-let agentsShown = 3
+let agentsShown = 5
 func liveAgentRows(actionTarget: AnyObject?) -> [NSMenuItem] {
     // qui solo le sessioni: i sottoagenti stanno nel progetto, sotto chi li ha lanciati (contano nel totale)
     let everyone = liveProjects.flatMap { pr in (pr.agents?.list ?? []).map { (pr, $0) } }
@@ -1853,17 +1850,13 @@ func liveAgentRows(actionTarget: AnyObject?) -> [NSMenuItem] {
     }
     for (pr, g, n) in rows.prefix(agentsShown) {
         let name = pr.title ?? pr.name
+        let line = NSMutableAttributedString(attributedString: txt(name.count > 30 ? String(name.prefix(29)) + "…" : name, rowFont))
+        line.append(txt("\t\(g.model)\(n > 1 ? " ×\(n)" : "") · \(durText(nowMs() - g.startedAt))", rowNum, .secondaryLabelColor))
         // il titolo di una sessione è spesso la prima riga del prompt: via il «# » del markdown e l'id «[cron:…]» dei lavori a orario
         let gt = g.title.replacingOccurrences(of: "^(#+\\s*|\\[cron:[^\\]]*\\]\\s*)", with: "", options: .regularExpression)
         let what = [gt.isEmpty ? nil : gt, g.kind == "sessione" || name.lowercased().contains(g.kind) ? nil : g.kind].compactMap { $0 }.joined(separator: " · ")
-        // una riga: progetto, accanto in grigio cosa fa (tagliato a misura), a destra modello e da quanto
-        let shown = name.count > 30 ? String(name.prefix(29)) + "…" : name
-        let line = NSMutableAttributedString(attributedString: txt(shown, rowFont))
-        let room = 42 - shown.count
-        if !what.isEmpty && room > 6 { line.append(txt("  " + (what.count > room ? String(what.prefix(room - 1)) + "…" : what), rowSmall, .secondaryLabelColor)) }
-        line.append(txt("\t\(g.model)\(n > 1 ? " ×\(n)" : "") · \(durText(nowMs() - g.startedAt))", smallNum, .secondaryLabelColor))
-        let row = richRow(icon: nil, line, tabs: [tableRight],
-                          tip: (what.isEmpty ? "" : what + "\n") + (g.open.map { "Clic per aprirla in \($0.via)" } ?? "Gira in background: non si apre da qui"), wrap: 70)
+        let row = richRow(icon: providerSym(g.provider), line, detail: what.isEmpty ? nil : what, tabs: tabs,
+                          tip: g.open.map { "Clic per aprirla in \($0.via)" } ?? "Gira in background: non si apre da qui", wrap: 70)
         if let o = g.open {
             row.action = #selector(AppDelegate.openLink(_:)); row.target = actionTarget
             row.representedObject = ["url": o.url, "what": "\(pr.name) · \(g.model) \(g.kind)"]
@@ -1894,119 +1887,6 @@ func hubLagRow(_ lag: HubLag, offline: Bool) -> NSMenuItem {
 
 // Un colpo d'occhio, non una dashboard: verdetto, account, chi lavora, il Mac se soffre.
 // Il dettaglio (grafici, rinnovi, budget per progetto) sta in due sottomenu; il resto nella dashboard (:3360).
-// MARK: - Menu a tabella: una riga per account, il dettaglio nel sottomenu
-//
-// Il menu si legge dall'alto: verdetto, poi gli account dal più vicino a finire, poi chi lavora, poi il Mac.
-// Ogni riga ha le stesse colonne a cifre tabellari; il colore compare solo con un problema
-// (arancio = attenzione, rosso = critico o esaurito). Grafici e frasi stanno nel sottomenu della riga.
-let tableRight: CGFloat = 392
-let acctTabs: NSMutableParagraphStyle = {
-    let ps = NSMutableParagraphStyle()
-    ps.tabStops = [NSTextTab(textAlignment: .right, location: 176, options: [:]),
-                   NSTextTab(textAlignment: .right, location: 226, options: [:]),
-                   NSTextTab(textAlignment: .right, location: 276, options: [:]),
-                   NSTextTab(textAlignment: .right, location: tableRight, options: [:])]
-    ps.defaultTabInterval = 0; ps.lineBreakMode = .byClipping
-    return ps
-}()
-let rightTab: NSMutableParagraphStyle = {
-    let ps = NSMutableParagraphStyle()
-    ps.tabStops = [NSTextTab(textAlignment: .right, location: tableRight, options: [:])]
-    ps.defaultTabInterval = 0; ps.lineBreakMode = .byClipping
-    return ps
-}()
-let headFont = NSFont.systemFont(ofSize: 10, weight: .semibold)
-let numFont = NSFont.monospacedDigitSystemFont(ofSize: 12.5, weight: .medium)
-let smallNum = NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .regular)
-// un accento solo, l'arancio, da 80% in su; il rosso resta per ciò che è già finito (esaurito)
-func pctTone(_ p: Int) -> NSColor { p >= 100 ? toneBad : p >= 80 ? toneWarn : .labelColor }
-func styled(_ a: NSMutableAttributedString, _ ps: NSParagraphStyle) -> NSMutableAttributedString {
-    a.addAttribute(.paragraphStyle, value: ps, range: NSRange(location: 0, length: a.length)); return a
-}
-
-// Intestazione: le colonne, e accanto il ritmo della settimana di tutti gli account (1× = in linea col tempo passato).
-func acctHeadRow(_ snap: Overview?) -> NSMenuItem {
-    let g = NSColor.secondaryLabelColor
-    let a = NSMutableAttributedString(attributedString: txt("ACCOUNT", headFont, g))
-    var tip = "Settimana e 5 ore: quota usata. Oggi: ultime 24 ore contro la quota giornaliera sostenibile (1× = in linea). Passa su una riga per grafici e dettagli."
-    if let ps = paceSummary(snap) {
-        a.append(txt("   RITMO ", headFont, g))
-        a.append(txt(paceText(ps.ratio), .monospacedDigitSystemFont(ofSize: 10, weight: .semibold), ps.ratio <= 1 ? g : statusColor(paceStatus(ps.ratio))))
-        tip = "Ritmo: settimana usata \(ps.used)% contro \(ps.expected)% del tempo passato, somma degli account non esauriti. " + tip
-    }
-    a.append(txt("\tSETT.\t5 ORE\tOGGI\tPROSSIMO", headFont, g))
-    let it = NSMenuItem(); it.attributedTitle = styled(a, acctTabs); it.isEnabled = false; it.toolTip = tip
-    return it
-}
-
-// Quanto manca alla fine: la quota più piena tra settimana e 5 ore; gli esauriti in fondo (lì non c'è più niente da decidere).
-func acctUrgency(_ a: Account) -> Int {
-    let w = a.quotas.first { $0.key.lowercased() == "7d" }?.usedPct ?? 0
-    if w >= 100 { return -1 }
-    return a.quotas.prefix(2).map { $0.usedPct }.max() ?? 0
-}
-
-func acctTableRow(_ p: Provider, _ a: Account, detail: NSMenuItem?) -> NSMenuItem {
-    let w = a.quotas.first { $0.key.lowercased() == "7d" }
-    let f = a.quotas.first { $0.key.lowercased() == "5h" }
-    let g = NSColor.secondaryLabelColor
-    // un solo account: basta il provider; con più account, il nome dell'account accanto
-    let one = (p.accounts ?? []).count == 1
-    let line = NSMutableAttributedString(attributedString: txt(p.name, rowFont))
-    if !one { line.append(txt(" " + shortLabel(a.label), rowFont, g)) }
-    if let n = a.resetCredits?.available, n > 0 { line.append(txt(" ↻\(n)", rowSmall, g)) }
-    let depleted = (w?.usedPct ?? 0) >= 100
-    line.append(txt("\t" + (w.map { "\($0.usedPct)%" } ?? "–"), numFont, w.map { depleted ? toneBad : $0.status == "stale" ? g : pctTone($0.usedPct) } ?? g))
-    line.append(txt("\t" + (f.map { "\($0.usedPct)%" } ?? "–"), numFont, f.map { pctTone($0.usedPct) } ?? g))
-    if let t = liveHeavy?.today.first(where: { $0.provider == p.id && $0.account == a.label }), t.perDay > 0, !depleted {
-        let x = t.last24h / t.perDay
-        line.append(txt("\t" + (x >= 10 ? ">10×" : timesShort(x)), numFont, x > 1 ? toneWarn : .labelColor))
-    } else { line.append(txt("\t–", numFont, g)) }
-    // Ultima colonna: quando cambia qualcosa. Frenato e dato vecchio prima dell'azzeramento: sono il motivo per cui non lavora.
-    let wait = accountWait(p, a)
-    let note: (String, NSColor)
-    if depleted { note = ("torna " + (w?.resetsAt.map(resetText) ?? w?.resetText ?? ""), toneBad) }
-    else if let wt = wait { note = ("frenato → " + (wt.until.map { hhmmText(Int($0 / 1000)) } ?? "?"), toneWarn) }
-    else if w?.status == "stale" { note = (w?.resetText ?? "dato vecchio", g) }
-    else { note = (w?.resetsAt.map(resetText) ?? w?.resetText ?? "", g) }
-    line.append(txt("\t" + note.0, smallNum, note.1))
-    let it = NSMenuItem(); it.attributedTitle = styled(line, acctTabs)   // niente icona: il nome del provider è già scritto
-    it.toolTip = wait.map(resumeText)
-    if let d = detail { let sm = NSMenu(); sm.autoenablesItems = false; sm.addItem(d); it.submenu = sm }
-    return it
-}
-
-// Il Mac in una riga: livello a parole e le quattro misure; grafici, RAM per esteso e processi nel sottomenu.
-func macCompactRow() -> NSMenuItem? {
-    guard let m = liveMac, let e = m.effort, let big = macRow() else { return nil }
-    let procs = big.submenu; big.submenu = nil
-    let tone: (Int) -> NSColor = { $0 == 0 ? .labelColor : toneWarn }   // un accento solo: il livello lo dice la parola
-    let line = NSMutableAttributedString(attributedString: txt("Mac", rowFont))
-    line.append(txt("  " + e.label, rowFont, e.level == 0 ? .secondaryLabelColor : tone(e.level)))
-    line.append(txt("\t", rowFont))
-    let names = ["cpu": "CPU", "mem": "RAM", "gpu": "GPU", "disk": "Disco"]
-    for (i, p) in e.parts.enumerated() {
-        guard let v = p.pct else { continue }
-        line.append(txt((i > 0 ? "   " : "") + (names[p.key] ?? p.name) + " ", rowSmall, .secondaryLabelColor))
-        line.append(txt("\(v)%", numFont, tone(p.level)))
-    }
-    // Sotto sforzo: perché e chi pesa, in una riga; il resto nel sottomenu.
-    if e.level > 0 {
-        let why = (e.why.isEmpty ? "" : e.why.prefix(1).uppercased() + e.why.dropFirst() + " · ") + m.hogs.prefix(2).map { "\($0.name) \(gbText($0.memMB))" }.joined(separator: ", ")
-        line.append(txt("\n" + (why.count > 72 ? String(why.prefix(71)) + "…" : why), rowSmall, .secondaryLabelColor))
-    }
-    let it = NSMenuItem(); it.attributedTitle = styled(line, rightTab); it.toolTip = big.toolTip
-    let sm = NSMenu(); sm.autoenablesItems = false
-    sm.addItem(big)
-    if let pm = procs {
-        sm.addItem(.separator())
-        let pr = NSMenuItem(title: "Processi per CPU e memoria", action: nil, keyEquivalent: ""); pr.submenu = pm
-        sm.addItem(pr)
-    }
-    it.submenu = sm
-    return it
-}
-
 func buildMenu(snapshot: Overview?, isOffline: Bool, actionTarget: AnyObject?) -> NSMenu {
     let menu = NSMenu()
     menu.autoenablesItems = false
@@ -2022,7 +1902,6 @@ func buildMenu(snapshot: Overview?, isOffline: Bool, actionTarget: AnyObject?) -
         var shown = Set<String>()
         var bonusShown = Set<String>()
         let details = NSMenu(); details.autoenablesItems = false
-        var table: [(Provider, Account, NSMenuItem?)] = []
         for p in providers {
             let accs = p.accounts ?? []
             let labels = Set(accs.map { $0.label })
@@ -2035,7 +1914,7 @@ func buildMenu(snapshot: Overview?, isOffline: Bool, actionTarget: AnyObject?) -
                     if let m = mine { shown.insert(m.service + "|" + m.account) }
                     let credit = p.id == "claude" ? cmap[a.label] : nil
                     if credit != nil { bonusShown.insert(a.label) }
-                    table.append((p, a, accountBlock(p, a, renewal: mine, credit: credit)))
+                    if let b = accountBlock(p, a, renewal: mine, credit: credit) { menu.addItem(b) }
                 }
                 continue
             }
@@ -2077,13 +1956,6 @@ func buildMenu(snapshot: Overview?, isOffline: Bool, actionTarget: AnyObject?) -
             let it = richRow(icon: sym("creditcard"), txt("Credito AI", rowFont)); it.submenu = sub
             details.addItem(it)
         }
-        // la tabella si scrive qui, dopo il giro: l'ordine è per urgenza, non per provider
-        if !table.isEmpty {
-            menu.addItem(acctHeadRow(snapshot))
-            for (p, a, d) in table.enumerated().sorted(by: { (acctUrgency($0.element.1), -$0.offset) > (acctUrgency($1.element.1), -$1.offset) }).map({ $0.element }) {
-                menu.addItem(acctTableRow(p, a, detail: d))
-            }
-        }
         details.addItem(.separator())
         for (title, sel, on) in [
             ("Mostra fascia di 5 ore", #selector(AppDelegate.toggleDaily), TrayPrefs.showDaily),
@@ -2097,17 +1969,17 @@ func buildMenu(snapshot: Overview?, isOffline: Bool, actionTarget: AnyObject?) -
         }
         menu.addItem(.separator())
         liveAgentRows(actionTarget: actionTarget).forEach { menu.addItem($0) }
-        if let mr = macCompactRow() {  // sempre: è l'indicatore unico del Mac
+        if let mr = macRow() {  // sempre: è l'indicatore unico del Mac
             menu.addItem(.separator()); menu.addItem(mr)
         }
         pcRow().forEach { menu.addItem($0) }
         menu.addItem(.separator())
-        let det = richRow(icon: nil, txt("Altri abbonamenti e opzioni", rowFont)); det.submenu = details
+        let det = richRow(icon: sym("slider.horizontal.3"), txt("Altri abbonamenti e opzioni", rowFont)); det.submenu = details
         menu.addItem(det)
         if let pj = projectsMenuItem(actionTarget: actionTarget) { menu.addItem(pj) }
     }
     // con l'hub giù il blocco Mac non c'è: la finestra Processi legge tutto in locale e resta raggiungibile
-    if isOffline || liveMac?.effort == nil {
+    if isOffline || macRow() == nil {
         let pr = NSMenuItem(title: "Processi: cerca, ordina, chiudi…", action: #selector(AppDelegate.openProcesses), keyEquivalent: "p")
         pr.target = actionTarget; pr.image = sym("list.bullet.rectangle")
         menu.addItem(.separator()); menu.addItem(pr)
