@@ -234,5 +234,13 @@
  "launchd:com.jarvis.tmpdir-sweep-27-10-b": {
   "area": "manutenzione",
   "seSiRompe": "Se si rompe, le cartelle temporanee vecchie restano sul disco: nessun file si perde, lo spazio non si libera."
+ },
+ "launchd:com.jarvis.lavori-watch": {
+  "area": "jarvis-agenti",
+  "seSiRompe": "Attilio potrebbe non accorgersi che un lavoro promesso da Jarvis è fermo o non è mai partito."
+ },
+ "cron:4fe5ab15-88a5-4fe7-8006-3e945d66ce99": {
+  "area": "jarvis-agenti",
+  "seSiRompe": "Attilio potrebbe non sapere che un promemoria di Jarvis è fermo da giorni."
  }
 }
