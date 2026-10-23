@@ -1003,7 +1003,7 @@ func gateLine(_ g: GateResult) -> String {
 // Ogni voce: icona SF Symbol a sinistra (template, mai emoji), riga 1 in colonne con tab stop,
 // riga 2 piccola e grigia per il perché. Le righe a più linee crescono in altezza, niente troncamenti.
 let providerSymbols = ["free": "leaf"]
-let toneOK = NSColor.secondaryLabelColor, toneWarn = NSColor.systemOrange, toneBad = NSColor.systemRed
+let toneOK = NSColor.systemGreen, toneWarn = NSColor.systemOrange, toneBad = NSColor.systemRed
 
 func sym(_ name: String, pt: CGFloat = 13, color: NSColor? = nil) -> NSImage? {
     guard let base = NSImage(systemSymbolName: name, accessibilityDescription: nil) else { return nil }
@@ -1169,8 +1169,7 @@ func pcRow() -> [NSMenuItem] {
     let col: NSColor = p.avviso ? toneWarn : p.pc == "lavora" ? toneOK : .secondaryLabelColor
     let a = NSMutableAttributedString()
     a.append(txt("PC di casa  ")); a.append(txt(p.pc, .systemFont(ofSize: 13, weight: .semibold), col))
-    // il perché arriva da Windows: si tengono le parti brevi, la «richiesta di alimentazione» col nome grezzo del driver resta fuori
-    let why = (p.pc == "lavora" ? p.perche : nil).map { $0.components(separatedBy: "; ").filter { !$0.contains("[") && !$0.contains("\\") && $0.count <= 40 }.prefix(3).joined(separator: " · ") } ?? ""
+    let why = (p.pc == "lavora" ? p.perche : nil) ?? ""
     var rows = [richRow(icon: sym("desktopcomputer", color: col), a, detail: why, enabled: false,
                         tip: "dorme dopo 20 minuti senza lavoro; offload e winwake lo svegliano")]
     if p.avviso, let m = p.mac, let s = p.soglia {
@@ -1188,8 +1187,7 @@ func automationsRow(actionTarget: AnyObject?) -> NSMenuItem {
         var parts: [String] = []
         if a.needsYou > 0 { parts.append(a.needsYou == 1 ? "1 ti aspetta" : "\(a.needsYou) ti aspettano") }
         if a.broken > 0 { parts.append(a.broken == 1 ? "1 rotta" : "\(a.broken) rotte") }
-        let muted = a.sources.filter { !$0.ok && $0.pending != true }.count
-        if stale { parts.append(muted == 1 ? "1 fonte muta" : "\(muted) fonti mute") }
+        if stale { parts.append("?") }
         if !parts.isEmpty { text = "Automazioni · " + parts.joined(separator: " · ") }
         else if !stale { text = "Automazioni · tutto a posto"; gray = true }
     }
@@ -1573,7 +1571,7 @@ func accountBlock(_ p: Provider, _ a: Account, renewal: Renewal? = nil, credit: 
     let until = wait?.until.map { Int($0 / 1000) }
     // Dato vecchio (Muse dal 21/10 spesso non manda la quota): si dice in chiaro, invece di un grigio senza spiegazione
     let old = w.status == "stale"
-    let badge: String? = braked ? "frenato" + (until.map { " fino alle " + hhmmText($0) } ?? "") : old ? "dato vecchio" : nil
+    let badge: String? = braked ? "frenato" + (until.map { " fino alle " + hhmmText($0) } ?? "") : old ? "dato vecchio" : gate != nil ? "libero" : nil
     let bcol: NSColor = braked ? toneWarn : old ? .secondaryLabelColor : toneOK
     let brakeLine = wait.map(resumeText) ?? (old ? "\(p.name) adesso non manda la quota: questa è l'ultima lettura (\(w.resetText)), il freno usa lei" : nil)
     var bars: [BarSpec] = []
@@ -1852,9 +1850,7 @@ func liveAgentRows(actionTarget: AnyObject?) -> [NSMenuItem] {
         let name = pr.title ?? pr.name
         let line = NSMutableAttributedString(attributedString: txt(name.count > 30 ? String(name.prefix(29)) + "…" : name, rowFont))
         line.append(txt("\t\(g.model)\(n > 1 ? " ×\(n)" : "") · \(durText(nowMs() - g.startedAt))", rowNum, .secondaryLabelColor))
-        // il titolo di una sessione è spesso la prima riga del prompt: via il «# » del markdown e l'id «[cron:…]» dei lavori a orario
-        let gt = g.title.replacingOccurrences(of: "^(#+\\s*|\\[cron:[^\\]]*\\]\\s*)", with: "", options: .regularExpression)
-        let what = [gt.isEmpty ? nil : gt, g.kind == "sessione" || name.lowercased().contains(g.kind) ? nil : g.kind].compactMap { $0 }.joined(separator: " · ")
+        let what = [g.title.isEmpty ? nil : g.title, g.kind == "sessione" || name.lowercased().contains(g.kind) ? nil : g.kind].compactMap { $0 }.joined(separator: " · ")
         let row = richRow(icon: providerSym(g.provider), line, detail: what.isEmpty ? nil : what, tabs: tabs,
                           tip: g.open.map { "Clic per aprirla in \($0.via)" } ?? "Gira in background: non si apre da qui", wrap: 70)
         if let o = g.open {
@@ -1987,13 +1983,14 @@ func buildMenu(snapshot: Overview?, isOffline: Bool, actionTarget: AnyObject?) -
     menu.addItem(automationsRow(actionTarget: actionTarget))
     menu.addItem(.separator())
     // Dashboard unica = la pagina del hub (:3360): freno, consumi, sessioni, impostazioni.
-    for (title, sel, key) in [
-        ("Apri dashboard", #selector(AppDelegate.openDashboard), "d"),
-        ("Aggiorna", #selector(AppDelegate.refresh), "r"),
-        ("Esci", #selector(AppDelegate.quit), "q"),
+    for (title, sel, key, icon) in [
+        ("Apri dashboard", #selector(AppDelegate.openDashboard), "d", "macwindow"),
+        ("Aggiorna", #selector(AppDelegate.refresh), "r", "arrow.clockwise"),
+        ("Esci", #selector(AppDelegate.quit), "q", "power"),
     ] {
         let it = NSMenuItem(title: title, action: sel, keyEquivalent: key)
         it.target = actionTarget
+        it.image = sym(icon)
         menu.addItem(it)
     }
     return menu
