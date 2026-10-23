@@ -37,6 +37,14 @@
               "outcome": "ok"
             }
           ],
+          "purpose": {
+            "area": "posta-avvisi",
+            "areaSource": "gruppo",
+            "cosaFaPerTe": "Controlla i canali urgenti e avvisa subito.",
+            "seSiRompe": null
+          },
+          "steps": null,
+          "tokensSavedVsClaude": null,
           "proof": null,
           "runsToday": 1,
           "group": "arriva",
@@ -105,6 +113,14 @@
               "outcome": "ok"
             }
           ],
+          "purpose": {
+            "area": "posta-avvisi",
+            "areaSource": "gruppo",
+            "cosaFaPerTe": "Legge la posta ogni minuto e avvisa se c’è qualcosa di urgente.",
+            "seSiRompe": null
+          },
+          "steps": null,
+          "tokensSavedVsClaude": null,
           "proof": null,
           "runsToday": 240,
           "group": "arriva",
@@ -171,6 +187,14 @@
               "outcome": "ok"
             }
           ],
+          "purpose": {
+            "area": "posta-avvisi",
+            "areaSource": "gruppo",
+            "cosaFaPerTe": "Ricorda le cose rimaste in sospeso prima di cena.",
+            "seSiRompe": null
+          },
+          "steps": null,
+          "tokensSavedVsClaude": null,
           "proof": null,
           "runsToday": 1,
           "group": "arriva",
@@ -232,6 +256,14 @@
             "error": null
           },
           "history": [],
+          "purpose": {
+            "area": "posta-avvisi",
+            "areaSource": "gruppo",
+            "cosaFaPerTe": "Ricorda di preparare la festa di prova di domani.",
+            "seSiRompe": null
+          },
+          "steps": null,
+          "tokensSavedVsClaude": null,
           "proof": null,
           "runsToday": 0,
           "group": "arriva",
@@ -298,6 +330,14 @@
               "outcome": "ok"
             }
           ],
+          "purpose": {
+            "area": "posta-avvisi",
+            "areaSource": "gruppo",
+            "cosaFaPerTe": "Raccoglie i messaggi della giornata in un unico riepilogo.",
+            "seSiRompe": null
+          },
+          "steps": null,
+          "tokensSavedVsClaude": null,
           "proof": null,
           "runsToday": 12,
           "group": "arriva",
@@ -370,6 +410,14 @@
               "outcome": "ok"
             }
           ],
+          "purpose": {
+            "area": "backup-sicurezza",
+            "areaSource": "gruppo",
+            "cosaFaPerTe": "Controlla ogni giorno che l’archivio foto sia integro.",
+            "seSiRompe": null
+          },
+          "steps": null,
+          "tokensSavedVsClaude": null,
           "proof": null,
           "runsToday": 1,
           "group": "dati",
@@ -436,6 +484,14 @@
               "outcome": "ok"
             }
           ],
+          "purpose": {
+            "area": "backup-sicurezza",
+            "areaSource": "gruppo",
+            "cosaFaPerTe": "Copia i dati della giornata nel repo privato di notte.",
+            "seSiRompe": null
+          },
+          "steps": null,
+          "tokensSavedVsClaude": null,
           "proof": null,
           "runsToday": 1,
           "group": "dati",
@@ -502,6 +558,14 @@
               "outcome": "ok"
             }
           ],
+          "purpose": {
+            "area": "backup-sicurezza",
+            "areaSource": "gruppo",
+            "cosaFaPerTe": "Fa una copia di sicurezza a intervalli regolari.",
+            "seSiRompe": null
+          },
+          "steps": null,
+          "tokensSavedVsClaude": null,
           "proof": null,
           "runsToday": 3,
           "group": "dati",
@@ -568,6 +632,14 @@
               "outcome": "ok"
             }
           ],
+          "purpose": {
+            "area": "backup-sicurezza",
+            "areaSource": "gruppo",
+            "cosaFaPerTe": "Butta i file temporanei vecchi di una settimana.",
+            "seSiRompe": null
+          },
+          "steps": null,
+          "tokensSavedVsClaude": null,
           "proof": null,
           "runsToday": 0,
           "group": "dati",
@@ -640,6 +712,14 @@
               "outcome": "ok"
             }
           ],
+          "purpose": {
+            "area": "jarvis-agenti",
+            "areaSource": "gruppo",
+            "cosaFaPerTe": "Verifica i residui di quota dal Mac.",
+            "seSiRompe": null
+          },
+          "steps": null,
+          "tokensSavedVsClaude": null,
           "proof": null,
           "runsToday": 1,
           "group": "quote",
@@ -706,6 +786,14 @@
               "outcome": "ok"
             }
           ],
+          "purpose": {
+            "area": "jarvis-agenti",
+            "areaSource": "gruppo",
+            "cosaFaPerTe": "Controlla quanto hai usato del modello principale.",
+            "seSiRompe": null
+          },
+          "steps": null,
+          "tokensSavedVsClaude": null,
           "proof": null,
           "runsToday": 3,
           "group": "quote",
@@ -772,6 +860,14 @@
               "outcome": "ok"
             }
           ],
+          "purpose": {
+            "area": "jarvis-agenti",
+            "areaSource": "gruppo",
+            "cosaFaPerTe": "Controlla quanto hai usato del secondo modello.",
+            "seSiRompe": null
+          },
+          "steps": null,
+          "tokensSavedVsClaude": null,
           "proof": null,
           "runsToday": 1,
           "group": "quote",
@@ -842,6 +938,14 @@
               "outcome": "ok"
             }
           ],
+          "purpose": {
+            "area": "manutenzione",
+            "areaSource": "gruppo",
+            "cosaFaPerTe": "Verifica ogni cinque minuti che il sistema risponda.",
+            "seSiRompe": null
+          },
+          "steps": null,
+          "tokensSavedVsClaude": null,
           "proof": null,
           "runsToday": 190,
           "group": "macchine",
@@ -908,6 +1012,14 @@
               "outcome": "ok"
             }
           ],
+          "purpose": {
+            "area": "manutenzione",
+            "areaSource": "gruppo",
+            "cosaFaPerTe": "Esegue il controllo del codice a ogni giro.",
+            "seSiRompe": null
+          },
+          "steps": null,
+          "tokensSavedVsClaude": null,
           "proof": null,
           "runsToday": 1,
           "group": "macchine",
@@ -974,6 +1086,14 @@
               "outcome": "ok"
             }
           ],
+          "purpose": {
+            "area": "manutenzione",
+            "areaSource": "gruppo",
+            "cosaFaPerTe": "Verifica ogni ora che la rete di casa risponda.",
+            "seSiRompe": null
+          },
+          "steps": null,
+          "tokensSavedVsClaude": null,
           "proof": null,
           "runsToday": 15,
           "group": "macchine",
@@ -1034,6 +1154,14 @@
               "outcome": "ok"
             }
           ],
+          "purpose": {
+            "area": "manutenzione",
+            "areaSource": "gruppo",
+            "cosaFaPerTe": "Ruota i log di sistema una volta a settimana.",
+            "seSiRompe": null
+          },
+          "steps": null,
+          "tokensSavedVsClaude": null,
           "proof": null,
           "runsToday": 0,
           "group": "macchine",
@@ -1094,6 +1222,14 @@
               "outcome": "ok"
             }
           ],
+          "purpose": {
+            "area": "manutenzione",
+            "areaSource": "gruppo",
+            "cosaFaPerTe": "Controlla lo spazio libero sui dischi.",
+            "seSiRompe": null
+          },
+          "steps": null,
+          "tokensSavedVsClaude": null,
           "proof": null,
           "runsToday": 1,
           "group": "macchine",
@@ -1166,6 +1302,14 @@
               "outcome": "ok"
             }
           ],
+          "purpose": {
+            "area": "sviluppo-topics",
+            "areaSource": "gruppo",
+            "cosaFaPerTe": "Esegue ogni giorno il collaudo completo del prodotto.",
+            "seSiRompe": null
+          },
+          "steps": null,
+          "tokensSavedVsClaude": null,
           "proof": null,
           "runsToday": 1,
           "group": "prodotti",
@@ -1232,6 +1376,14 @@
               "outcome": "ok"
             }
           ],
+          "purpose": {
+            "area": "sviluppo-topics",
+            "areaSource": "gruppo",
+            "cosaFaPerTe": "Esegue il collaudo lungo una volta a settimana.",
+            "seSiRompe": null
+          },
+          "steps": null,
+          "tokensSavedVsClaude": null,
           "proof": null,
           "runsToday": 0,
           "group": "prodotti",
@@ -1298,6 +1450,14 @@
               "outcome": "ok"
             }
           ],
+          "purpose": {
+            "area": "sviluppo-topics",
+            "areaSource": "gruppo",
+            "cosaFaPerTe": "Controlla ogni giorno che i prezzi pubblicati siano giusti.",
+            "seSiRompe": null
+          },
+          "steps": null,
+          "tokensSavedVsClaude": null,
           "proof": null,
           "runsToday": 1,
           "group": "prodotti",
@@ -1369,7 +1529,9 @@
                 "failed": 0
               }
             ],
-            "summary": "Tutto in ordine."
+            "summary": "Tutto in ordine.",
+            "steps": [],
+            "tokensSavedVsClaude": null
           },
           {
             "runId": "wf_000002",
@@ -1391,7 +1553,9 @@
                 "failed": 0
               }
             ],
-            "summary": "Tutto in ordine."
+            "summary": "Tutto in ordine.",
+            "steps": [],
+            "tokensSavedVsClaude": null
           },
           {
             "runId": "wf_000003",
@@ -1413,7 +1577,9 @@
                 "failed": 0
               }
             ],
-            "summary": "Tutto in ordine."
+            "summary": "Tutto in ordine.",
+            "steps": [],
+            "tokensSavedVsClaude": null
           }
         ]
       },
@@ -1443,7 +1609,9 @@
                 "failed": 0
               }
             ],
-            "summary": "Scaffale sistemato."
+            "summary": "Scaffale sistemato.",
+            "steps": [],
+            "tokensSavedVsClaude": null
           },
           {
             "runId": "wf_000005",
@@ -1465,7 +1633,9 @@
                 "failed": 0
               }
             ],
-            "summary": "Scaffale sistemato."
+            "summary": "Scaffale sistemato.",
+            "steps": [],
+            "tokensSavedVsClaude": null
           },
           {
             "runId": "wf_000006",
@@ -1487,7 +1657,9 @@
                 "failed": 0
               }
             ],
-            "summary": "Scaffale sistemato."
+            "summary": "Scaffale sistemato.",
+            "steps": [],
+            "tokensSavedVsClaude": null
           }
         ]
       }
@@ -1573,6 +1745,44 @@
       "topics": null
     }
   },
+  "areas": [
+    {
+      "id": "posta-avvisi",
+      "title": "Posta e avvisi",
+      "count": 5
+    },
+    {
+      "id": "clienti",
+      "title": "Clienti",
+      "count": 0
+    },
+    {
+      "id": "sviluppo-topics",
+      "title": "Sviluppo",
+      "count": 3
+    },
+    {
+      "id": "jarvis-agenti",
+      "title": "Jarvis e agenti",
+      "count": 3
+    },
+    {
+      "id": "manutenzione",
+      "title": "Manutenzione",
+      "count": 5
+    },
+    {
+      "id": "backup-sicurezza",
+      "title": "Backup e sicurezza",
+      "count": 4
+    }
+  ],
+  "missing": [
+    "costo per passo: nessuna fonte (i token ci sono solo nei workflow di Claude Code)",
+    "cron di OpenClaw: openclaw.sqlite non registra token né costi per giro (cron_run_receipts non ha usage)",
+    "delega: le decisioni di :3360/api/route non vengono salvate, quindi l’esecutore dei cron non si sa",
+    "Lobster: runs.jsonl registra solo lo stato dei passi, senza modello né token"
+  ],
   "cards": {
     "cron:avvisi-tele": {
       "key": "cron:avvisi-tele",
@@ -1597,6 +1807,14 @@
           "outcome": "ok"
         }
       ],
+      "purpose": {
+        "area": "posta-avvisi",
+        "areaSource": "gruppo",
+        "cosaFaPerTe": "Controlla i canali urgenti e avvisa subito.",
+        "seSiRompe": null
+      },
+      "steps": null,
+      "tokensSavedVsClaude": null,
       "proof": null,
       "runsToday": 1,
       "group": "arriva",
@@ -1665,6 +1883,14 @@
           "outcome": "ok"
         }
       ],
+      "purpose": {
+        "area": "posta-avvisi",
+        "areaSource": "gruppo",
+        "cosaFaPerTe": "Legge la posta ogni minuto e avvisa se c’è qualcosa di urgente.",
+        "seSiRompe": null
+      },
+      "steps": null,
+      "tokensSavedVsClaude": null,
       "proof": null,
       "runsToday": 240,
       "group": "arriva",
@@ -1731,6 +1957,14 @@
           "outcome": "ok"
         }
       ],
+      "purpose": {
+        "area": "posta-avvisi",
+        "areaSource": "gruppo",
+        "cosaFaPerTe": "Ricorda le cose rimaste in sospeso prima di cena.",
+        "seSiRompe": null
+      },
+      "steps": null,
+      "tokensSavedVsClaude": null,
       "proof": null,
       "runsToday": 1,
       "group": "arriva",
@@ -1792,6 +2026,14 @@
         "error": null
       },
       "history": [],
+      "purpose": {
+        "area": "posta-avvisi",
+        "areaSource": "gruppo",
+        "cosaFaPerTe": "Ricorda di preparare la festa di prova di domani.",
+        "seSiRompe": null
+      },
+      "steps": null,
+      "tokensSavedVsClaude": null,
       "proof": null,
       "runsToday": 0,
       "group": "arriva",
@@ -1858,6 +2100,14 @@
           "outcome": "ok"
         }
       ],
+      "purpose": {
+        "area": "posta-avvisi",
+        "areaSource": "gruppo",
+        "cosaFaPerTe": "Raccoglie i messaggi della giornata in un unico riepilogo.",
+        "seSiRompe": null
+      },
+      "steps": null,
+      "tokensSavedVsClaude": null,
       "proof": null,
       "runsToday": 12,
       "group": "arriva",
@@ -1924,6 +2174,14 @@
           "outcome": "ok"
         }
       ],
+      "purpose": {
+        "area": "backup-sicurezza",
+        "areaSource": "gruppo",
+        "cosaFaPerTe": "Controlla ogni giorno che l’archivio foto sia integro.",
+        "seSiRompe": null
+      },
+      "steps": null,
+      "tokensSavedVsClaude": null,
       "proof": null,
       "runsToday": 1,
       "group": "dati",
@@ -1990,6 +2248,14 @@
           "outcome": "ok"
         }
       ],
+      "purpose": {
+        "area": "backup-sicurezza",
+        "areaSource": "gruppo",
+        "cosaFaPerTe": "Copia i dati della giornata nel repo privato di notte.",
+        "seSiRompe": null
+      },
+      "steps": null,
+      "tokensSavedVsClaude": null,
       "proof": null,
       "runsToday": 1,
       "group": "dati",
@@ -2056,6 +2322,14 @@
           "outcome": "ok"
         }
       ],
+      "purpose": {
+        "area": "backup-sicurezza",
+        "areaSource": "gruppo",
+        "cosaFaPerTe": "Fa una copia di sicurezza a intervalli regolari.",
+        "seSiRompe": null
+      },
+      "steps": null,
+      "tokensSavedVsClaude": null,
       "proof": null,
       "runsToday": 3,
       "group": "dati",
@@ -2122,6 +2396,14 @@
           "outcome": "ok"
         }
       ],
+      "purpose": {
+        "area": "backup-sicurezza",
+        "areaSource": "gruppo",
+        "cosaFaPerTe": "Butta i file temporanei vecchi di una settimana.",
+        "seSiRompe": null
+      },
+      "steps": null,
+      "tokensSavedVsClaude": null,
       "proof": null,
       "runsToday": 0,
       "group": "dati",
@@ -2188,6 +2470,14 @@
           "outcome": "ok"
         }
       ],
+      "purpose": {
+        "area": "jarvis-agenti",
+        "areaSource": "gruppo",
+        "cosaFaPerTe": "Verifica i residui di quota dal Mac.",
+        "seSiRompe": null
+      },
+      "steps": null,
+      "tokensSavedVsClaude": null,
       "proof": null,
       "runsToday": 1,
       "group": "quote",
@@ -2254,6 +2544,14 @@
           "outcome": "ok"
         }
       ],
+      "purpose": {
+        "area": "jarvis-agenti",
+        "areaSource": "gruppo",
+        "cosaFaPerTe": "Controlla quanto hai usato del modello principale.",
+        "seSiRompe": null
+      },
+      "steps": null,
+      "tokensSavedVsClaude": null,
       "proof": null,
       "runsToday": 3,
       "group": "quote",
@@ -2320,6 +2618,14 @@
           "outcome": "ok"
         }
       ],
+      "purpose": {
+        "area": "jarvis-agenti",
+        "areaSource": "gruppo",
+        "cosaFaPerTe": "Controlla quanto hai usato del secondo modello.",
+        "seSiRompe": null
+      },
+      "steps": null,
+      "tokensSavedVsClaude": null,
       "proof": null,
       "runsToday": 1,
       "group": "quote",
@@ -2384,6 +2690,14 @@
           "outcome": "ok"
         }
       ],
+      "purpose": {
+        "area": "manutenzione",
+        "areaSource": "gruppo",
+        "cosaFaPerTe": "Verifica ogni cinque minuti che il sistema risponda.",
+        "seSiRompe": null
+      },
+      "steps": null,
+      "tokensSavedVsClaude": null,
       "proof": null,
       "runsToday": 190,
       "group": "macchine",
@@ -2450,6 +2764,14 @@
           "outcome": "ok"
         }
       ],
+      "purpose": {
+        "area": "manutenzione",
+        "areaSource": "gruppo",
+        "cosaFaPerTe": "Esegue il controllo del codice a ogni giro.",
+        "seSiRompe": null
+      },
+      "steps": null,
+      "tokensSavedVsClaude": null,
       "proof": null,
       "runsToday": 1,
       "group": "macchine",
@@ -2516,6 +2838,14 @@
           "outcome": "ok"
         }
       ],
+      "purpose": {
+        "area": "manutenzione",
+        "areaSource": "gruppo",
+        "cosaFaPerTe": "Verifica ogni ora che la rete di casa risponda.",
+        "seSiRompe": null
+      },
+      "steps": null,
+      "tokensSavedVsClaude": null,
       "proof": null,
       "runsToday": 15,
       "group": "macchine",
@@ -2576,6 +2906,14 @@
           "outcome": "ok"
         }
       ],
+      "purpose": {
+        "area": "manutenzione",
+        "areaSource": "gruppo",
+        "cosaFaPerTe": "Ruota i log di sistema una volta a settimana.",
+        "seSiRompe": null
+      },
+      "steps": null,
+      "tokensSavedVsClaude": null,
       "proof": null,
       "runsToday": 0,
       "group": "macchine",
@@ -2636,6 +2974,14 @@
           "outcome": "ok"
         }
       ],
+      "purpose": {
+        "area": "manutenzione",
+        "areaSource": "gruppo",
+        "cosaFaPerTe": "Controlla lo spazio libero sui dischi.",
+        "seSiRompe": null
+      },
+      "steps": null,
+      "tokensSavedVsClaude": null,
       "proof": null,
       "runsToday": 1,
       "group": "macchine",
@@ -2702,6 +3048,14 @@
           "outcome": "ok"
         }
       ],
+      "purpose": {
+        "area": "sviluppo-topics",
+        "areaSource": "gruppo",
+        "cosaFaPerTe": "Esegue ogni giorno il collaudo completo del prodotto.",
+        "seSiRompe": null
+      },
+      "steps": null,
+      "tokensSavedVsClaude": null,
       "proof": null,
       "runsToday": 1,
       "group": "prodotti",
@@ -2768,6 +3122,14 @@
           "outcome": "ok"
         }
       ],
+      "purpose": {
+        "area": "sviluppo-topics",
+        "areaSource": "gruppo",
+        "cosaFaPerTe": "Esegue il collaudo lungo una volta a settimana.",
+        "seSiRompe": null
+      },
+      "steps": null,
+      "tokensSavedVsClaude": null,
       "proof": null,
       "runsToday": 0,
       "group": "prodotti",
@@ -2834,6 +3196,14 @@
           "outcome": "ok"
         }
       ],
+      "purpose": {
+        "area": "sviluppo-topics",
+        "areaSource": "gruppo",
+        "cosaFaPerTe": "Controlla ogni giorno che i prezzi pubblicati siano giusti.",
+        "seSiRompe": null
+      },
+      "steps": null,
+      "tokensSavedVsClaude": null,
       "proof": null,
       "runsToday": 1,
       "group": "prodotti",

@@ -9,6 +9,18 @@ const lobStatus = (s) => (s === 'failed' || s === 'error' ? 'error' : (s === 'ru
 const sameDay = (at, now) => at != null && new Date(at).toDateString() === new Date(now).toDateString();
 const leadingErrors = (rs) => { let n = 0; for (const r of rs) { if (r.outcome === 'error' || r.status === 'error') n++; else break; } return n; };
 
+// Chi ha eseguito un passo, dal modello. Senza modello non si indovina: null.
+export function executorOf(model) {
+  const m = String(model || '').toLowerCase();
+  if (!m) return null;
+  if (m.startsWith('claude')) return 'claude';
+  if (/gpt-oss|nemotron|gemini|llama|qwen|deepseek|mistral|kimi|glm|groq|cerebras|openrouter/.test(m)) return 'free';
+  if (/codex|gpt|o[34]/.test(m)) return 'codex';
+  if (/muse/.test(m)) return 'muse';
+  return null;
+}
+const STEP_OUT = { done: 'ok', failed: 'error', skipped: 'skipped' };
+
 function toRun(j, file) {
   const at = j.startTime || (j.timestamp ? Date.parse(j.timestamp) : null) || null;
   const agents = Array.isArray(j.workflowProgress)
@@ -35,6 +47,16 @@ function toRun(j, file) {
     model: j.defaultModel || null,
     file,
     phases,
+    // Passi dell'ultimo giro: esecutore e token per agente. Il costo in dollari non c'è in nessuna fonte: null.
+    steps: agents.map((a) => ({
+      id: a.agentId || String(a.index ?? ''),
+      label: a.label || null,
+      executor: executorOf(a.model),
+      model: a.model || null,
+      tokens: Number.isFinite(a.tokens) ? a.tokens : null,
+      costUsd: null,
+      outcome: STEP_OUT[a.state] || null,
+    })),
   };
 }
 
@@ -74,6 +96,8 @@ function readLobsterRuns(file) {
     by.get(e.workflow).push({
       at: e.ts ? Date.parse(e.ts) || null : null,
       outcome: lobStatus(e.status),
+      run: e.run ?? null,
+      step: e.step ?? null,
     });
   }
   return by;
@@ -99,6 +123,12 @@ function lobItem(name, rows, now) {
     who: 'Lobster',
     reportsTo: 'nessun messaggio',
     tech: { schedule: null, exit: null, command: null, prompt: null, label: name, url: null },
+    // Passi dell'ultimo giro, in ordine: Lobster registra solo lo stato, quindi esecutore, modello e token sono null.
+    steps: latest.run == null ? [] : ordered
+      .filter((r) => r.run === latest.run)
+      .reverse()
+      .map((r) => ({ id: r.step, label: r.step, executor: null, model: null, tokens: null, costUsd: null, outcome: r.outcome === 'running' ? null : r.outcome })),
+    tokensSavedVsClaude: null,
   };
 }
 

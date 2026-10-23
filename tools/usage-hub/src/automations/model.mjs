@@ -2,6 +2,7 @@
 import { fp } from './describe.mjs';
 import { levelOf, fromFindings } from './levels.mjs';
 import { stateFor } from './feedback.mjs';
+import { AREAS, purposeOf } from './purpose.mjs';
 
 const H = 3600000;
 
@@ -51,6 +52,22 @@ export function historyOf(item) {
   return newestFirst(out);
 }
 
+// Token risparmiati rispetto a Claude: i token dei passi eseguiti da altri esecutori (free, muse, codex).
+// È una stima: quei modelli consumano token propri, non gli stessi di Claude. Senza token noti, null.
+export function savedTokens(steps) {
+  const known = (steps || []).filter((s) => s.tokens != null);
+  if (!known.length) return null;
+  return known.filter((s) => s.executor && s.executor !== 'claude').reduce((n, s) => n + s.tokens, 0);
+}
+
+// Le fonti che non registrano un dato: così chi legge sa che il null è una mancanza, non un errore.
+const MISSING = [
+  'costo per passo: nessuna fonte (i token ci sono solo nei workflow di Claude Code)',
+  'cron di OpenClaw: openclaw.sqlite non registra token né costi per giro (cron_run_receipts non ha usage)',
+  'delega: le decisioni di :3360/api/route non vengono salvate, quindi l’esecutore dei cron non si sa',
+  'Lobster: runs.jsonl registra solo lo stato dei passi, senza modello né token',
+];
+
 // Una card per un item solo.
 function singleCard(ev) {
   const { item, desc, fpv, fb, proof, level, reason, since } = ev;
@@ -67,6 +84,9 @@ function singleCard(ev) {
     nextApprox: !!item.nextApprox,
     last: item.last,
     history: historyOf(item),
+    purpose: purposeOf(item.key, desc, desc?.group),
+    steps: item.steps ?? null,
+    tokensSavedVsClaude: item.tokensSavedVsClaude ?? null,
     proof: proof || null,
     runsToday: item.runsToday ?? 0,
     group: desc?.group || null,
@@ -103,6 +123,9 @@ function fusedCard(name, members, descriptions) {
     nextApprox: !!primary.item.nextApprox,
     last: primary.item.last,
     history: newestFirst(members.flatMap((m) => historyOf(m.item))),
+    purpose: purposeOf(`object:${name}`, odesc, odesc?.group),
+    steps: null,
+    tokensSavedVsClaude: null,
     proof: members.find((m) => m.proof && m.proof.ok === false)?.proof || members.find((m) => m.proof)?.proof || null,
     runsToday: members.reduce((s, m) => s + (m.item.runsToday || 0), 0),
     group: odesc?.group || null,
@@ -251,6 +274,7 @@ export function buildModel({ now, sources = {}, descriptions = {}, feedback = ne
         runId: r.runId, at: r.at, outcome: r.status,
         durationMs: r.durationMs ?? null, agents: r.agents ?? null,
         phases: r.phases ?? [], summary: r.summary ?? null,
+        steps: r.steps ?? [], tokensSavedVsClaude: savedTokens(r.steps),
       })),
     }))
     .sort((a, b) => a.name.localeCompare(b.name, 'it'));
@@ -288,5 +312,6 @@ export function buildModel({ now, sources = {}, descriptions = {}, feedback = ne
   };
   const byKey = {};
   for (const c of ordered) byKey[c.key] = c;
-  return { checkedAt: now, verdict, needsYou, broken, groups, workflows, review, footer, cards: byKey };
+  const areas = AREAS.map((a) => ({ ...a, count: ordered.filter((c) => c.purpose?.area === a.id).length }));
+  return { checkedAt: now, verdict, needsYou, broken, groups, workflows, review, footer, areas, missing: MISSING, cards: byKey };
 }

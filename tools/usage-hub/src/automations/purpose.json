@@ -1,0 +1,226 @@
+{
+ "cron:08e84d13-a747-477f-b6a7-d01d7b5f1f19": {
+  "area": "posta-avvisi",
+  "seSiRompe": "Attilio potrebbe non vedere in Promemoria le scadenze delle attività con data fissa."
+ },
+ "cron:18c4916b-d961-47ac-b38c-a22098bb461e": {
+  "area": "posta-avvisi",
+  "seSiRompe": "Attilio potrebbe non trovare le bozze di follow-up per le risposte alle candidature."
+ },
+ "cron:18d23379-e6ec-43cf-8706-3fc30bf670b4": {
+  "area": "jarvis-agenti",
+  "seSiRompe": "Attilio potrebbe perdere le novità settimanali su inferenza rapida e modelli vocali."
+ },
+ "cron:20fb44a9-c7a9-4629-b814-e529f0525284": {
+  "area": "manutenzione",
+  "seSiRompe": "Attilio potrebbe non ricevere il controllo settimanale su avvio, sicurezza, backup e spazio libero del Mac."
+ },
+ "cron:346f57dc-f680-4456-9b07-12603c2367cb": {
+  "area": "clienti",
+  "seSiRompe": "Attilio potrebbe non far arrivare ad Armonia le fatture dei servizi ricorrenti del mese precedente."
+ },
+ "cron:3ca8e3df-9128-481b-877b-8217647f4504": {
+  "area": "jarvis-agenti",
+  "seSiRompe": "Attilio potrebbe non ricevere aggiornamenti verificati o solleciti autorizzati sui compiti in corso."
+ },
+ "cron:3d0d7f15-cfaa-4909-b004-3aac6f72e1e6": {
+  "area": "jarvis-agenti",
+  "seSiRompe": "Attilio potrebbe non trovare in Jarvis i messaggi di testo scritti sul PC."
+ },
+ "cron:4009e959-08c2-49fd-8d0e-faa4afd6ea4a": {
+  "area": "jarvis-agenti",
+  "seSiRompe": "Attilio potrebbe non sapere se è cambiato il miglior decisore o se il banco ha problemi."
+ },
+ "cron:4c998ff1-a9aa-4809-9e02-e737d182000b": {
+  "area": "posta-avvisi",
+  "seSiRompe": "Attilio potrebbe non sapere se i report del collega rispettano quanto atteso."
+ },
+ "cron:7118a1a3-4337-4604-bb60-bafbbd23cc89": {
+  "area": "manutenzione",
+  "seSiRompe": "Attilio potrebbe non sapere se processi, disco, sicurezza e backup del Mac richiedono attenzione."
+ },
+ "cron:7f9b52dc-7cc7-41cc-b0e2-cf9ec6a7381e": {
+  "area": "jarvis-agenti",
+  "seSiRompe": "Attilio potrebbe non scoprire modelli AI gratuiti abbastanza veloci e con buoni risultati."
+ },
+ "cron:a468eb5b-a58c-4c80-963c-cfb3c3d7c578": {
+  "area": "jarvis-agenti",
+  "seSiRompe": "Attilio potrebbe perdere una scoperta utile alla settimana su funzioni, novità o metodi di lavoro."
+ },
+ "cron:b1f863f0-b7e2-4e90-9b97-dd116aca86c5": {
+  "area": "jarvis-agenti",
+  "seSiRompe": "Attilio potrebbe superare il tetto settimanale di consumo previsto per Prince of Persia."
+ },
+ "cron:c34dcc15-c2c1-4c5c-8ffa-51b9054827f1": {
+  "area": "posta-avvisi",
+  "seSiRompe": "Attilio potrebbe non ricevere il riepilogo mattutino con le informazioni e i compiti del giorno."
+ },
+ "cron:cb0dd570-ec07-4a29-b55f-6442ea766bd2": {
+  "area": "jarvis-agenti",
+  "seSiRompe": "Attilio potrebbe non ricevere bozze di strumenti per procedure ripetute e scriptabili."
+ },
+ "cron:cec97dea-88b9-485d-afee-e7c784cbbe18": {
+  "area": "jarvis-agenti",
+  "seSiRompe": "Attilio potrebbe dover riprendere a mano le sessioni ferme quando torna disponibile la quota."
+ },
+ "cron:db560202-495b-40dc-9213-0beb9d235c28": {
+  "area": "jarvis-agenti",
+  "seSiRompe": "Attilio potrebbe trovare le automazioni senza un modello utilizzabile o senza un ripiego."
+ },
+ "cron:ec409111-98e9-46f6-a535-93094123b15f": {
+  "area": "posta-avvisi",
+  "seSiRompe": "Attilio potrebbe perdere gli avvisi sulle mail importanti e le relative bozze di risposta."
+ },
+ "cron:edf05df9-5e3d-4d1b-bb6c-3cc3b65821d0": {
+  "area": "jarvis-agenti",
+  "seSiRompe": "Attilio potrebbe non ricevere proposte di regole basate sulle sue correzioni e sugli errori recenti."
+ },
+ "cron:f6c9bd82-674f-49af-9710-e95e4505f5c7": {
+  "area": "jarvis-agenti",
+  "seSiRompe": "Attilio potrebbe non ricevere avvisi quando un progetto supera le soglie di consumo."
+ },
+ "cron:fd4c35a4-45a4-483b-b463-4491567be56c": {
+  "area": "manutenzione",
+  "seSiRompe": "Attilio potrebbe non conoscere i problemi ancora aperti delle altre automazioni."
+ },
+ "gh:armonia/quadra/payroll-params-check.yml": {
+  "area": "clienti",
+  "seSiRompe": "Attilio potrebbe non accorgersi se i parametri paghe usati da Quadra non sono più aggiornati."
+ },
+ "gh:armonia/quadra/uat-full.yml": {
+  "area": "clienti",
+  "seSiRompe": "Attilio potrebbe non sapere se Quadra funziona da capo a fondo negli scenari utente."
+ },
+ "gh:armonia/tdh/security.yml": {
+  "area": "backup-sicurezza",
+  "seSiRompe": "Attilio potrebbe non sapere se le dipendenze di tdh hanno vulnerabilità note."
+ },
+ "gh:armonia/topics-app/artifact-purge.yml": {
+  "area": "sviluppo-topics",
+  "seSiRompe": "Attilio potrebbe ritrovarsi con lo spazio occupato dagli artefatti vecchi delle build di Topics."
+ },
+ "gh:armonia/topics-app/e2e-nightly.yml": {
+  "area": "sviluppo-topics",
+  "seSiRompe": "Attilio potrebbe non sapere se Topics funziona da capo a fondo come lo usa una persona."
+ },
+ "launchd:com.armonia.topics-db-snapshot": {
+  "area": "backup-sicurezza",
+  "seSiRompe": "Attilio potrebbe non avere una copia recuperabile del database di Topics."
+ },
+ "launchd:com.jarvis.agent-browser-update": {
+  "area": "manutenzione",
+  "seSiRompe": "Attilio potrebbe usare una versione non aggiornata del browser degli agenti."
+ },
+ "launchd:com.jarvis.agent-reliability": {
+  "area": "jarvis-agenti",
+  "seSiRompe": "Attilio potrebbe non avere un registro utile a misurare turni interrotti e risposte mancanti."
+ },
+ "launchd:com.jarvis.agents-build": {
+  "area": "jarvis-agenti",
+  "seSiRompe": "Attilio potrebbe ritrovarsi gli agenti con istruzioni non aggiornate dopo una modifica."
+ },
+ "launchd:com.jarvis.armonia-digest": {
+  "area": "clienti",
+  "seSiRompe": "Attilio potrebbe non ricevere il riepilogo serale delle attività di Armonia."
+ },
+ "launchd:com.jarvis.browser-reaper": {
+  "area": "manutenzione",
+  "seSiRompe": "Attilio potrebbe lasciare acceso a lungo il browser nascosto degli agenti, appesantendo il Mac."
+ },
+ "launchd:com.jarvis.callsync": {
+  "area": "backup-sicurezza",
+  "seSiRompe": "Attilio potrebbe non avere il registro delle chiamate aggiornato per il tracciamento delle ore."
+ },
+ "launchd:com.jarvis.desk-repos": {
+  "area": "sviluppo-topics",
+  "seSiRompe": "Attilio potrebbe non sapere quali progetti hanno lavoro non salvato o commit non pubblicati."
+ },
+ "launchd:com.jarvis.devreap": {
+  "area": "manutenzione",
+  "seSiRompe": "Attilio potrebbe ritrovarsi con server di sviluppo che rallentano il Mac e consumano memoria."
+ },
+ "launchd:com.jarvis.disk-hygiene": {
+  "area": "manutenzione",
+  "seSiRompe": "Attilio potrebbe perdere spazio sul disco per cache, temporanei e build abbandonate accumulati."
+ },
+ "launchd:com.jarvis.jcode-auth-sync": {
+  "area": "jarvis-agenti",
+  "seSiRompe": "Attilio potrebbe avere sessioni di jcode non operative dopo il cambio delle credenziali."
+ },
+ "launchd:com.jarvis.jcode-snapshot": {
+  "area": "jarvis-agenti",
+  "seSiRompe": "Attilio potrebbe perdere l’elenco delle finestre jcode da recuperare se si chiudono per sbaglio."
+ },
+ "launchd:com.jarvis.jcode-tcc-pin": {
+  "area": "jarvis-agenti",
+  "seSiRompe": "Attilio potrebbe dover concedere di nuovo a jcode i permessi di macOS dopo un aggiornamento."
+ },
+ "launchd:com.jarvis.jcode-vdm-watch": {
+  "area": "jarvis-agenti",
+  "seSiRompe": "Attilio potrebbe non accorgersi se jcode salta il proxy."
+ },
+ "launchd:com.jarvis.log-rotate": {
+  "area": "manutenzione",
+  "seSiRompe": "Attilio potrebbe ritrovarsi con log oltre 50 MB e vecchi eventi del monitor ancora presenti."
+ },
+ "launchd:com.jarvis.master-night-stop": {
+  "area": "jarvis-agenti",
+  "seSiRompe": "Attilio potrebbe trovare ancora attivo il turno notturno di Master dopo le 10."
+ },
+ "launchd:com.jarvis.memgit-snap": {
+  "area": "backup-sicurezza",
+  "seSiRompe": "Attilio potrebbe perdere le copie notturne delle modifiche alla memoria di OpenClaw."
+ },
+ "launchd:com.jarvis.oc-whatsapp-heal": {
+  "area": "jarvis-agenti",
+  "seSiRompe": "Attilio potrebbe restare senza messaggi WhatsApp se il collegamento si blocca."
+ },
+ "launchd:com.jarvis.openclaw-heartbeat-watch": {
+  "area": "manutenzione",
+  "seSiRompe": "Attilio potrebbe lasciare bloccato il battito di OpenClaw, fermando gli altri agenti."
+ },
+ "launchd:com.jarvis.openclaw-safe-update": {
+  "area": "manutenzione",
+  "seSiRompe": "Attilio potrebbe restare su una versione vecchia di OpenClaw o senza ripristino se un aggiornamento fallisce."
+ },
+ "launchd:com.jarvis.pop-keeper": {
+  "area": "sviluppo-topics",
+  "seSiRompe": "Attilio potrebbe non avere il rilancio automatico delle corsie attive di pop-demo."
+ },
+ "launchd:com.jarvis.private-backup": {
+  "area": "backup-sicurezza",
+  "seSiRompe": "Attilio potrebbe non avere una copia fuori dal Mac dei file e delle impostazioni di lavoro."
+ },
+ "launchd:com.jarvis.quadra-verify": {
+  "area": "backup-sicurezza",
+  "seSiRompe": "Attilio potrebbe non accorgersi che un backup di Quadra non si può ripristinare."
+ },
+ "launchd:com.jarvis.reminders-agenda": {
+  "area": "posta-avvisi",
+  "seSiRompe": "Attilio potrebbe non avere l’agenda aggiornata di oggi e domani."
+ },
+ "launchd:com.jarvis.reminders-desk": {
+  "area": "posta-avvisi",
+  "seSiRompe": "Attilio potrebbe vedere nel widget dati dei promemoria non aggiornati."
+ },
+ "launchd:com.jarvis.repo-ff": {
+  "area": "clienti",
+  "seSiRompe": "Attilio potrebbe trovare il repo principale di Quadra non aggiornato con GitHub."
+ },
+ "launchd:com.jarvis.subagent-watchdog": {
+  "area": "jarvis-agenti",
+  "seSiRompe": "Attilio potrebbe non sapere che un sottoagente è finito in errore o non ha consegnato il risultato."
+ },
+ "launchd:com.winfleet.ready": {
+  "area": "manutenzione",
+  "seSiRompe": "Attilio potrebbe non sapere quando il PC di casa è pronto a ricevere lavoro."
+ },
+ "lobster:smoke": {
+  "area": "jarvis-agenti",
+  "seSiRompe": "Attilio potrebbe non sapere se i workflow di prova girano correttamente."
+ },
+ "object:backup-quadra": {
+  "area": "backup-sicurezza",
+  "seSiRompe": "Attilio potrebbe non avere un backup affidabile del database di Quadra."
+ }
+}
