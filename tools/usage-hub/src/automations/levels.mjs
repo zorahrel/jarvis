@@ -188,7 +188,8 @@ export function fromFindings(findings, items) {
   const loose = [];
   for (const f of findings || []) {
     const line = f.line || '';
-    const level = FIND_ROTTO.has(f.kind) ? 'rotto' : 'te';
+    // un avviso del doctor non è un guasto: va a te; rotto resta il doctor in errore (24/10: 4 avvisi di config finivano tra i rotti)
+    const level = FIND_ROTTO.has(f.kind) && !(f.kind === 'doctor' && /^doctor warning\b/.test(line)) ? 'rotto' : 'te';
     const reason = line.replace(/\s*\([0-9a-fA-F]{8}\)/, '').replace(/\s{2,}/g, ' ').trim();
     const m = ID_RE.exec(line);
     const hit = m ? (items || []).find((it) => String(it.key || '').startsWith('cron:') && String(it.key).slice(5).startsWith(m[1])) : null;

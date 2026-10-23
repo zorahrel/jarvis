@@ -81,8 +81,13 @@ export function readFacts({ accepted = [], fixes = [] } = {}) {
   // --allow-exec: con il token del gateway nel Keychain (SecretRef exec, 22/10) senza questo flag il doctor
   // salta il controllo di salute del gateway e lo segnala come avviso nuovo.
   let doctor = [];
-  try { execFileSync('openclaw', ['doctor', '--lint', '--json', '--allow-exec'], { encoding: 'utf8', timeout: 180e3, stdio: ['ignore', 'pipe', 'ignore'] }); }
-  catch (e) { try { doctor = JSON.parse(String(e.stdout).slice(String(e.stdout).indexOf('{'))).findings || []; } catch { doctor = [{ severity: 'error', checkId: 'doctor', message: 'non leggibile' }]; } }
+  // Tetto 7 minuti: col Mac carico il doctor ne prende più di 4 (261 s il 24/10) e a 180 s l'output tagliato a metà
+  // diventava «doctor non leggibile», un rosso falso. Il cron ha 10 minuti in tutto. Lento non è rotto: avviso, non errore.
+  try { execFileSync('openclaw', ['doctor', '--lint', '--json', '--allow-exec'], { encoding: 'utf8', timeout: 420e3, stdio: ['ignore', 'pipe', 'ignore'] }); }
+  catch (e) {
+    try { doctor = JSON.parse(String(e.stdout).slice(String(e.stdout).indexOf('{'))).findings || []; }
+    catch { doctor = [e.signal || e.code === 'ETIMEDOUT' ? { severity: 'warning', checkId: 'doctor', message: 'non ha finito in 7 minuti (Mac carico): esito del doctor non disponibile' } : { severity: 'error', checkId: 'doctor', message: 'non leggibile' }]; }
+  }
   const hb = jobs.find((j) => /^heartbeat:/.test(j.declaration || j.declarationKey || '') || /^Heartbeat/.test(j.name));
   let scratchLen = 0;
   if (hb) { try { scratchLen = execFileSync('openclaw', ['cron', 'scratch', hb.id], { encoding: 'utf8' }).length; } catch { /* senza scratch l'heartbeat decide da solo */ } }

@@ -203,6 +203,13 @@ test('findings: errori al job, rumore a te, battito libero', () => {
   assert.equal(loose.length, 1);
   assert.equal(loose[0].title, 'Il battito di Jarvis gira sempre');
 });
+test('findings del doctor: un avviso va a te, un errore è rotto', () => {
+  const { loose } = fromFindings([
+    { kind: 'doctor', line: 'doctor warning: core/doctor/browser — cookie import is enabled' },
+    { kind: 'doctor', line: 'doctor error: doctor — non leggibile' },
+  ], []);
+  assert.deepEqual(loose.map((l) => l.level), ['te', 'rotto']);
+});
 
 const srcOk = (items) => ({ ok: true, at: T - 60000, items });
 const emptySources = () => ({
