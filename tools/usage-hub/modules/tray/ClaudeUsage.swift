@@ -230,8 +230,7 @@ func paceText(_ ratio: Double) -> String { String(format: "%.2f×", ratio).repla
 
 func statusColor(_ s: String) -> NSColor {
     switch s {
-    // «va bene» è neutro: il colore si guadagna solo con un problema (un accento, arancio; rosso per il critico)
-    case "ok": return .secondaryLabelColor
+    case "ok": return NSColor(red: 0x30 / 255, green: 0xD1 / 255, blue: 0x58 / 255, alpha: 1)
     case "warning": return .systemOrange
     case "critical", "depleted": return .systemRed
     default: return .secondaryLabelColor
@@ -257,18 +256,14 @@ func drawBaseline(_ s: String, x: CGFloat, baseline y: CGFloat,
     ctx.restoreGState()
 }
 
-// MARK: - Menubar view: celle uguali, etichetta sopra e un numero sotto
+// MARK: - Menubar view: una colonna per account, quote impilate
 //
-// Ritmo · un account per cella · Mac. Ogni cella dice una cosa sola:
-// per l'account la quota che finisce prima (5h o 7d), l'orario solo
-// quando conta (da 80% in su). Il colore compare solo se c'è un problema:
-// bianco = va bene, arancio = attenzione, rosso = critico o esaurito.
-// Tutti i testi bianchi: i grigi su questa barra non si leggono.
+// Header con mini-logo del provider + email, sotto le quote in colonna
+// (5h sopra, 7d sotto): tag finestra, barra (= quota usata), %, reset.
+// Tutti i testi bianchi, sempre: i grigi su questa barra non si leggono.
 
-// Nella barra lo spazio accanto al notch è poco: un dato vecchio dice solo l'età («1h fa»), la frase intera sta nel menu.
+// Nella barra lo spazio accanto al notch è poco: un dato vecchio dice solo l'età («1h fa», in grigio), la frase intera sta nel menu.
 func barTime(_ q: Quota) -> String { q.status == "stale" ? q.resetText.replacingOccurrences(of: "dato di ", with: "") : q.resetText }
-// La quota che blocca per prima: la più piena. Un 7d al 99% conta più di un 5h al 40%, e viceversa.
-func bindingQuota(_ a: Account) -> Quota? { a.quotas.prefix(2).max { $0.usedPct < $1.usedPct } }
 class UsageBarView: NSView {
     // La barra dei menu di macOS è vetro: una vista dentro il pulsante viene fusa con lo sfondo e i colori escono
     // grigi (verde, arancio e bianco spenti, 22/10). Fuori dalla vibrancy i colori sono quelli disegnati.
@@ -276,28 +271,36 @@ class UsageBarView: NSView {
     var isOffline = false { didSet { cachedLayout = nil } }
     // Misure del testo calcolate una volta per dato nuovo: la barra si ridisegna anche quando i dati non cambiano
     // (altre icone, tema, spazi) e rimisurare ogni stringa a ogni disegno era il resto della CPU della tray.
-    private var cachedLayout: (cells: [Cell], width: CGFloat)?
+    private var cachedLayout: (groups: [GroupFrame], width: CGFloat, macW: CGFloat)?
     func invalidate() { cachedLayout = nil; needsDisplay = true }
 
-    // Due righe: etichetta (8.5pt) sopra, valore (10pt, cifre tabellari) sotto.
-    private let labelFont = NSFont.systemFont(ofSize: 8.5, weight: .medium)
-    private let tagFont = NSFont.monospacedSystemFont(ofSize: 7.5, weight: .semibold)
-    private let valueFont = NSFont.monospacedDigitSystemFont(ofSize: 10, weight: .semibold)
-    private let timeFont = NSFont.monospacedDigitSystemFont(ofSize: 9, weight: .regular)
-    private let topBaseline: CGFloat = 13
-    private let botBaseline: CGFloat = 2
+    // Tre righe intere: mail 7pt + 5H + 7D. Icona 8px a x0 come le righe
+    // (15..23, cima flush col top caps), mail rientrata dopo l'icona.
+    // Tag maiuscoli 7pt (top 13.5): i gambetti di h/d toccherebbero l'icona.
+    private let headerFont = NSFont.systemFont(ofSize: 7, weight: .semibold)
+    private let headerBaseline: CGFloat = 17
     private let iconSize: CGFloat = 8
-    private let iconGap: CGFloat = 3
-    private let cellGap: CGFloat = 10   // uguale ovunque: niente separatori
+    private let iconY: CGFloat = 15
+    private let iconIndent: CGFloat = 11
+    private let tagFont = NSFont.monospacedSystemFont(ofSize: 7, weight: .semibold)
+    private let tagBaselineShift: CGFloat = -0.5   // top 13.5, aria dall'icona
+    private let pctFont = NSFont.monospacedSystemFont(ofSize: 9, weight: .bold)
+    private let timeFont = NSFont.monospacedSystemFont(ofSize: 9, weight: .regular)
+    private let rowTopBaseline: CGFloat = 9    // prima quota (5h)
+    private let rowBotBaseline: CGFloat = 1    // seconda quota (7d)
+    private let barW: CGFloat = 20      // minimo utile: il numero dà la precisione
+    private let barH: CGFloat = 6
+    private let pctW: CGFloat = 22      // "100%" fissa: al cambio cifra niente salta
+    private let gap: CGFloat = 2
+    private let timeGap: CGFloat = 3
+    private let acctGap: CGFloat = 6    // uguale ovunque: niente separatori
     private let padX: CGFloat = 4
     // Tetto della barra: oltre, con troppi account, macOS la mette fuori schermo (23/10: 8 account = 970 pt, x -4411, invisibile).
     // Entrano gli account che stanno nel tetto (prima quelli attivi e quelli più carichi), il resto è «+N» e sta nel menu.
     // Il tetto è il 30% dello schermo principale (max 520 pt): la barra deve restare accanto alle altre icone e al notch.
     private var barMaxW: CGFloat { min(520, (NSScreen.main?.frame.width ?? 1440) * 0.3) }
-
-    // Una cella: etichetta (con icona del provider se è un account) e una riga di pezzi colorati.
-    private struct Piece { let s: String; let font: NSFont; let color: NSColor; let gap: CGFloat }
-    private struct Cell { var x: CGFloat = 0; let w: CGFloat; let icon: String?; let label: String; let pieces: [Piece]; let dim: Bool; let rank: Int }
+    private var hiddenAccts = 0
+    private var plusX: CGFloat = 0
 
     private func flat() -> [(Provider, Account)] {
         var out: [(Provider, Account)] = []
@@ -308,80 +311,172 @@ class UsageBarView: NSView {
         return out
     }
 
-    private func w(_ s: String, _ f: NSFont) -> CGFloat { (s as NSString).size(withAttributes: [.font: f]).width }
-    private func tone(_ s: String) -> NSColor { s == "ok" || s == "stale" ? .white : statusColor(s) }
-
-    private func makeCell(icon: String?, label: String, pieces: [Piece], dim: Bool, rank: Int) -> Cell {
-        let lw = (icon != nil ? iconSize + iconGap : 0) + w(label, labelFont)
-        let vw = pieces.reduce(0) { $0 + $1.gap + w($1.s, $1.font) }
-        return Cell(w: ceil(max(lw, vw)), icon: icon, label: label, pieces: pieces, dim: dim, rank: rank)
+    private func quotaWidth(_ q: Quota) -> CGFloat {
+        let tagW = (q.key.uppercased() as NSString).size(withAttributes: [.font: tagFont]).width
+        let timeW = (barTime(q) as NSString).size(withAttributes: [.font: timeFont]).width
+        return tagW + gap + barW + gap + pctW + timeGap + timeW
     }
 
-    // Account: «hi» sopra; sotto «7D 99% 1d10h» (tag, %, orario solo da 80% in su o se il dato è vecchio).
-    private func accountCell(_ p: Provider, _ a: Account) -> Cell? {
-        guard let q = bindingQuota(a) else { return nil }
-        let n = a.resetCredits?.available ?? 0
-        // un solo account: il nome del provider dice di più («Muse», non un terzo «zorahrel»); con più account, il nome dell'account
-        let one = (p.accounts ?? []).count == 1
-        let label = (one ? p.name : shortLabel(a.label)) + (n > 0 ? " ↻\(n)" : "")
-        let st = q.usedPct >= 100 ? "depleted" : q.status
-        var pcs = [Piece(s: q.key.uppercased(), font: tagFont, color: .white, gap: 0),
-                   Piece(s: "\(q.usedPct)%", font: valueFont, color: tone(st), gap: 2)]
-        if q.usedPct >= 80 || q.status == "stale" { pcs.append(Piece(s: barTime(q), font: timeFont, color: .white, gap: 3)) }
-        return makeCell(icon: p.id, label: label, pieces: pcs, dim: !a.active, rank: q.usedPct)
-    }
-
-    // Ritmo: quanto in fretta si consuma la settimana rispetto al tempo passato (1× = in linea). Il dettaglio sta nel menu.
-    private func paceCell() -> Cell? {
-        guard let ps = paceSummary(snapshot) else { return nil }
-        return makeCell(icon: nil, label: "ritmo", pieces: [Piece(s: paceText(ps.ratio), font: valueFont, color: tone(paceStatus(ps.ratio)), gap: 0)], dim: false, rank: 0)
-    }
-
-    // Mac: la parte che pesa di più (quella che ha deciso il livello), stesse soglie del menu. I numeri di tutte e quattro stanno nel menu.
-    private func macCell() -> Cell? {
-        guard let e = liveMac?.effort else { return nil }
-        let names = ["cpu": "CPU", "mem": "RAM", "gpu": "GPU", "disk": "Disco"]
-        let worst = e.parts.filter { $0.pct != nil }.max { ($0.level, $0.pct ?? 0) < ($1.level, $1.pct ?? 0) }
-        guard let pp = worst, let v = pp.pct else { return nil }
-        let col: NSColor = pp.level == 0 ? .white : statusColor(pp.level == 1 ? "warning" : "critical")
-        return makeCell(icon: nil, label: "Mac", pieces: [Piece(s: names[pp.key] ?? pp.name, font: tagFont, color: .white, gap: 0),
-                                                         Piece(s: "\(v)%", font: valueFont, color: col, gap: 2)], dim: false, rank: 0)
-    }
-
-    private var hiddenAccts = 0
-    private func layout() -> (cells: [Cell], width: CGFloat) {
-        if let c = cachedLayout { return c }
-        let lead = [paceCell()].compactMap { $0 }
-        let tail = [macCell()].compactMap { $0 }
-        let accts = flat().compactMap { pa in accountCell(pa.0, pa.1).map { ($0, pa.1.active) } }
-        // Quanti account entrano nel tetto: prima gli attivi, poi i più carichi. Si rimettono in ordine dopo.
-        let fixed = (lead + tail).reduce(0) { $0 + $1.w + cellGap }
-        let plusW = w("+9", labelFont) + cellGap
-        let room = barMaxW - 2 * padX - fixed - plusW
-        let ranked = accts.indices.sorted { i, j in
-            accts[i].1 != accts[j].1 ? accts[i].1 : accts[i].0.rank > accts[j].0.rank
+    // Email maiuscola, croppata con … oltre cap. Stessa stringa in
+    // layout e disegno: si calcola qui una volta sola per cella.
+    private func cropEmail(_ s: String, cap: CGFloat) -> String {
+        let up = s.uppercased()
+        let attrs: [NSAttributedString.Key: Any] = [.font: headerFont]
+        if (up as NSString).size(withAttributes: attrs).width <= cap { return up }
+        var t = up
+        while t.count > 6,
+              (t + "…" as NSString).size(withAttributes: attrs).width > cap {
+            t.removeLast()
         }
-        var keep = Set<Int>(), used: CGFloat = 0
-        for i in ranked where used + accts[i].0.w + cellGap <= room || keep.isEmpty { keep.insert(i); used += accts[i].0.w + cellGap }
-        hiddenAccts = accts.count - keep.count
-        var cells = lead + accts.indices.filter { keep.contains($0) }.map { accts[$0].0 }
-        if hiddenAccts > 0 { cells.append(makeCell(icon: nil, label: "", pieces: [Piece(s: "+\(hiddenAccts)", font: valueFont, color: .white, gap: 0)], dim: false, rank: 0)) }
-        cells += tail
-        var x = padX
-        for i in cells.indices { cells[i].x = x; x += cells[i].w + cellGap }
-        let out = (cells, x - cellGap + padX)
-        cachedLayout = out
-        return out
+        return t + "…"
     }
 
-    // Senza dati la barra dice perché, a parole: «···» non si distingueva da una barra rotta.
-    private let emptyFont = NSFont.systemFont(ofSize: 11, weight: .medium)
-    private func emptyText() -> String {
-        guard let lag = hubLag else { return "Consumi…" }   // primo giro: l'hub a freddo può metterci un minuto
-        return lag.refused ? "Hub spento" : "Hub lento"
+    // Badge testata: " ↻N" solo con reset manuali disponibili. Zero o
+    // ignoti (Claude) = niente: la barra resta pulita, il menu dice tutto.
+    private func resetBadge(_ a: Account) -> String {
+        let n = a.resetCredits?.available ?? 0
+        return n > 0 ? " ↻\(n)" : ""
     }
+
+    // Un solo passaggio di layout per misura e disegno: niente derive tra i due.
+    private struct AcctFrame {
+        let acct: Account
+        let header: String
+        let badge: String
+        let x: CGFloat
+        let w: CGFloat
+    }
+    private struct GroupFrame {
+        let prov: Provider
+        let x: CGFloat
+        let w: CGFloat
+        let accts: [AcctFrame]
+    }
+
+    // Cella del ritmo: un cruscotto da 0× a 2× (verde fino a 1×, arancio fino a 1,3×, rosso oltre) con l'ago, e il valore sotto.
+    // Il «69/69» (usato/atteso) sta nel menu: nella barra si legge l'ago, non due numeri.
+    private let gaugeR: CGFloat = 10
+    private let gaugeCY: CGFloat = 10.5
+    private func paceCellWidth() -> CGFloat {
+        guard let ps = paceSummary(snapshot) else { return 0 }
+        return max(gaugeR * 2 + 3, (paceText(ps.ratio) as NSString).size(withAttributes: [.font: pctFont]).width)
+    }
+    private func drawGauge(ratio: Double, x: CGFloat, w: CGFloat) {
+        let c = NSPoint(x: x + w / 2, y: gaugeCY)
+        // 0× a sinistra (180°), 2× a destra (0°): l'angolo scende con il valore
+        let ang = { (v: Double) -> CGFloat in CGFloat(180 - min(max(v, 0), 2) / 2 * 180) }
+        for (from, to, st) in [(0.0, 1.0, "ok"), (1.0, 1.3, "warning"), (1.3, 2.0, "critical")] {
+            let arc = NSBezierPath()
+            arc.appendArc(withCenter: c, radius: gaugeR, startAngle: ang(from), endAngle: ang(to), clockwise: true)
+            arc.lineWidth = 2.5
+            let on = from == 0 || ratio > from
+            statusColor(st).withAlphaComponent(on ? 0.95 : 0.35).setStroke()
+            arc.stroke()
+        }
+        let a = ang(ratio) * .pi / 180
+        let needle = NSBezierPath()
+        needle.move(to: c)
+        needle.line(to: NSPoint(x: c.x + cos(a) * (gaugeR - 1), y: c.y + sin(a) * (gaugeR - 1)))
+        needle.lineWidth = 1.5; needle.lineCapStyle = .round
+        NSColor.white.setStroke(); needle.stroke()
+        NSColor.white.setFill()
+        NSBezierPath(ovalIn: NSRect(x: c.x - 1.5, y: c.y - 1.5, width: 3, height: 3)).fill()
+    }
+
+    // Cella del Mac: quattro barre verticali affiancate (C CPU, G GPU, R RAM, D disco) con l'iniziale sotto e la tacca alla soglia di «impegnato».
+    // In verticale ci stanno tutte e quattro nella larghezza che prima teneva due righe orizzontali; più larga,
+    // la tray sparisce dietro il notch quando l'app in primo piano ha molti menu. I numeri stanno nel menu.
+    private struct MacCol { let tag: String; let pct: Int; let limit: Int; let color: NSColor }
+    private let macCols: [(String, String, Int)] = [("cpu", "C", 85), ("mem", "R", 80), ("gpu", "G", 80), ("disk", "D", 85)]   // stesso ordine del menu
+    private let vBarW: CGFloat = 5
+    private let vBarY: CGFloat = 9      // sopra la sigla
+    private let vBarTop: CGFloat = 22
+    private let colGap: CGFloat = 1     // affiancate: si leggono come un blocco solo
+    private func macCell() -> [MacCol]? {
+        guard let e = liveMac?.effort else { return nil }
+        let tone = { (lv: Int) -> NSColor in lv == 0 ? statusColor("ok") : statusColor(lv == 1 ? "warning" : "critical") }
+        let cols = macCols.compactMap { (key, tag, limit) -> MacCol? in
+            guard let pp = e.parts.first(where: { $0.key == key }), let v = pp.pct else { return nil }
+            return MacCol(tag: tag, pct: v, limit: limit, color: tone(pp.level))
+        }
+        return cols.isEmpty ? nil : cols
+    }
+    private func macColWidth(_ c: MacCol) -> CGFloat { max(vBarW, (c.tag as NSString).size(withAttributes: [.font: tagFont]).width) }
+    private func macCellWidth() -> CGFloat {
+        guard let cols = macCell() else { return 0 }
+        return cols.map { macColWidth($0) }.reduce(0, +) + colGap * CGFloat(cols.count - 1)
+    }
+
+    private func layout() -> (groups: [GroupFrame], width: CGFloat, macW: CGFloat) {
+        if let c = cachedLayout { return c }
+        let c = computeLayout()
+        cachedLayout = c
+        return c
+    }
+
+    private func computeLayout() -> (groups: [GroupFrame], width: CGFloat, macW: CGFloat) {
+        let mw = macCellWidth()
+        let pw = paceCellWidth()
+        // Prima passata: larghezza di ogni account, senza posizioni.
+        struct Cand { let acct: Account; let header: String; let badge: String; let w: CGFloat; let pi: Int; let ai: Int }
+        var cands: [[Cand]] = []
+        for (pi, p) in (snapshot?.providers ?? []).enumerated() {
+            if p.menuOnly == true { cands.append([]); continue }
+            cands.append((p.accounts ?? []).enumerated().map { (ai, a) in
+                // larghezza = riga quota più larga; la mail si taglia a misura,
+                // mai oltre. Le righe non si tagliano mai. Il badge non si taglia:
+                // ruba spazio alla mail, non alle righe.
+                let badge = resetBadge(a)
+                let badgeW = (badge as NSString).size(withAttributes: [.font: headerFont]).width
+                let qw = a.quotas.prefix(2).map { quotaWidth($0) }.max() ?? 0
+                let header = cropEmail(a.label, cap: max(30, qw - iconIndent - badgeW))
+                let hw = iconIndent
+                    + (header as NSString).size(withAttributes: [.font: headerFont]).width
+                    + badgeW
+                return Cand(acct: a, header: header, badge: badge, w: max(hw, qw), pi: pi, ai: ai)
+            })
+        }
+        // Quanti entrano nel tetto: prima gli attivi, poi chi ha la quota più alta. Si rimettono in ordine dopo.
+        let start = padX + (mw > 0 ? mw + acctGap : 0) + (pw > 0 ? pw + acctGap : 0)
+        let plusW = ("+9" as NSString).size(withAttributes: [.font: headerFont]).width + acctGap
+        let all = cands.flatMap { $0 }
+        let room = barMaxW - start - padX - plusW
+        let ranked = all.sorted { x, y in
+            if x.acct.active != y.acct.active { return x.acct.active }
+            return (x.acct.quotas.map { $0.usedPct }.max() ?? 0) > (y.acct.quotas.map { $0.usedPct }.max() ?? 0)
+        }
+        var keep = Set<String>(), used: CGFloat = 0
+        for c in ranked {
+            let need = c.w + (keep.isEmpty ? 0 : acctGap)
+            if used + need <= room || keep.isEmpty { keep.insert("\(c.pi).\(c.ai)"); used += need }
+        }
+        let total = all.count
+        hiddenAccts = total - keep.count
+        // Seconda passata: posizioni solo per chi resta, nell'ordine dei provider.
+        var groups: [GroupFrame] = []
+        var x = padX
+        if mw > 0 { x += mw + acctGap }
+        if pw > 0 { x += pw + acctGap }
+        for (pi, p) in (snapshot?.providers ?? []).enumerated() {
+            let shown = cands[pi].filter { keep.contains("\(pi).\($0.ai)") }
+            if shown.isEmpty { continue }
+            let gx = x
+            var frames: [AcctFrame] = []
+            for c in shown {
+                frames.append(AcctFrame(acct: c.acct, header: c.header, badge: c.badge, x: x, w: c.w))
+                x += c.w + acctGap
+            }
+            x -= acctGap
+            groups.append(GroupFrame(prov: p, x: gx, w: x - gx, accts: frames))
+            x += acctGap
+        }
+        if !groups.isEmpty { x -= acctGap }
+        if hiddenAccts > 0 { plusX = x + acctGap; x = plusX + plusW - acctGap }
+        return (groups, x + padX, mw)
+    }
+
     func idealWidth() -> CGFloat {
-        if isOffline || flat().isEmpty { return ceil(w(emptyText(), emptyFont)) + 2 * padX + 4 }
+        if isOffline || flat().isEmpty { return 26 }
         return layout().width
     }
 
@@ -389,28 +484,105 @@ class UsageBarView: NSView {
         NSColor.clear.setFill()
         dirtyRect.fill()
         if isOffline || flat().isEmpty {
-            drawBaseline(emptyText(), x: padX + 2, baseline: 7, font: emptyFont, color: .white, shadow: true)
+            let s = "···" as NSString
+            s.draw(at: NSPoint(x: 6, y: 4), withAttributes: [
+                .font: NSFont.systemFont(ofSize: 12),
+                .foregroundColor: NSColor.white,
+            ])
             return
         }
-        for c in layout().cells {
-            let a: CGFloat = c.dim ? 0.6 : 1
-            var lx = c.x
-            if let icon = c.icon {
-                // -1px: l'inchiostro parte dentro il rettangolo, così il bordo vivo dell'icona cade sulla x delle cifre
-                barIcon(icon, sizePt: iconSize).draw(in: NSRect(x: lx - 1, y: topBaseline - 0.5, width: iconSize, height: iconSize),
-                                                     from: .zero, operation: .sourceOver, fraction: a)
-                lx += iconSize + iconGap
+        let (groups, _, macW) = layout()
+        var px = padX
+        if let cols = macCell() {
+            var cx = px
+            for c in cols {
+                let w = macColWidth(c)
+                let tw = (c.tag as NSString).size(withAttributes: [.font: tagFont]).width
+                drawBaseline(c.tag, x: cx + (w - tw) / 2, baseline: rowBotBaseline, font: tagFont, color: .white, shadow: true)
+                let h = vBarTop - vBarY
+                let r = NSRect(x: cx + (w - vBarW) / 2, y: vBarY, width: vBarW, height: h)
+                NSColor.white.withAlphaComponent(0.22).setFill()
+                NSBezierPath(roundedRect: r, xRadius: 1.5, yRadius: 1.5).fill()
+                let fh = h * CGFloat(min(100, max(0, c.pct))) / 100
+                if fh > 0.5 {
+                    NSGraphicsContext.saveGraphicsState()
+                    NSBezierPath(roundedRect: r, xRadius: 1.5, yRadius: 1.5).setClip()
+                    c.color.setFill()
+                    NSRect(x: r.minX, y: r.minY, width: vBarW, height: fh).fill()
+                    NSGraphicsContext.restoreGraphicsState()
+                }
+                // tacca alla soglia, larga quanto la barra: con le barre affiancate una tacca più larga si fonderebbe con la vicina
+                NSColor.black.withAlphaComponent(0.55).setFill()
+                NSRect(x: r.minX, y: r.minY + h * CGFloat(c.limit) / 100, width: vBarW, height: 1).fill()
+                cx += w + colGap
             }
-            if !c.label.isEmpty {
-                drawBaseline(c.label, x: lx, baseline: topBaseline, font: labelFont, color: NSColor.white.withAlphaComponent(0.85 * a), shadow: true)
+            px += macW + acctGap
+        }
+        if let ps = paceSummary(snapshot) {
+            let pw = paceCellWidth()
+            drawGauge(ratio: ps.ratio, x: px, w: pw)
+            let t = paceText(ps.ratio), tw = (t as NSString).size(withAttributes: [.font: pctFont]).width
+            drawBaseline(t, x: px + (pw - tw) / 2, baseline: rowBotBaseline, font: pctFont,
+                         color: ps.ratio <= 1.0 ? .white : statusColor(paceStatus(ps.ratio)), shadow: true)
+        }
+        for g in groups {
+            for f in g.accts {
+                let a = f.acct
+                // non attivo: barre dimezzate, testi quasi pieni (devono leggersi)
+                let barDim: CGFloat = a.active ? 1 : 0.45
+                let txtDim: CGFloat = a.active ? 1 : 0.8
+                let white = NSColor.white.withAlphaComponent(txtDim)
+                // -1px: l'inchiostro parte dentro il rettangolo, così il bordo
+                // vivo dell'icona cade sulla stessa x delle righe (misurato).
+                barIcon(g.prov.id, sizePt: iconSize)
+                    .draw(in: NSRect(x: f.x - 1, y: iconY, width: iconSize, height: iconSize))
+                drawBaseline(f.header, x: f.x + iconIndent, baseline: headerBaseline,
+                             font: headerFont, color: white, shadow: true)
+                if !f.badge.isEmpty {
+                    let hw = (f.header as NSString).size(withAttributes: [.font: headerFont]).width
+                    drawBaseline(f.badge, x: f.x + iconIndent + hw, baseline: headerBaseline,
+                                 font: headerFont, color: white, shadow: true)
+                }
+                // due righe quota: 5H sopra, 7D sotto (o una sola se unica).
+                // Partono a x0 come l'icona: niente gutter dedicato.
+                let rows = a.quotas.prefix(2)
+                for (ri, q) in rows.enumerated() {
+                    let base = ri == 0 ? rowTopBaseline : rowBotBaseline
+                    var cx = f.x
+                    let tag = q.key.uppercased()
+                    let tagW = (tag as NSString).size(withAttributes: [.font: tagFont]).width
+                    drawBaseline(tag, x: cx, baseline: base + tagBaselineShift,
+                                 font: tagFont, color: white, shadow: true)
+                    cx += tagW + gap
+                    // base+0: la barra centra il corpo dei numeri (base..+6.5),
+                    // non galleggia sopra (base+1 la alzava di 1px).
+                    let barRect = NSRect(x: cx, y: base, width: barW, height: barH)
+                    NSColor.white.withAlphaComponent(0.22 * barDim).setFill()
+                    NSBezierPath(roundedRect: barRect, xRadius: 2.5, yRadius: 2.5).fill()
+                    let fw = barW * min(100, max(0, q.usedPct)).double / 100
+                    if fw > 0.5 {
+                        NSGraphicsContext.saveGraphicsState()
+                        NSBezierPath(roundedRect: barRect, xRadius: 2.5, yRadius: 2.5).setClip()
+                        statusColor(q.status).withAlphaComponent(barDim).setFill()
+                        NSRect(x: barRect.minX, y: barRect.minY, width: fw, height: barH).fill()
+                        NSGraphicsContext.restoreGraphicsState()
+                    }
+                    cx += barW + gap
+                    // % nel colore di stato quando c'è un problema: l'occhio ci va da solo
+                    let pctColor: NSColor = q.status == "ok"
+                        ? white : statusColor(q.status).withAlphaComponent(txtDim)
+                    let pct = "\(q.usedPct)%"
+                    let pw = (pct as NSString).size(withAttributes: [.font: pctFont]).width
+                    drawBaseline(pct, x: cx + (pctW - pw) / 2, baseline: base,
+                                 font: pctFont, color: pctColor, shadow: true)
+                    cx += pctW + timeGap
+                    drawBaseline(barTime(q), x: cx, baseline: base,
+                                 font: timeFont, color: white, shadow: true)
+                }
             }
-            var px = c.x
-            for p in c.pieces {
-                px += p.gap
-                // il numero resta pieno anche sugli account non attivi: abbassato, il rosso diventava un marrone, un colore in più
-                drawBaseline(p.s, x: px, baseline: botBaseline, font: p.font, color: p.color, shadow: true)
-                px += w(p.s, p.font)
-            }
+        }
+        if hiddenAccts > 0 {
+            drawBaseline("+\(hiddenAccts)", x: plusX, baseline: headerBaseline, font: headerFont, color: .white, shadow: true)
         }
     }
 }
@@ -998,8 +1170,9 @@ func pcRow() -> [NSMenuItem] {
     let a = NSMutableAttributedString()
     a.append(txt("PC di casa  ")); a.append(txt(p.pc, .systemFont(ofSize: 13, weight: .semibold), col))
     // il perché arriva da Windows: si tengono le parti brevi, la «richiesta di alimentazione» col nome grezzo del driver resta fuori
-    let why = (p.pc == "lavora" ? p.perche : nil).map { $0.components(separatedBy: "; ").filter { !$0.contains("[") && !$0.contains("\\") && $0.count <= 40 }.prefix(3).joined(separator: " · ") } ?? ""
-    var rows = [richRow(icon: sym("desktopcomputer", color: col), a, detail: why, enabled: false,
+    let why = (p.pc == "lavora" ? p.perche : nil).map { $0.components(separatedBy: "; ").filter { !$0.contains("[") && !$0.contains("\\") && $0.count <= 40 }.suffix(2).joined(separator: " · ") } ?? ""
+    a.append(txt("\t" + why, smallNum, .secondaryLabelColor))
+    var rows = [richRow(icon: nil, styled(a, rightTab), enabled: false,
                         tip: "dorme dopo 20 minuti senza lavoro; offload e winwake lo svegliano")]
     if p.avviso, let m = p.mac, let s = p.soglia {
         rows.append(noteRow("Mac a " + String(format: "%.1f", m).replacingOccurrences(of: ".", with: ",") + " per core (soglia "
@@ -1021,7 +1194,7 @@ func automationsRow(actionTarget: AnyObject?) -> NSMenuItem {
         if !parts.isEmpty { text = "Automazioni · " + parts.joined(separator: " · ") }
         else if !stale { text = "Automazioni · tutto a posto"; gray = true }
     }
-    let row = richRow(icon: sym("clock.arrow.circlepath"), txt(text, rowFont, gray ? .secondaryLabelColor : .labelColor),
+    let row = richRow(icon: nil, txt(text, rowFont, gray ? .secondaryLabelColor : .labelColor),
                       tip: "Apre le automazioni nella dashboard")
     row.action = #selector(AppDelegate.openAutomations); row.target = actionTarget
     return row
@@ -1654,14 +1827,16 @@ func projectsMenuItem(actionTarget: AnyObject?) -> NSMenuItem? {
         for pr in dead { all.addItem(projectRow(pr, actionTarget: actionTarget, dim: true)) }
     }
     let braked = alive.filter { $0.state == "frenato" }.count
-    let it = richRow(icon: sym("folder"), txt("Progetti, budget e priorità", rowFont), detail: "\(alive.count) attivi" + (braked > 0 ? " · \(braked) frenati" : ""))
+    let it = richRow(icon: nil, txt("Progetti", rowFont), detail: nil)
+    let pa = NSMutableAttributedString(attributedString: txt("Progetti", rowFont)); pa.append(txt("\t\(alive.count) attivi" + (braked > 0 ? " · \(braked) frenati" : ""), smallNum, braked > 0 ? toneWarn : .secondaryLabelColor))
+    it.attributedTitle = styled(pa, rightTab)
     it.submenu = all
     return it
 }
 
 // MARK: chi lavora adesso: gli agenti vivi di tutti i progetti in una lista sola
 
-let agentsShown = 5
+let agentsShown = 3
 func liveAgentRows(actionTarget: AnyObject?) -> [NSMenuItem] {
     // qui solo le sessioni: i sottoagenti stanno nel progetto, sotto chi li ha lanciati (contano nel totale)
     let everyone = liveProjects.flatMap { pr in (pr.agents?.list ?? []).map { (pr, $0) } }
@@ -1678,13 +1853,17 @@ func liveAgentRows(actionTarget: AnyObject?) -> [NSMenuItem] {
     }
     for (pr, g, n) in rows.prefix(agentsShown) {
         let name = pr.title ?? pr.name
-        let line = NSMutableAttributedString(attributedString: txt(name.count > 30 ? String(name.prefix(29)) + "…" : name, rowFont))
-        line.append(txt("\t\(g.model)\(n > 1 ? " ×\(n)" : "") · \(durText(nowMs() - g.startedAt))", rowNum, .secondaryLabelColor))
         // il titolo di una sessione è spesso la prima riga del prompt: via il «# » del markdown e l'id «[cron:…]» dei lavori a orario
         let gt = g.title.replacingOccurrences(of: "^(#+\\s*|\\[cron:[^\\]]*\\]\\s*)", with: "", options: .regularExpression)
         let what = [gt.isEmpty ? nil : gt, g.kind == "sessione" || name.lowercased().contains(g.kind) ? nil : g.kind].compactMap { $0 }.joined(separator: " · ")
-        let row = richRow(icon: providerSym(g.provider), line, detail: what.isEmpty ? nil : what, tabs: tabs,
-                          tip: g.open.map { "Clic per aprirla in \($0.via)" } ?? "Gira in background: non si apre da qui", wrap: 70)
+        // una riga: progetto, accanto in grigio cosa fa (tagliato a misura), a destra modello e da quanto
+        let shown = name.count > 30 ? String(name.prefix(29)) + "…" : name
+        let line = NSMutableAttributedString(attributedString: txt(shown, rowFont))
+        let room = 42 - shown.count
+        if !what.isEmpty && room > 6 { line.append(txt("  " + (what.count > room ? String(what.prefix(room - 1)) + "…" : what), rowSmall, .secondaryLabelColor)) }
+        line.append(txt("\t\(g.model)\(n > 1 ? " ×\(n)" : "") · \(durText(nowMs() - g.startedAt))", smallNum, .secondaryLabelColor))
+        let row = richRow(icon: nil, line, tabs: [tableRight],
+                          tip: (what.isEmpty ? "" : what + "\n") + (g.open.map { "Clic per aprirla in \($0.via)" } ?? "Gira in background: non si apre da qui"), wrap: 70)
         if let o = g.open {
             row.action = #selector(AppDelegate.openLink(_:)); row.target = actionTarget
             row.representedObject = ["url": o.url, "what": "\(pr.name) · \(g.model) \(g.kind)"]
@@ -1715,6 +1894,119 @@ func hubLagRow(_ lag: HubLag, offline: Bool) -> NSMenuItem {
 
 // Un colpo d'occhio, non una dashboard: verdetto, account, chi lavora, il Mac se soffre.
 // Il dettaglio (grafici, rinnovi, budget per progetto) sta in due sottomenu; il resto nella dashboard (:3360).
+// MARK: - Menu a tabella: una riga per account, il dettaglio nel sottomenu
+//
+// Il menu si legge dall'alto: verdetto, poi gli account dal più vicino a finire, poi chi lavora, poi il Mac.
+// Ogni riga ha le stesse colonne a cifre tabellari; il colore compare solo con un problema
+// (arancio = attenzione, rosso = critico o esaurito). Grafici e frasi stanno nel sottomenu della riga.
+let tableRight: CGFloat = 392
+let acctTabs: NSMutableParagraphStyle = {
+    let ps = NSMutableParagraphStyle()
+    ps.tabStops = [NSTextTab(textAlignment: .right, location: 176, options: [:]),
+                   NSTextTab(textAlignment: .right, location: 226, options: [:]),
+                   NSTextTab(textAlignment: .right, location: 276, options: [:]),
+                   NSTextTab(textAlignment: .right, location: tableRight, options: [:])]
+    ps.defaultTabInterval = 0; ps.lineBreakMode = .byClipping
+    return ps
+}()
+let rightTab: NSMutableParagraphStyle = {
+    let ps = NSMutableParagraphStyle()
+    ps.tabStops = [NSTextTab(textAlignment: .right, location: tableRight, options: [:])]
+    ps.defaultTabInterval = 0; ps.lineBreakMode = .byClipping
+    return ps
+}()
+let headFont = NSFont.systemFont(ofSize: 10, weight: .semibold)
+let numFont = NSFont.monospacedDigitSystemFont(ofSize: 12.5, weight: .medium)
+let smallNum = NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .regular)
+// un accento solo, l'arancio, da 80% in su; il rosso resta per ciò che è già finito (esaurito)
+func pctTone(_ p: Int) -> NSColor { p >= 100 ? toneBad : p >= 80 ? toneWarn : .labelColor }
+func styled(_ a: NSMutableAttributedString, _ ps: NSParagraphStyle) -> NSMutableAttributedString {
+    a.addAttribute(.paragraphStyle, value: ps, range: NSRange(location: 0, length: a.length)); return a
+}
+
+// Intestazione: le colonne, e accanto il ritmo della settimana di tutti gli account (1× = in linea col tempo passato).
+func acctHeadRow(_ snap: Overview?) -> NSMenuItem {
+    let g = NSColor.secondaryLabelColor
+    let a = NSMutableAttributedString(attributedString: txt("ACCOUNT", headFont, g))
+    var tip = "Settimana e 5 ore: quota usata. Oggi: ultime 24 ore contro la quota giornaliera sostenibile (1× = in linea). Passa su una riga per grafici e dettagli."
+    if let ps = paceSummary(snap) {
+        a.append(txt("   RITMO ", headFont, g))
+        a.append(txt(paceText(ps.ratio), .monospacedDigitSystemFont(ofSize: 10, weight: .semibold), ps.ratio <= 1 ? g : statusColor(paceStatus(ps.ratio))))
+        tip = "Ritmo: settimana usata \(ps.used)% contro \(ps.expected)% del tempo passato, somma degli account non esauriti. " + tip
+    }
+    a.append(txt("\tSETT.\t5 ORE\tOGGI\tPROSSIMO", headFont, g))
+    let it = NSMenuItem(); it.attributedTitle = styled(a, acctTabs); it.isEnabled = false; it.toolTip = tip
+    return it
+}
+
+// Quanto manca alla fine: la quota più piena tra settimana e 5 ore; gli esauriti in fondo (lì non c'è più niente da decidere).
+func acctUrgency(_ a: Account) -> Int {
+    let w = a.quotas.first { $0.key.lowercased() == "7d" }?.usedPct ?? 0
+    if w >= 100 { return -1 }
+    return a.quotas.prefix(2).map { $0.usedPct }.max() ?? 0
+}
+
+func acctTableRow(_ p: Provider, _ a: Account, detail: NSMenuItem?) -> NSMenuItem {
+    let w = a.quotas.first { $0.key.lowercased() == "7d" }
+    let f = a.quotas.first { $0.key.lowercased() == "5h" }
+    let g = NSColor.secondaryLabelColor
+    // un solo account: basta il provider; con più account, il nome dell'account accanto
+    let one = (p.accounts ?? []).count == 1
+    let line = NSMutableAttributedString(attributedString: txt(p.name, rowFont))
+    if !one { line.append(txt(" " + shortLabel(a.label), rowFont, g)) }
+    if let n = a.resetCredits?.available, n > 0 { line.append(txt(" ↻\(n)", rowSmall, g)) }
+    let depleted = (w?.usedPct ?? 0) >= 100
+    line.append(txt("\t" + (w.map { "\($0.usedPct)%" } ?? "–"), numFont, w.map { depleted ? toneBad : $0.status == "stale" ? g : pctTone($0.usedPct) } ?? g))
+    line.append(txt("\t" + (f.map { "\($0.usedPct)%" } ?? "–"), numFont, f.map { pctTone($0.usedPct) } ?? g))
+    if let t = liveHeavy?.today.first(where: { $0.provider == p.id && $0.account == a.label }), t.perDay > 0, !depleted {
+        let x = t.last24h / t.perDay
+        line.append(txt("\t" + (x >= 10 ? ">10×" : timesShort(x)), numFont, x > 1 ? toneWarn : .labelColor))
+    } else { line.append(txt("\t–", numFont, g)) }
+    // Ultima colonna: quando cambia qualcosa. Frenato e dato vecchio prima dell'azzeramento: sono il motivo per cui non lavora.
+    let wait = accountWait(p, a)
+    let note: (String, NSColor)
+    if depleted { note = ("torna " + (w?.resetsAt.map(resetText) ?? w?.resetText ?? ""), toneBad) }
+    else if let wt = wait { note = ("frenato → " + (wt.until.map { hhmmText(Int($0 / 1000)) } ?? "?"), toneWarn) }
+    else if w?.status == "stale" { note = (w?.resetText ?? "dato vecchio", g) }
+    else { note = (w?.resetsAt.map(resetText) ?? w?.resetText ?? "", g) }
+    line.append(txt("\t" + note.0, smallNum, note.1))
+    let it = NSMenuItem(); it.attributedTitle = styled(line, acctTabs)   // niente icona: il nome del provider è già scritto
+    it.toolTip = wait.map(resumeText)
+    if let d = detail { let sm = NSMenu(); sm.autoenablesItems = false; sm.addItem(d); it.submenu = sm }
+    return it
+}
+
+// Il Mac in una riga: livello a parole e le quattro misure; grafici, RAM per esteso e processi nel sottomenu.
+func macCompactRow() -> NSMenuItem? {
+    guard let m = liveMac, let e = m.effort, let big = macRow() else { return nil }
+    let procs = big.submenu; big.submenu = nil
+    let tone: (Int) -> NSColor = { $0 == 0 ? .labelColor : toneWarn }   // un accento solo: il livello lo dice la parola
+    let line = NSMutableAttributedString(attributedString: txt("Mac", rowFont))
+    line.append(txt("  " + e.label, rowFont, e.level == 0 ? .secondaryLabelColor : tone(e.level)))
+    line.append(txt("\t", rowFont))
+    let names = ["cpu": "CPU", "mem": "RAM", "gpu": "GPU", "disk": "Disco"]
+    for (i, p) in e.parts.enumerated() {
+        guard let v = p.pct else { continue }
+        line.append(txt((i > 0 ? "   " : "") + (names[p.key] ?? p.name) + " ", rowSmall, .secondaryLabelColor))
+        line.append(txt("\(v)%", numFont, tone(p.level)))
+    }
+    // Sotto sforzo: perché e chi pesa, in una riga; il resto nel sottomenu.
+    if e.level > 0 {
+        let why = (e.why.isEmpty ? "" : e.why.prefix(1).uppercased() + e.why.dropFirst() + " · ") + m.hogs.prefix(2).map { "\($0.name) \(gbText($0.memMB))" }.joined(separator: ", ")
+        line.append(txt("\n" + (why.count > 72 ? String(why.prefix(71)) + "…" : why), rowSmall, .secondaryLabelColor))
+    }
+    let it = NSMenuItem(); it.attributedTitle = styled(line, rightTab); it.toolTip = big.toolTip
+    let sm = NSMenu(); sm.autoenablesItems = false
+    sm.addItem(big)
+    if let pm = procs {
+        sm.addItem(.separator())
+        let pr = NSMenuItem(title: "Processi per CPU e memoria", action: nil, keyEquivalent: ""); pr.submenu = pm
+        sm.addItem(pr)
+    }
+    it.submenu = sm
+    return it
+}
+
 func buildMenu(snapshot: Overview?, isOffline: Bool, actionTarget: AnyObject?) -> NSMenu {
     let menu = NSMenu()
     menu.autoenablesItems = false
@@ -1730,6 +2022,7 @@ func buildMenu(snapshot: Overview?, isOffline: Bool, actionTarget: AnyObject?) -
         var shown = Set<String>()
         var bonusShown = Set<String>()
         let details = NSMenu(); details.autoenablesItems = false
+        var table: [(Provider, Account, NSMenuItem?)] = []
         for p in providers {
             let accs = p.accounts ?? []
             let labels = Set(accs.map { $0.label })
@@ -1742,7 +2035,7 @@ func buildMenu(snapshot: Overview?, isOffline: Bool, actionTarget: AnyObject?) -
                     if let m = mine { shown.insert(m.service + "|" + m.account) }
                     let credit = p.id == "claude" ? cmap[a.label] : nil
                     if credit != nil { bonusShown.insert(a.label) }
-                    if let b = accountBlock(p, a, renewal: mine, credit: credit) { menu.addItem(b) }
+                    table.append((p, a, accountBlock(p, a, renewal: mine, credit: credit)))
                 }
                 continue
             }
@@ -1784,6 +2077,13 @@ func buildMenu(snapshot: Overview?, isOffline: Bool, actionTarget: AnyObject?) -
             let it = richRow(icon: sym("creditcard"), txt("Credito AI", rowFont)); it.submenu = sub
             details.addItem(it)
         }
+        // la tabella si scrive qui, dopo il giro: l'ordine è per urgenza, non per provider
+        if !table.isEmpty {
+            menu.addItem(acctHeadRow(snapshot))
+            for (p, a, d) in table.enumerated().sorted(by: { (acctUrgency($0.element.1), -$0.offset) > (acctUrgency($1.element.1), -$1.offset) }).map({ $0.element }) {
+                menu.addItem(acctTableRow(p, a, detail: d))
+            }
+        }
         details.addItem(.separator())
         for (title, sel, on) in [
             ("Mostra fascia di 5 ore", #selector(AppDelegate.toggleDaily), TrayPrefs.showDaily),
@@ -1797,17 +2097,17 @@ func buildMenu(snapshot: Overview?, isOffline: Bool, actionTarget: AnyObject?) -
         }
         menu.addItem(.separator())
         liveAgentRows(actionTarget: actionTarget).forEach { menu.addItem($0) }
-        if let mr = macRow() {  // sempre: è l'indicatore unico del Mac
+        if let mr = macCompactRow() {  // sempre: è l'indicatore unico del Mac
             menu.addItem(.separator()); menu.addItem(mr)
         }
         pcRow().forEach { menu.addItem($0) }
         menu.addItem(.separator())
-        let det = richRow(icon: sym("slider.horizontal.3"), txt("Altri abbonamenti e opzioni", rowFont)); det.submenu = details
+        let det = richRow(icon: nil, txt("Altri abbonamenti e opzioni", rowFont)); det.submenu = details
         menu.addItem(det)
         if let pj = projectsMenuItem(actionTarget: actionTarget) { menu.addItem(pj) }
     }
     // con l'hub giù il blocco Mac non c'è: la finestra Processi legge tutto in locale e resta raggiungibile
-    if isOffline || macRow() == nil {
+    if isOffline || liveMac?.effort == nil {
         let pr = NSMenuItem(title: "Processi: cerca, ordina, chiudi…", action: #selector(AppDelegate.openProcesses), keyEquivalent: "p")
         pr.target = actionTarget; pr.image = sym("list.bullet.rectangle")
         menu.addItem(.separator()); menu.addItem(pr)
