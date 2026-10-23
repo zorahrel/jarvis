@@ -79,7 +79,7 @@ export function createAutomations(opts = {}) {
     readDescriptions: () => JSON.parse(fs.readFileSync(descriptionsFile(), 'utf8')),
     feedbackDir: undefined,
     proofRun: sh,
-    lastGoodFile: path.join(HOME, '.cache/claude-usage-hub/automations-last-good.json'),
+    lastGoodFile: process.env.USAGE_HUB_LAST_GOOD || path.join(HOME, '.cache/claude-usage-hub/automations-last-good.json'),
     ttlMs: 60000,
     background: true,
     ...opts,
