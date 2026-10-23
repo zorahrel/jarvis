@@ -1,3 +1,4 @@
+import { graphFor } from './automations/graph.mjs';
 import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -266,6 +267,13 @@ export function createServer(config, deps = {}) {
         return send(200, 'application/json', JSON.stringify({ over, today, sessions: heavySessions }));
       }
       if (req.url === '/api/automations') return send(200, 'application/json', JSON.stringify(await auto().model()));
+      // Schema a passi di una voce, chiesto quando apri il pannello: legge definizione, script e log.
+      if (req.url.startsWith('/api/automations/graph?')) {
+        const key = new URL(req.url, 'http://x').searchParams.get('key') || '';
+        let card = null; try { card = ((await auto().model()).cards || {})[key] || null; } catch { /* senza modello: solo la definizione */ }
+        const g = graphFor(key, { card });
+        return send(g ? 200 : 404, 'application/json', JSON.stringify(g || { ok: false, error: 'nessuno schema per questa voce' }));
+      }
       if (req.url === '/api/automations/summary') return send(200, 'application/json', JSON.stringify(await auto().summary()));
       // Costo di un giro di workflow, chiesto solo quando lo apri: legge le trascrizioni dei suoi agenti.
       if (req.url.startsWith('/api/automations/run/')) {

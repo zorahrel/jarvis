@@ -1,7 +1,7 @@
 // Scheda «Automazioni»: rete, eventi, tastiera. Gira nel browser (usa j e $ di app.js).
 // Stato tenuto qui: modello, ripasso, «da ieri» e costi già chiesti.
 var auModel = null;
-var auUi = { review: { open: false, key: null }, seen: { newKeys: [], changedKeys: [] }, costs: {}, filter: 'all', q: '', by: 'sistema', offline: false, sel: null, open: {} };
+var auUi = { review: { open: false, key: null }, seen: { newKeys: [], changedKeys: [] }, costs: {}, filter: 'all', q: '', by: 'sistema', offline: false, sel: null, open: {}, graphs: {} };
 try { if (localStorage.getItem('automations.by') === 'esito') auUi.by = 'esito'; } catch (e) { /* senza storage resta «per sistema» */ }
 var auUndoRef = null;
 
@@ -14,7 +14,7 @@ function auToday() {
 }
 
 function auUiNow() {
-  return { now: auModel.checkedAt, review: auUi.review, seen: auUi.seen, costs: auUi.costs, filter: auUi.filter, q: auUi.q, by: auUi.by, offline: auUi.offline, sel: auUi.sel, open: auUi.open };
+  return { now: auModel.checkedAt, review: auUi.review, seen: auUi.seen, costs: auUi.costs, filter: auUi.filter, q: auUi.q, by: auUi.by, offline: auUi.offline, sel: auUi.sel, open: auUi.open, graphs: auUi.graphs };
 }
 
 // Ridisegna tenendo il fuoco sulla stessa card: con la tastiera non si perde il posto a ogni salvataggio o giro dei 60 s.
@@ -40,8 +40,17 @@ function auRender() {
 function auOpen(key) {
   auUi.sel = key;
   auRender();
+  auGraph(key);
   var p = $('t-automations').querySelector('.cx-panel');
   if (p) { var first = p.querySelector('article.au-card') || p.querySelector('.cx-x'); if (first) first.focus({ preventScroll: true }); }
+}
+// Schema a passi: lo calcola l'hub dalla definizione vera, una volta per apertura.
+function auGraph(key) {
+  if (!key || key.indexOf('wf:') === 0 || auUi.graphs[key]) return;
+  auUi.graphs[key] = 'loading';
+  fetch('/api/automations/graph?key=' + encodeURIComponent(key)).then(function (r) { return r.ok ? r.json() : 'none'; })
+    .catch(function () { return 'none'; })
+    .then(function (g) { auUi.graphs[key] = g; if (auUi.sel === key) auRender(); });
 }
 function auClose() {
   var k = auUi.sel;

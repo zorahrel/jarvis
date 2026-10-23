@@ -345,6 +345,46 @@
       (cmd ? '<pre>' + esc(cmd) + '</pre>' : '') + (t.url ? '<a href="' + esc(t.url) + '">Apri in OpenClaw</a>' : '') + '</details>';
   }
 
+  // ---- Schema a passi (grafo) di una voce, ricavato dall'hub da definizione, script e log ----
+  var KIND = { trigger: 'Quando', sources: 'Fonti', step: 'Passo', model: 'Modello', deliver: 'Canale' };
+  var GOUT = { ok: 'ok', error: 'fallito', skipped: 'saltato', unused: 'non usato' };
+  function gStatus(o, inferred, ms) {
+    var w = o == null ? '—' : GOUT[o] || o;
+    return '<span class="gs ' + (o || 'none') + (inferred ? ' inf' : '') + '"' + (inferred ? ' title="dedotto dall\'esito del giro"' : '') + '>' + esc(w) + '</span>' +
+      (ms != null ? '<span class="gt">' + esc(durWords(ms)) + '</span>' : '');
+  }
+  function gNode(n) {
+    var body = '';
+    if (n.kind === 'sources') {
+      body = '<div class="gsrc">' + (n.items || []).map(function (x) { return '<span title="' + esc(x.detail || '') + '">' + esc(x.label) + '</span>'; }).join('') + '</div>';
+    } else if (n.kind === 'model') {
+      var opts = n.options || [];
+      body = '<div class="gopts">' + opts.map(function (o, i) {
+        return (i ? '<span class="garr" aria-label="se fallisce">se fallisce →</span>' : '') +
+          '<div class="gopt ' + (o.outcome || 'none') + (o.exec ? ' x-' + o.exec : '') + '"><b>' + esc(o.name || '—') + '</b><span class="gm">' + esc(o.model || '') + '</span>' +
+          '<span class="grow">' + gStatus(o.outcome, false, o.ms) + '<span class="gt">' + (o.tokens != null ? esc(tok(o.tokens)) + ' tok' : 'token —') + '</span></span>' +
+          (o.note ? '<span class="gnote">' + esc(o.note) + '</span>' : '') + '</div>';
+      }).join('') + '</div>' + (n.note ? '<div class="gnote">' + esc(n.note) + '</div>' : '');
+    }
+    var head = '<span class="gk">' + esc(KIND[n.kind] || n.kind) + '</span><span class="gl">' + esc(n.label) + '</span>' +
+      (n.kind !== 'model' && n.kind !== 'sources' && n.kind !== 'trigger' ? gStatus(n.outcome, n.inferred, n.ms) : '');
+    var more = n.detail ? '<div class="gd">' + esc(n.detail) + '</div>' : '';
+    return '<li class="gn ' + esc(n.kind) + '">' + (more
+      ? '<details><summary class="gh2">' + head + '</summary>' + more + '</details>'
+      : '<div class="gh2">' + head + '</div>') + body + '</li>';
+  }
+  function graphHtml(g, now) {
+    if (g === 'loading') return '<div class="cx-graph"><div class="cx-h4">Schema</div><div class="au-skl" style="height:120px;border-radius:8px"></div></div>';
+    if (!g || g === 'none' || !g.nodes) return '';
+    var r = g.run || {};
+    var bits = ['ultimo giro ' + (r.at ? lastWords({ at: r.at }, now) : 'mai')];
+    if (r.ms != null) bits.push(durWords(r.ms));
+    if (r.outcome) bits.push(outcomeWord(r.outcome));
+    return '<div class="cx-graph"><div class="cx-h4">Schema <span>' + esc(bits.join(' · ')) + '</span></div>' +
+      '<ol class="gflow">' + g.nodes.map(gNode).join('') + '</ol>' +
+      '<div class="gfrom">ricavato da ' + (g.from || []).map(esc).join(' · ') + '</div></div>';
+  }
+
   var LEVEL = { te: 'Ti aspetta', rotto: 'Rotta' };
   // Barra in cima al pannello, come in A: stato, sistema, chiudi.
   function panelHead(chipCls, chip, sys) {
@@ -377,6 +417,7 @@
       '<div class="cx-pb"><h3 id="cx-pt">' + esc(c.title) + '</h3>' +
       (isProblem(c) && c.reason ? '<p class="au-why ' + esc(c.level) + '">' + esc(c.reason) + '</p>' : '') +
       (forYou(c) ? '<p class="cx-desc">' + esc(forYou(c)) + '</p>' : '') +
+      graphHtml(ui && ui.graphs && ui.graphs[c.key], now) +
       '<dl class="cx-dl">' + facts.join('') + '</dl>' +
       feedbackLines(fb).map(function (s) { return '<div class="cx-fbl">' + esc(s) + '</div>'; }).join('') +
       '<div class="au-act"><button class="cx-btn pri" data-fb="ok" aria-keyshortcuts="v"' + pressed('ok') + '>Va bene <kbd>V</kbd></button>' +
@@ -469,7 +510,7 @@
     return verdictHtml(model, ui) + tableHtml(model, ui, now) + footerHtml(model) + panelHtml(model, ui, now);
   }
 
-  var api = { render: render, skeleton: skeleton, errorHtml: errorHtml, lastWords: lastWords, deliveredWords: deliveredWords, esc: esc, card: card, areaOf: areaOf, runTokens: runTokens, flowHtml: flowHtml };
+  var api = { render: render, skeleton: skeleton, errorHtml: errorHtml, lastWords: lastWords, deliveredWords: deliveredWords, esc: esc, card: card, graphHtml: graphHtml, areaOf: areaOf, runTokens: runTokens, flowHtml: flowHtml };
   // Sempre sul globale: così il test con createRequire trova tutto anche se `module.exports` non esce.
   root.AutomationsView = api;
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
