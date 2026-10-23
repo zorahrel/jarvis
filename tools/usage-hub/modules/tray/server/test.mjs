@@ -6,7 +6,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { resetText, statusFor, mapClaude, mapMuse, mapQuotas, filterRenewals, toEpoch, code3, mergeCredit, bonusTargets, mapHub, shortNum, readApiSpend } from "./server.mjs";
-import { parseCloudCredit } from "./probes/cloud-credit.mjs";
+import { parseCloudCredit, classifyCreditOutput, mergeCreditMap } from "./probes/cloud-credit.mjs";
 import { EventEmitter } from "node:events";
 import { rpc } from "./probes/codex.mjs";
 import { quotaWindowSec, samplesFromProviders, parseHistory,
@@ -714,5 +714,21 @@ describe("fetchVdm", () => {
     assert.equal((await fetchVdm({ fetchImpl: ok, now: T })).profiles[0].label, "me@example.com");
     assert.equal((await fetchVdm({ fetchImpl: down, now: T + 14 * 60_000 })).profiles[0].label, "me@example.com");
     await assert.rejects(fetchVdm({ fetchImpl: down, now: T + 16 * 60_000 }));
+  });
+});
+
+describe("modelli con quota propria", () => {
+  const models = [{ name: "Fable", pct: 0, resets: "2026-10-25T09:00:00+00:00" }];
+  it("arrivano anche dall'account senza bonus e restano nella mappa al giro dopo", () => {
+    const c = classifyCreditOutput(JSON.stringify({ iguana_necktie: null, models }));
+    assert.equal(c.kind, "nobonus");
+    assert.deepEqual(c.models, models);
+    const first = mergeCreditMap({}, { account: "a@x.it", nobonus: true, models }, 100);
+    const again = mergeCreditMap(first.map, { account: "a@x.it", nobonus: true }, 200);
+    assert.deepEqual(again.credits["a@x.it"].models, models);
+  });
+  it("il saldo vivo li porta con sé", () => {
+    const v = parseCloudCredit({ iguana_necktie: { remaining_dollars: 51.81, limit_dollars: 250, used_dollars: 198.19, resets_at: "2026-11-05T07:59:00Z" }, models });
+    assert.deepEqual(v.models, models);
   });
 });

@@ -10,7 +10,10 @@ struct Overview: Codable {
     let credits: [String: CloudCredit]?
 }
 
+// Modello con una quota settimanale sua (limits di /api/oauth/usage, via credito-cloud): oggi è così che compare un modello nuovo
+struct ModelLimit: Codable { let name: String; let pct: Double?; let resets: String? }
 struct CloudCredit: Codable {
+    let models: [ModelLimit]?
     let remaining: Double?
     let limit: Double?
     let used: Double?
@@ -130,7 +133,8 @@ struct ClassGate: Codable {
 }
 struct AccountWait: Codable { let provider: String; let account: String; let kind: String?; let why: String; let until: Double?; let target: Double? }
 struct ProviderState: Codable { let state: String; let reason: String; let waitUntil: Double?; let accounts: [AccountWait]? }
-struct GatesResp: Codable { let classes: [String: ClassGate]; let brakes: [String: GateResult]; let providers: [String: ProviderState]?; let reserve: Int }
+struct OverrideInfo: Codable { let provider: String; let hold: Bool?; let until: Double; let reason: String? }
+struct GatesResp: Codable { let classes: [String: ClassGate]; let brakes: [String: GateResult]; let providers: [String: ProviderState]?; let overrides: [OverrideInfo]?; let reserve: Int }
 var liveGates: GatesResp?
 struct QueueItem: Codable { let id: String; let task: String; let project: String; let status: String; let waitUntil: Double?; let provider: String? }
 struct QueueResp: Codable { let items: [QueueItem] }
@@ -1095,42 +1099,6 @@ enum Level { case ok, warn, bad }
 func brakedProviders() -> [String] { ["claude", "codex", "muse"].filter { liveGates?.providers?[$0]?.state == "frenato" } }
 func timesShort(_ x: Double) -> String { x >= 10 ? "oltre 10×" : String(format: "%.1f×", x).replacingOccurrences(of: ".", with: ",") }
 // Il verdetto nomina l'account, non il provider: «Claude zorahrel» può correre mentre Claude resta libero su un altro account.
-func overallStatus(_ snapshot: Overview?) -> (Level, String, String) {
-    if liveGates == nil { return (.warn, "Hub non raggiungibile", "Stato del freno ignoto: i numeri qui sotto possono essere vecchi") }
-    let queued = liveQueue.filter { $0.status == "queued" || $0.status == "running" }.count
-    let over = (liveHeavy?.over ?? []).sorted { $0.last24h / max($0.perDay, 0.1) > $1.last24h / max($1.perDay, 0.1) }
-    let overText = over.map { "\(pName($0.provider)) \(shortLabel($0.account)) \(timesShort($0.last24h / max($0.perDay, 0.1))) la quota di oggi" }
-    let batch = liveGates?.classes["batch"]?.result
-    let deferred = batch.map { $0.go ? "rimandabili su \(gateLine($0))" : "rimandabili fermi" } ?? ""
-    let queue = queued > 0 ? "in coda \(queued)" : ""
-    let braked = brakedProviders()
-    if !braked.isEmpty {
-        // Un'ora per abbonamento: con un solo «fino a» il secondo sembrava sbloccarsi insieme al primo.
-        let title = braked.map { id in pName(id) + (liveGates?.providers?[id]?.waitUntil.map { " fino alle " + hhmmText(Int($0 / 1000)) } ?? "") }.joined(separator: " · ") + (braked.count > 1 ? " frenati" : " frenato")
-        return (.bad, title, ([overText.first ?? ""] + [deferred, queue]).filter { !$0.isEmpty }.joined(separator: " · "))
-    }
-    if let first = overText.first {
-        return (.warn, first, ([overText.dropFirst().first ?? ""] + [deferred, queue]).filter { !$0.isEmpty }.joined(separator: " · "))
-    }
-    return (.ok, "Tutto in linea", ["nessun freno", queue].filter { !$0.isEmpty }.joined(separator: " · "))
-}
-
-func statusRow(_ snapshot: Overview?) -> NSMenuItem {
-    let (lv, title, why) = overallStatus(snapshot)
-    let (name, tone) = lv == .ok ? ("checkmark.circle.fill", toneOK) : lv == .warn ? ("exclamationmark.triangle.fill", toneWarn) : ("hand.raised.fill", toneBad)
-    // una riga sola, piccola: il dettaglio di ogni account sta già nella sua card, qui basta dire cosa succede
-    // la riga non deve allargare il menu oltre le card (blockW): il perché si accorcia a misura, intero nel suggerimento
-    let line = NSMutableAttributedString(attributedString: txt(title, .systemFont(ofSize: 12, weight: .semibold), lv == .ok ? .labelColor : tone))
-    let room = menuTextMax - line.size().width
-    if !why.isEmpty && room > 60 {
-        var w = why
-        while w.count > 8 && txt("  " + w + "…", rowSmall).size().width > room { w = String(w.dropLast()) }
-        line.append(txt("  " + (w == why ? why : w.trimmingCharacters(in: .whitespaces) + "…"), rowSmall, .secondaryLabelColor))
-    }
-    return richRow(icon: sym(name, pt: 11, color: tone), line,
-                   tip: (why.isEmpty ? "" : why + "\n\n") + "Verde = tutto in linea · arancione = un account ha superato la quota di oggi · rosso = un abbonamento è frenato e il lavoro rimandabile aspetta. Le sessioni aperte non vengono mai bloccate.")
-}
-
 // MARK: il Mac: carico, memoria, chi pesa, agenti in pausa
 
 func gbText(_ mb: Double) -> String { mb >= 1024 ? String(format: "%.1f GB", mb / 1024).replacingOccurrences(of: ".", with: ",") : String(format: "%.0f MB", mb) }
@@ -1403,7 +1371,16 @@ final class AccountBlockView: NSView {
     // compactW: la card a metà larghezza della griglia degli account. Stesse barre, stesso grafico col mouse;
     // la nota (azzera, libera tra) va accanto all'etichetta, la barra e il grafico sotto.
     let compactW: CGFloat?
+    var url: String?
+    override func mouseUp(with e: NSEvent) {
+        guard let u = url, let link = URL(string: u) else { return super.mouseUp(with: e) }
+        enclosingMenuItem?.menu?.cancelTracking()
+        NSWorkspace.shared.open(link)
+    }
     static let cRowH: CGFloat = 32
+    static let shortLabels = ["Settimana": "Sett."]
+    // barra della card: il 42% della larghezza utile, al massimo 86 come nella card larga
+    func cBarW() -> CGFloat { min(86, floor((bounds.width - 20) * 0.42)) }
     func cBrakeH() -> CGFloat {
         guard let b = brake, let w = compactW else { return 0 }
         let h = (b as NSString).boundingRect(with: NSSize(width: w - 20, height: 100), options: [.usesLineFragmentOrigin], attributes: [.font: Self.brakeFont]).height
@@ -1425,7 +1402,7 @@ final class AccountBlockView: NSView {
         let sr = sparkRect(r); hover = (row: r, x: sr.minX + sr.width * CGFloat(f))
     }
     func sparkRect(_ i: Int) -> NSRect {
-        if compactW != nil { return NSRect(x: 104, y: cTop() + Self.cRowH * CGFloat(i) + 16, width: bounds.width - 114, height: 11) }
+        if compactW != nil { let x = 10 + cBarW() + 8; return NSRect(x: x, y: cTop() + Self.cRowH * CGFloat(i) + 16, width: bounds.width - 10 - x, height: 11) }
         if vertical { let c = cardRect(i); return NSRect(x: c.minX + Self.vColW + 6, y: c.minY + 18, width: c.width - Self.vColW - 6, height: Self.cardChartH) }
         return NSRect(x: sparkX0, y: Self.top(brake) + Self.rowH * CGFloat(i) + 3, width: Self.sparkW, height: Self.sparkH)
     }
@@ -1545,7 +1522,9 @@ final class AccountBlockView: NSView {
         if brake != nil { badgeColor.setFill(); NSBezierPath(roundedRect: NSRect(x: 0, y: 1, width: 3, height: bounds.height - 2), xRadius: 1.5, yRadius: 1.5).fill() }
         icon?.draw(in: NSRect(x: 10, y: 7, width: 13, height: 13), from: .zero, operation: .sourceOver, fraction: 1)
         var right = W - 8
-        if let b = badge {
+        if badge == "libero" {
+            badgeColor.setFill(); NSBezierPath(ovalIn: NSRect(x: right - 7, y: 10, width: 6, height: 6)).fill(); right -= 13
+        } else if let b = badge {
             let attr: [NSAttributedString.Key: Any] = [.font: NSFont.systemFont(ofSize: 10, weight: .semibold), .foregroundColor: badgeColor]
             // il badge del freno dice già l'ora nella riga sotto: nella card basta la parola
             let t = (b.components(separatedBy: " fino").first ?? b) as NSString
@@ -1567,12 +1546,13 @@ final class AccountBlockView: NSView {
         for (i, bar) in bars.enumerated() {
             let y = y0 + Self.cRowH * CGFloat(i)
             let la: [NSAttributedString.Key: Any] = [.font: NSFont.systemFont(ofSize: 10.5), .foregroundColor: NSColor.secondaryLabelColor]
-            (bar.label as NSString).draw(at: NSPoint(x: 10, y: y + 1), withAttributes: la)
+            let label = (Self.shortLabels[bar.label] ?? bar.label) as NSString
+            label.draw(at: NSPoint(x: 10, y: y + 1), withAttributes: la)
             let va: [NSAttributedString.Key: Any] = [.font: NSFont.monospacedDigitSystemFont(ofSize: 11.5, weight: .bold), .foregroundColor: bar.color]
             let vs = bar.value as NSString, vw = vs.size(withAttributes: va).width
             vs.draw(at: NSPoint(x: W - 10 - vw, y: y), withAttributes: va)
             // la nota tra etichetta e numero; col mouse sul grafico diventa «quando · quanto»
-            let lx = 10 + (bar.label as NSString).size(withAttributes: la).width + 6
+            let lx = 10 + label.size(withAttributes: la).width + 6
             var note = bar.note, na = small
             let sr = sparkRect(i)
             if let hv = hover, hv.row == i, let pts = bar.spark, pts.count >= 2 {
@@ -1584,10 +1564,11 @@ final class AccountBlockView: NSView {
             (note as NSString).draw(with: NSRect(x: lx, y: y + 2, width: max(0, W - 16 - vw - lx), height: 14), options: [.usesLineFragmentOrigin, .truncatesLastVisibleLine], attributes: na)
             let ty = y + 19
             NSColor.labelColor.withAlphaComponent(0.12).setFill()
-            NSBezierPath(roundedRect: NSRect(x: 10, y: ty, width: 86, height: 5), xRadius: 2.5, yRadius: 2.5).fill()
-            let fw = max(min(86 * CGFloat(bar.frac), 86), bar.frac > 0 ? 5 : 0)
+            let bw = cBarW()
+            NSBezierPath(roundedRect: NSRect(x: 10, y: ty, width: bw, height: 5), xRadius: 2.5, yRadius: 2.5).fill()
+            let fw = max(min(bw * CGFloat(bar.frac), bw), bar.frac > 0 ? 5 : 0)
             if fw > 0 { bar.color.setFill(); NSBezierPath(roundedRect: NSRect(x: 10, y: ty, width: fw, height: 5), xRadius: 2.5, yRadius: 2.5).fill() }
-            if let m = bar.mark { NSColor.labelColor.setFill(); NSRect(x: 10 + 86 * CGFloat(min(max(m, 0), 1)) - 1, y: ty - 2, width: 2, height: 9).fill() }
+            if let m = bar.mark { NSColor.labelColor.setFill(); NSRect(x: 10 + bw * CGFloat(min(max(m, 0), 1)) - 1, y: ty - 2, width: 2, height: 9).fill() }
             if let pts = bar.spark, pts.count >= 2 { drawSpark(pts, rect: sr, color: bar.color, scaleMax: bar.scaleMax) }
         }
     }
@@ -1656,14 +1637,15 @@ final class AccountBlockView: NSView {
     }
 }
 
-// Le card degli account affiancate: due colonne, le card di una riga alte uguali. La griglia prende la larghezza vera
+// Le card degli account affiancate: tre colonne, le card di una riga alte uguali. La griglia prende la larghezza vera
 // del menu (AppKit allarga le viste con .width), margini uguali ai due lati; una card rimasta sola occupa tutta la riga.
 let gridPad: CGFloat = 14, gridGap: CGFloat = 8
-let gridColW: CGFloat = (blockW - 2 * gridPad - gridGap) / 2
+let gridCols = 3
+let gridColW: CGFloat = (blockW - 2 * gridPad - gridGap * CGFloat(gridCols - 1)) / CGFloat(gridCols)
 final class GridView: NSView {
     override var isFlipped: Bool { true }
     private let cards: [NSView], cols: Int
-    init(_ views: [NSView], cols: Int = 2) {
+    init(_ views: [NSView], cols: Int = gridCols) {
         cards = views; self.cols = cols
         var y: CGFloat = 3
         for start in stride(from: 0, to: views.count, by: cols) { y += (views[start..<min(start + cols, views.count)].map { $0.frame.height }.max() ?? 0) + gridGap }
@@ -1730,14 +1712,15 @@ func accountBlock(_ p: Provider, _ a: Account, renewal: Renewal? = nil, credit: 
     func make(_ badge: String?, _ bc: NSColor, _ brake: String?, _ bars: [BarSpec], _ single: NSAttributedString?) -> NSMenuItem {
         let it = NSMenuItem()
         let v = AccountBlockView(icon: icon, name: name, caption: caption, badge: badge, badgeColor: bc, brake: brake, bars: bars, single: single, compactW: compactW)
+        v.url = serviceURL[p.id]
         // nella card il prezzo e il rinnovo non ci stanno accanto al nome: vanno nel suggerimento
-        let t = compactW != nil && caption != nil ? caption! + "\n" + tip : tip
+        var t = compactW != nil && caption != nil ? caption! + "\n" + tip : tip
+        if v.url != nil { t += "\n\nClic: apre la pagina dei consumi di \(p.name) (nel browser, con l'account che vi è collegato)" }
         v.toolTip = t; it.view = v; it.toolTip = t
         return it
     }
-    if w.usedPct >= 100 {
-        return make("esaurito", toneBad, nil, [], two("esaurito", " · torna \(w.resetsAt.map(resetText) ?? w.resetText)", toneBad))
-    }
+    // esaurito: si tengono le barre, così restano in vista il reset, il bonus e i modelli con quota propria
+    let empty = w.usedPct >= 100
     let gate = liveGates?.providers?[p.id]
     let wait = accountWait(p, a)
     // Frenato = questo account ha un motivo suo nel freno; il provider frenato per un altro account non lo colora.
@@ -1746,8 +1729,8 @@ func accountBlock(_ p: Provider, _ a: Account, renewal: Renewal? = nil, credit: 
     let until = wait?.until.map { Int($0 / 1000) }
     // Dato vecchio (Muse dal 21/10 spesso non manda la quota): si dice in chiaro, invece di un grigio senza spiegazione
     let old = w.status == "stale"
-    let badge: String? = braked ? "frenato" + (until.map { " fino alle " + hhmmText($0) } ?? "") : old ? "dato vecchio" : gate != nil ? "libero" : nil
-    let bcol: NSColor = braked ? toneWarn : old ? .secondaryLabelColor : toneOK
+    let badge: String? = empty ? "esaurito" : braked ? "frenato" + (until.map { " fino alle " + hhmmText($0) } ?? "") : old ? "dato vecchio" : gate != nil ? "libero" : nil
+    let bcol: NSColor = empty ? toneBad : braked ? toneWarn : old ? .secondaryLabelColor : toneOK
     let brakeLine = wait.map(resumeText) ?? (old ? "\(p.name) adesso non manda la quota: questa è l'ultima lettura (\(w.resetText)), il freno usa lei" : nil)
     var bars: [BarSpec] = []
     var expected: Double?
@@ -1755,7 +1738,7 @@ func accountBlock(_ p: Provider, _ a: Account, renewal: Renewal? = nil, credit: 
     let ratio = (expected ?? 0) >= 5 ? Double(w.usedPct) / expected! : 0
     let wtone = paceTone(ratio)
     bars.append(BarSpec(label: "Settimana", frac: Double(w.usedPct) / 100, mark: expected.map { $0 / 100 }, color: old ? .secondaryLabelColor : wtone,
-                        value: "\(w.usedPct)%", spark: w.history, note: w.resetsAt.map { "azzera " + resetText($0) } ?? w.resetText))
+                        value: "\(w.usedPct)%", spark: w.history, note: w.resetsAt.map { (empty ? "torna " : "azzera ") + resetText($0) } ?? w.resetText))
     if TrayPrefs.showDaily, let f = a.quotas.first(where: { $0.key.lowercased() == "5h" }) {
         let tone: NSColor = f.usedPct >= 95 ? toneBad : f.usedPct >= 80 ? toneWarn : toneOK
         bars.append(BarSpec(label: "5 ore", frac: Double(f.usedPct) / 100, mark: nil, color: tone,
@@ -1775,6 +1758,13 @@ func accountBlock(_ p: Provider, _ a: Account, renewal: Renewal? = nil, credit: 
         bars.append(BarSpec(label: "Bonus", frac: used / lim, mark: nil, color: tone, value: money(left, decimals: 0),
                             spark: nil, note: "rimasti" + (c.renewsAt.map { " · scade " + dayMonth($0) } ?? "")))
     }
+    for m in credit?.models ?? [] {
+        let pct = m.pct ?? 0
+        let tone: NSColor = pct >= 95 ? toneBad : pct >= 80 ? toneWarn : toneOK
+        let reset = m.resets.flatMap { ISO8601DateFormatter().date(from: $0.replacingOccurrences(of: #"\.\d+"#, with: "", options: .regularExpression)) }
+        bars.append(BarSpec(label: m.name, frac: pct / 100, mark: nil, color: tone, value: "\(Int(pct.rounded()))%",
+                            spark: nil, note: "quota sua" + (reset.map { " · azzera " + resetText(Int($0.timeIntervalSince1970)) } ?? "")))
+    }
     if TrayPrefs.showApi, let api = a.apiSpend {
         let tone = api.status == "unknown" ? NSColor.secondaryLabelColor : statusColor(api.status)
         bars.append(BarSpec(label: "API", frac: Double(api.usedPct) / 100, mark: nil, color: tone,
@@ -1783,6 +1773,9 @@ func accountBlock(_ p: Provider, _ a: Account, renewal: Renewal? = nil, credit: 
     }
     return make(badge, bcol, brakeLine, bars, nil)
 }
+
+// Pagina dei consumi del servizio: Muse non ne ha una nota, niente link inventati
+let serviceURL: [String: String] = ["claude": "https://claude.ai/settings/usage", "codex": "https://chatgpt.com/codex/settings/usage"]
 
 func hhmmText(_ epoch: Int) -> String {
     let f = DateFormatter(); f.locale = Locale(identifier: "it_IT")
@@ -2025,7 +2018,10 @@ func liveAgentRows(actionTarget: AnyObject?) -> [NSMenuItem] {
         let name = pr.title ?? pr.name
         let line = NSMutableAttributedString(attributedString: txt(name.count > 30 ? String(name.prefix(29)) + "…" : name, rowFont))
         // a destra quanto consuma adesso (token nell'ultima ora), poi modello e da quanto; sotto il giro intero
-        if let u = g.use, u.hourTokens > 0 { line.append(txt("\t\(tokText(u.hourTokens))/h", rowNum, .labelColor)) } else { line.append(txt("\t", rowNum)) }
+        // provider frenato: la sessione aperta continua, ma lo si dice sulla riga invece che in un banner
+        let braked = liveGates?.providers?[g.provider]?.state == "frenato"
+        line.append(txt("\t" + (braked ? "frenato" : ""), rowNum, toneWarn))
+        if let u = g.use, u.hourTokens > 0 { line.append(txt((braked ? " · " : "") + "\(tokText(u.hourTokens))/h", rowNum, .labelColor)) }
         line.append(txt("\t\(g.model)\(n > 1 ? " ×\(n)" : "") · \(durText(nowMs() - g.startedAt))", rowNum, .secondaryLabelColor))
         let what = [g.title.isEmpty ? nil : g.title, g.kind == "sessione" || name.lowercased().contains(g.kind) ? nil : g.kind].compactMap { $0 }.joined(separator: " · ")
         let useText = g.use.map { u in "\(tokText(u.tokens)) token nel giro" + (u.pct.map { $0 >= 0.05 ? " · " + String(format: "%.1f", $0).replacingOccurrences(of: ".", with: ",") + "% della settimana" : "" } ?? "") }
@@ -2041,6 +2037,38 @@ func liveAgentRows(actionTarget: AnyObject?) -> [NSMenuItem] {
     let rest = all.count - rows.prefix(agentsShown).reduce(0) { $0 + $1.n }
     if rest > 0 { out.append(noteRow("e altri \(rest): tutti in Progetti o nella dashboard")) }
     return out
+}
+
+// Freno: stato per abbonamento e i comandi dell'hub (/api/override sblocca a tempo, /api/hold ferma i lavori nuovi).
+func brakeMenuItem(actionTarget: AnyObject?) -> NSMenuItem {
+    let braked = brakedProviders()
+    let ov = liveGates?.overrides ?? []
+    let hold = ov.first { $0.hold == true }
+    let detail = braked.isEmpty ? (hold != nil ? "lavori nuovi fermi fino alle " + hhmmText(Int(hold!.until / 1000)) : "nessun freno")
+        : braked.map { id in pName(id) + (liveGates?.providers?[id]?.waitUntil.map { " fino alle " + hhmmText(Int($0 / 1000)) } ?? "") }.joined(separator: " · ") + (braked.count > 1 ? " frenati" : " frenato")
+    let it = richRow(icon: sym("hand.raised", color: braked.isEmpty ? nil : toneWarn), txt("Freno", rowFont), detail: detail)
+    let sub = NSMenu(); sub.autoenablesItems = false
+    func act(_ title: String, _ path: String, _ method: String, _ body: [String: Any]) {
+        let m = NSMenuItem(title: title, action: #selector(AppDelegate.brakeAction(_:)), keyEquivalent: "")
+        m.target = actionTarget; m.representedObject = ["path": path, "method": method, "body": body] as [String: Any]
+        sub.addItem(m)
+    }
+    for id in ["claude", "codex", "muse"] {
+        guard let st = liveGates?.providers?[id] else { continue }
+        let until = st.waitUntil.map { " fino alle " + hhmmText(Int($0 / 1000)) } ?? ""
+        sub.addItem(richRow(icon: providerSym(id), txt(pName(id), rowFont), detail: st.state == "frenato" ? "frenato\(until) · \(st.reason)" : st.state, enabled: false, wrap: 70))
+        if let o = ov.first(where: { $0.provider == id && $0.hold != true }) {
+            act("Togli lo sblocco di \(pName(id)) (attivo fino alle \(hhmmText(Int(o.until / 1000))))", "/api/override?provider=\(id)", "DELETE", [:])
+        } else if st.state == "frenato" {
+            act("Sblocca \(pName(id)) per 2 ore", "/api/override", "POST", ["provider": id, "hours": 2])
+        }
+    }
+    sub.addItem(.separator())
+    if let h = hold { act("Riprendi i lavori in background (fermi fino alle \(hhmmText(Int(h.until / 1000))))", "/api/hold", "DELETE", [:]) }
+    else { act("Ferma i lavori nuovi in background per 1 ora", "/api/hold", "POST", ["hours": 1]) }
+    sub.addItem(noteRow("Le sessioni aperte non si fermano mai: il freno vale per i lavori nuovi"))
+    it.submenu = sub
+    return it
 }
 
 // Hub che non risponde: ultimo dato buono e se è spento (niente in ascolto) o vivo ma lento (Mac sotto sforzo).
@@ -2069,8 +2097,6 @@ func buildMenu(snapshot: Overview?, isOffline: Bool, actionTarget: AnyObject?) -
         menu.addItem(hubLagRow(hubLag ?? HubLag(lastOK: nil, refused: true), offline: true))
     } else {
         if let lag = hubLag { menu.addItem(hubLagRow(lag, offline: false)) }
-        menu.addItem(statusRow(snapshot))
-        menu.addItem(.separator())
         let providers = snapshot?.providers ?? []
         let renewals = snapshot?.renewals ?? []
         let cmap = creditMap(snapshot)
@@ -2161,6 +2187,7 @@ func buildMenu(snapshot: Overview?, isOffline: Bool, actionTarget: AnyObject?) -
         menu.addItem(.separator())
         let det = richRow(icon: sym("slider.horizontal.3"), txt("Altri abbonamenti e opzioni", rowFont)); det.submenu = details
         menu.addItem(det)
+        menu.addItem(brakeMenuItem(actionTarget: actionTarget))
         if let pj = projectsMenuItem(actionTarget: actionTarget) { menu.addItem(pj) }
     }
     // con l'hub giù il blocco Mac non c'è: la finestra Processi legge tutto in locale e resta raggiungibile
@@ -2421,6 +2448,17 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     @objc func setProjectPriority(_ sender: NSMenuItem) {
         guard let o = sender.representedObject as? [String: Any], let name = o["name"] as? String, let p = o["priority"] as? String else { return }
         postProjectSetting(["name": name, "priority": p])
+    }
+    @objc func brakeAction(_ sender: NSMenuItem) {
+        guard let o = sender.representedObject as? [String: Any], let path = o["path"] as? String, let method = o["method"] as? String,
+              let url = URL(string: hubURL + path) else { return }
+        var req = URLRequest(url: url); req.httpMethod = method; req.timeoutInterval = 10
+        if method == "POST", let b = o["body"] as? [String: Any] {
+            req.setValue("application/json", forHTTPHeaderField: "content-type")
+            var body = b; body["by"] = "tray"
+            req.httpBody = try? JSONSerialization.data(withJSONObject: body)
+        }
+        URLSession.shared.dataTask(with: req) { [weak self] _, _, _ in fetchLive { self?.rebuildMenu() } }.resume()
     }
     @objc func toggleDaily() { TrayPrefs.showDaily.toggle(); rebuildMenu() }
     @objc func toggleApi() { TrayPrefs.showApi.toggle(); rebuildMenu() }

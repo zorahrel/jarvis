@@ -25,6 +25,12 @@ const tag = (base, name) => (name ? `${base}-${name}` : base);
 // {nobonus: true, asOf}. Senza scadenza: si mostra con la sua età.
 const CREDIT_MAP_PATH = path.join(os.homedir(), ".cache", "claude-usage-tray", "credit-last.json");
 
+// Modelli con una quota settimanale tutta loro (campo `models` di credito-cloud): [{name, pct, resets}]
+export function parseModels(out) {
+  const list = Array.isArray(out?.models) ? out.models : null;
+  return list && list.filter((m) => m && typeof m.name === "string").map((m) => ({ name: m.name, pct: typeof m.pct === "number" ? m.pct : null, resets: typeof m.resets === "string" ? m.resets : null }));
+}
+
 export function parseCloudCredit(out) {
   const b = out?.iguana_necktie;
   if (!b || typeof b.remaining_dollars !== "number") return null;
@@ -35,6 +41,7 @@ export function parseCloudCredit(out) {
     limit: typeof b.limit_dollars === "number" ? r2(b.limit_dollars) : null,
     used: typeof b.used_dollars === "number" ? r2(b.used_dollars) : null,
     renewsAt: m ? m[1] : null,
+    ...(parseModels(out) ? { models: parseModels(out) } : {}),
   };
 }
 
@@ -61,7 +68,7 @@ export function classifyCreditOutput(stdout) {
     return { kind: "failed" };
   }
   if (parsed && typeof parsed === "object" && parsed.iguana_necktie == null) {
-    return { kind: "nobonus" };
+    return { kind: "nobonus", ...(parseModels(parsed) ? { models: parseModels(parsed) } : {}) };
   }
   const value = parseCloudCredit(parsed);
   return value ? { kind: "live", value } : { kind: "failed" };
@@ -131,10 +138,12 @@ export function mergeCreditMap(map, probed, nowSec = Math.floor(Date.now() / 100
   const keyed = typeof acct === "string" && acct.includes("@") ? acct : null;
   let liveLogin = null;
   let changed = false;
+  const models = keyed ? (probed.models ?? next[keyed]?.models) : undefined;
+  const withModels = (e) => (models ? { ...e, models } : e);
   if (keyed && probed && typeof probed.remaining === "number") {
     if (!probed.stale) {
-      next[keyed] = { remaining: probed.remaining, limit: probed.limit ?? null,
-        used: probed.used ?? null, renewsAt: probed.renewsAt ?? null, asOf: nowSec };
+      next[keyed] = withModels({ remaining: probed.remaining, limit: probed.limit ?? null,
+        used: probed.used ?? null, renewsAt: probed.renewsAt ?? null, asOf: nowSec });
       liveLogin = keyed;
       changed = true;
     } else if (!next[keyed]) {
@@ -144,7 +153,7 @@ export function mergeCreditMap(map, probed, nowSec = Math.floor(Date.now() / 100
       changed = true;
     }
   } else if (keyed && probed?.nobonus) {
-    next[keyed] = { nobonus: true, asOf: nowSec };
+    next[keyed] = withModels({ nobonus: true, asOf: nowSec });
     changed = true;
   }
   const credits = {};
@@ -227,7 +236,7 @@ async function probeOne(name, email) {
   }
   if (c.kind === "nobonus") {
     if (email) mark(tag(NOBONUS_PATH, name), `${email}|${Date.now()}`);
-    return { nobonus: true, account: email };
+    return { nobonus: true, account: email, ...(c.models ? { models: c.models } : {}) };
   }
   mark(tag(QUIET_PATH, name));
   if (ownedByOther(email, tag(LAST_PATH, name))) return null;
