@@ -37,6 +37,20 @@ function cardFeedback(fb) {
   return { vote: fb.vote || null, changedSinceVote: !!fb.changedSinceVote, mute: fb.mute || null, open: (fb.open || []).length, notes: fb.notes || [] };
 }
 
+// Gli ultimi esiti per la barra di storico: le stesse fonti di last, ma solo esiti chiusi (niente «in corso»).
+// Più recenti per primi. Le fonti portano fino a 10 giri, launchd e Claude desktop solo l'ultimo.
+const HIST_MAX = 20;
+const HIST_OUT = { ok: 'ok', error: 'error', interrupted: 'error', failed: 'error', timed_out: 'error', skipped: 'skipped', cancelled: 'skipped', neutral: 'skipped' };
+const newestFirst = (xs) => xs.sort((a, b) => (b.at ?? 0) - (a.at ?? 0)).slice(0, HIST_MAX);
+export function historyOf(item) {
+  const out = [];
+  for (const r of item.runs || []) {
+    const outcome = HIST_OUT[r?.outcome];
+    if (outcome) out.push({ at: r.at ?? null, outcome });
+  }
+  return newestFirst(out);
+}
+
 // Una card per un item solo.
 function singleCard(ev) {
   const { item, desc, fpv, fb, proof, level, reason, since } = ev;
@@ -52,6 +66,7 @@ function singleCard(ev) {
     next: item.next ?? null,
     nextApprox: !!item.nextApprox,
     last: item.last,
+    history: historyOf(item),
     proof: proof || null,
     runsToday: item.runsToday ?? 0,
     group: desc?.group || null,
@@ -87,6 +102,7 @@ function fusedCard(name, members, descriptions) {
     next: primary.item.next ?? null,
     nextApprox: !!primary.item.nextApprox,
     last: primary.item.last,
+    history: newestFirst(members.flatMap((m) => historyOf(m.item))),
     proof: members.find((m) => m.proof && m.proof.ok === false)?.proof || members.find((m) => m.proof)?.proof || null,
     runsToday: members.reduce((s, m) => s + (m.item.runsToday || 0), 0),
     group: odesc?.group || null,

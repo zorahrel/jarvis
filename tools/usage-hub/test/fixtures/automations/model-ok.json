@@ -31,6 +31,12 @@
             "delivered": "none",
             "error": null
           },
+          "history": [
+            {
+              "at": 1792753200000,
+              "outcome": "ok"
+            }
+          ],
           "proof": null,
           "runsToday": 1,
           "group": "arriva",
@@ -85,6 +91,20 @@
             "delivered": "none",
             "error": null
           },
+          "history": [
+            {
+              "at": 1792763970000,
+              "outcome": "ok"
+            },
+            {
+              "at": 1792763910000,
+              "outcome": "ok"
+            },
+            {
+              "at": 1792763850000,
+              "outcome": "ok"
+            }
+          ],
           "proof": null,
           "runsToday": 240,
           "group": "arriva",
@@ -145,6 +165,12 @@
             "delivered": null,
             "error": null
           },
+          "history": [
+            {
+              "at": 1792692000000,
+              "outcome": "ok"
+            }
+          ],
           "proof": null,
           "runsToday": 1,
           "group": "arriva",
@@ -205,6 +231,7 @@
             "delivered": null,
             "error": null
           },
+          "history": [],
           "proof": null,
           "runsToday": 0,
           "group": "arriva",
@@ -265,6 +292,12 @@
             "delivered": "delivered",
             "error": null
           },
+          "history": [
+            {
+              "at": 1792762800000,
+              "outcome": "ok"
+            }
+          ],
           "proof": null,
           "runsToday": 12,
           "group": "arriva",
@@ -331,6 +364,12 @@
             "delivered": null,
             "error": null
           },
+          "history": [
+            {
+              "at": 1792746000000,
+              "outcome": "ok"
+            }
+          ],
           "proof": null,
           "runsToday": 1,
           "group": "dati",
@@ -391,6 +430,12 @@
             "delivered": "none",
             "error": null
           },
+          "history": [
+            {
+              "at": 1792718340000,
+              "outcome": "ok"
+            }
+          ],
           "proof": null,
           "runsToday": 1,
           "group": "dati",
@@ -451,6 +496,12 @@
             "delivered": null,
             "error": null
           },
+          "history": [
+            {
+              "at": 1792760400000,
+              "outcome": "ok"
+            }
+          ],
           "proof": null,
           "runsToday": 3,
           "group": "dati",
@@ -511,6 +562,12 @@
             "delivered": "none",
             "error": null
           },
+          "history": [
+            {
+              "at": 1792591200000,
+              "outcome": "ok"
+            }
+          ],
           "proof": null,
           "runsToday": 0,
           "group": "dati",
@@ -577,6 +634,12 @@
             "delivered": null,
             "error": null
           },
+          "history": [
+            {
+              "at": 1792731600000,
+              "outcome": "ok"
+            }
+          ],
           "proof": null,
           "runsToday": 1,
           "group": "quote",
@@ -637,6 +700,12 @@
             "delivered": "none",
             "error": null
           },
+          "history": [
+            {
+              "at": 1792756800000,
+              "outcome": "ok"
+            }
+          ],
           "proof": null,
           "runsToday": 3,
           "group": "quote",
@@ -697,6 +766,12 @@
             "delivered": "none",
             "error": null
           },
+          "history": [
+            {
+              "at": 1792742400000,
+              "outcome": "ok"
+            }
+          ],
           "proof": null,
           "runsToday": 1,
           "group": "quote",
@@ -757,6 +832,16 @@
             "delivered": "none",
             "error": null
           },
+          "history": [
+            {
+              "at": 1792763880000,
+              "outcome": "ok"
+            },
+            {
+              "at": 1792763580000,
+              "outcome": "ok"
+            }
+          ],
           "proof": null,
           "runsToday": 190,
           "group": "macchine",
@@ -817,6 +902,12 @@
             "delivered": null,
             "error": null
           },
+          "history": [
+            {
+              "at": 1792738800000,
+              "outcome": "ok"
+            }
+          ],
           "proof": null,
           "runsToday": 1,
           "group": "macchine",
@@ -877,6 +968,12 @@
             "delivered": "none",
             "error": null
           },
+          "history": [
+            {
+              "at": 1792762200000,
+              "outcome": "ok"
+            }
+          ],
           "proof": null,
           "runsToday": 15,
           "group": "macchine",
@@ -931,6 +1028,12 @@
             "delivered": "none",
             "error": null
           },
+          "history": [
+            {
+              "at": 1792504800000,
+              "outcome": "ok"
+            }
+          ],
           "proof": null,
           "runsToday": 0,
           "group": "macchine",
@@ -985,6 +1088,12 @@
             "delivered": null,
             "error": null
           },
+          "history": [
+            {
+              "at": 1792735200000,
+              "outcome": "ok"
+            }
+          ],
           "proof": null,
           "runsToday": 1,
           "group": "macchine",
@@ -1051,6 +1160,12 @@
             "delivered": "none",
             "error": null
           },
+          "history": [
+            {
+              "at": 1792731600000,
+              "outcome": "ok"
+            }
+          ],
           "proof": null,
           "runsToday": 1,
           "group": "prodotti",
@@ -1111,6 +1226,12 @@
             "delivered": null,
             "error": null
           },
+          "history": [
+            {
+              "at": 1792591200000,
+              "outcome": "ok"
+            }
+          ],
           "proof": null,
           "runsToday": 0,
           "group": "prodotti",
@@ -1171,6 +1292,12 @@
             "delivered": "none",
             "error": null
           },
+          "history": [
+            {
+              "at": 1792728000000,
+              "outcome": "ok"
+            }
+          ],
           "proof": null,
           "runsToday": 1,
           "group": "prodotti",
@@ -1464,6 +1591,12 @@
         "delivered": "none",
         "error": null
       },
+      "history": [
+        {
+          "at": 1792753200000,
+          "outcome": "ok"
+        }
+      ],
       "proof": null,
       "runsToday": 1,
       "group": "arriva",
@@ -1518,6 +1651,20 @@
         "delivered": "none",
         "error": null
       },
+      "history": [
+        {
+          "at": 1792763970000,
+          "outcome": "ok"
+        },
+        {
+          "at": 1792763910000,
+          "outcome": "ok"
+        },
+        {
+          "at": 1792763850000,
+          "outcome": "ok"
+        }
+      ],
       "proof": null,
       "runsToday": 240,
       "group": "arriva",
@@ -1578,6 +1725,12 @@
         "delivered": null,
         "error": null
       },
+      "history": [
+        {
+          "at": 1792692000000,
+          "outcome": "ok"
+        }
+      ],
       "proof": null,
       "runsToday": 1,
       "group": "arriva",
@@ -1638,6 +1791,7 @@
         "delivered": null,
         "error": null
       },
+      "history": [],
       "proof": null,
       "runsToday": 0,
       "group": "arriva",
@@ -1698,6 +1852,12 @@
         "delivered": "delivered",
         "error": null
       },
+      "history": [
+        {
+          "at": 1792762800000,
+          "outcome": "ok"
+        }
+      ],
       "proof": null,
       "runsToday": 12,
       "group": "arriva",
@@ -1758,6 +1918,12 @@
         "delivered": null,
         "error": null
       },
+      "history": [
+        {
+          "at": 1792746000000,
+          "outcome": "ok"
+        }
+      ],
       "proof": null,
       "runsToday": 1,
       "group": "dati",
@@ -1818,6 +1984,12 @@
         "delivered": "none",
         "error": null
       },
+      "history": [
+        {
+          "at": 1792718340000,
+          "outcome": "ok"
+        }
+      ],
       "proof": null,
       "runsToday": 1,
       "group": "dati",
@@ -1878,6 +2050,12 @@
         "delivered": null,
         "error": null
       },
+      "history": [
+        {
+          "at": 1792760400000,
+          "outcome": "ok"
+        }
+      ],
       "proof": null,
       "runsToday": 3,
       "group": "dati",
@@ -1938,6 +2116,12 @@
         "delivered": "none",
         "error": null
       },
+      "history": [
+        {
+          "at": 1792591200000,
+          "outcome": "ok"
+        }
+      ],
       "proof": null,
       "runsToday": 0,
       "group": "dati",
@@ -1998,6 +2182,12 @@
         "delivered": null,
         "error": null
       },
+      "history": [
+        {
+          "at": 1792731600000,
+          "outcome": "ok"
+        }
+      ],
       "proof": null,
       "runsToday": 1,
       "group": "quote",
@@ -2058,6 +2248,12 @@
         "delivered": "none",
         "error": null
       },
+      "history": [
+        {
+          "at": 1792756800000,
+          "outcome": "ok"
+        }
+      ],
       "proof": null,
       "runsToday": 3,
       "group": "quote",
@@ -2118,6 +2314,12 @@
         "delivered": "none",
         "error": null
       },
+      "history": [
+        {
+          "at": 1792742400000,
+          "outcome": "ok"
+        }
+      ],
       "proof": null,
       "runsToday": 1,
       "group": "quote",
@@ -2172,6 +2374,16 @@
         "delivered": "none",
         "error": null
       },
+      "history": [
+        {
+          "at": 1792763880000,
+          "outcome": "ok"
+        },
+        {
+          "at": 1792763580000,
+          "outcome": "ok"
+        }
+      ],
       "proof": null,
       "runsToday": 190,
       "group": "macchine",
@@ -2232,6 +2444,12 @@
         "delivered": null,
         "error": null
       },
+      "history": [
+        {
+          "at": 1792738800000,
+          "outcome": "ok"
+        }
+      ],
       "proof": null,
       "runsToday": 1,
       "group": "macchine",
@@ -2292,6 +2510,12 @@
         "delivered": "none",
         "error": null
       },
+      "history": [
+        {
+          "at": 1792762200000,
+          "outcome": "ok"
+        }
+      ],
       "proof": null,
       "runsToday": 15,
       "group": "macchine",
@@ -2346,6 +2570,12 @@
         "delivered": "none",
         "error": null
       },
+      "history": [
+        {
+          "at": 1792504800000,
+          "outcome": "ok"
+        }
+      ],
       "proof": null,
       "runsToday": 0,
       "group": "macchine",
@@ -2400,6 +2630,12 @@
         "delivered": null,
         "error": null
       },
+      "history": [
+        {
+          "at": 1792735200000,
+          "outcome": "ok"
+        }
+      ],
       "proof": null,
       "runsToday": 1,
       "group": "macchine",
@@ -2460,6 +2696,12 @@
         "delivered": "none",
         "error": null
       },
+      "history": [
+        {
+          "at": 1792731600000,
+          "outcome": "ok"
+        }
+      ],
       "proof": null,
       "runsToday": 1,
       "group": "prodotti",
@@ -2520,6 +2762,12 @@
         "delivered": null,
         "error": null
       },
+      "history": [
+        {
+          "at": 1792591200000,
+          "outcome": "ok"
+        }
+      ],
       "proof": null,
       "runsToday": 0,
       "group": "prodotti",
@@ -2580,6 +2828,12 @@
         "delivered": "none",
         "error": null
       },
+      "history": [
+        {
+          "at": 1792728000000,
+          "outcome": "ok"
+        }
+      ],
       "proof": null,
       "runsToday": 1,
       "group": "prodotti",
