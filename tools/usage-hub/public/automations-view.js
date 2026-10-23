@@ -139,12 +139,19 @@
     return '<details class="tech"><summary>Dettagli tecnici</summary>' + rows.join('') + '</details>';
   }
 
+  // Stato in parole con un glifo: mai solo colore. Le schede che funzionano non hanno chip.
+  function chipHtml(level) {
+    if (level === 'te') return '<span class="au-chip te">▲ Ti aspetta</span>';
+    if (level === 'rotto') return '<span class="au-chip rotto">✕ Rotta</span>';
+    return '';
+  }
+
   // La card intera, usata nelle sezioni in alto e dentro le righe dei gruppi.
   function card(c, ui, now) {
     var fb = c.feedback || {};
     var h = '<article class="au-card lv-' + esc(c.level || 'va') + '" tabindex="0" data-key="' + esc(c.key) + '"' +
       (c.fp ? ' data-fp="' + esc(c.fp) + '"' : '') + '>';
-    h += '<h4>' + esc(c.title) + ((c.sources || []).length > 1 ? ' <span class="pill">vista da ' + c.sources.length + ' fonti</span>' : '') + '</h4>';
+    h += '<h4>' + chipHtml(c.level) + esc(c.title) + ((c.sources || []).length > 1 ? ' <span class="pill">vista da ' + c.sources.length + ' fonti</span>' : '') + '</h4>';
     if ((c.level === 'te' || c.level === 'rotto') && c.reason) h += '<p class="au-why">' + esc(c.reason) + '</p>';
     if (c.cosa) h += '<p class="au-what" title="Tocca per leggere tutto">' + esc(c.cosa) + '</p>';
     if (c.means) h += '<div class="small mut">Ti scrive: ' + esc(c.means) + '</div>';
@@ -160,9 +167,10 @@
     h += '<div class="au-act">' +
       '<button class="b" data-fb="ok" aria-keyshortcuts="v"' + pressed('ok') + '>Va bene</button>' +
       '<button class="b" data-fb="cambia" aria-keyshortcuts="c"' + pressed('cambia') + '>Da cambiare</button>' +
+      '<details class="au-more"><summary class="b">Altro</summary><div class="au-morebox">' +
       '<button class="b" data-fb="nota" aria-keyshortcuts="n">Nota</button>' +
       '<button class="b" data-fb="segnala" aria-keyshortcuts="s">Segnala</button>' +
-      '<button class="b" data-fb="muta" aria-keyshortcuts="m">Non avvisarmi più</button></div>';
+      '<button class="b" data-fb="muta" aria-keyshortcuts="m">Non avvisarmi più</button></div></details></div>';
     h += techHtml(c, now);
     return h + '</article>';
   }

@@ -280,6 +280,7 @@ let cur;
 function show(t) {
   if (!TABS[t]) t = 'overview';
   cur = t; location.hash = t;
+  $('nav').querySelector(`[data-t="${t}"]`)?.scrollIntoView({ inline: 'nearest', block: 'nearest' });
   document.querySelectorAll('#nav button').forEach((b) => b.classList.toggle('on', b.dataset.t === t));
   document.querySelectorAll('.tab').forEach((d) => d.classList.toggle('on', d.id === 't-' + t));
   TABS[t]();
@@ -287,6 +288,7 @@ function show(t) {
 $('nav').addEventListener('click', (e) => { const b = e.target.closest('button'); if (b) show(b.dataset.t); });
 window.addEventListener('hashchange', () => { const t = location.hash.slice(1); if (t !== cur) show(t); });
 if (EMBED) { const post_ = () => parent.postMessage({ hubHeight: document.documentElement.scrollHeight + 8 }, '*'); new ResizeObserver(post_).observe(document.body); }
-show(location.hash.slice(1) || 'overview');
+show(location.hash.slice(1) || 'automations');
+$('nav').querySelector('.on')?.scrollIntoView({ inline: 'center', block: 'nearest' });
 setInterval(() => { if (['overview', 'projects', 'accounts', 'sessions', 'activity', 'automations'].includes(cur) && !document.activeElement.matches('input,select')) TABS[cur](); }, 60000);
 vdm('/api/sessions').then((s) => { if (s) { $('nsess').hidden = !(s.active || []).length; $('nsess').textContent = (s.active || []).length; } });
