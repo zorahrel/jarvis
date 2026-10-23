@@ -1194,6 +1194,7 @@ func machineItem(_ m: Machine) -> NSMenuItem {
     let it = NSMenuItem()
     let tip = "Conta la misura più vicina alla sua soglia (la tacca). Sotto sforzo, gli agenti in background di priorità bassa vanno in pausa e ripartono da soli; le sessioni aperte non si fermano mai."
     v.toolTip = tip; it.view = v; it.toolTip = tip
+    v.autoresizingMask = [.width]   // larga quanto il menu, allineata alla griglia degli account
     if m.local { it.submenu = macProcs.newMenu() }   // al passaggio: chi pesa adesso, per CPU e per memoria
     return it
 }
@@ -1416,18 +1417,20 @@ final class AccountBlockView: NSView {
         let sr = sparkRect(r); hover = (row: r, x: sr.minX + sr.width * CGFloat(f))
     }
     func sparkRect(_ i: Int) -> NSRect {
-        if let w = compactW { return NSRect(x: 104, y: cTop() + Self.cRowH * CGFloat(i) + 16, width: w - 114, height: 11) }
-        if vertical { let c = cardRect(i); return NSRect(x: c.minX + Self.vColW + 6, y: c.minY + 18, width: c.width - Self.vColW - 20, height: Self.cardChartH) }
+        if compactW != nil { return NSRect(x: 104, y: cTop() + Self.cRowH * CGFloat(i) + 16, width: bounds.width - 114, height: 11) }
+        if vertical { let c = cardRect(i); return NSRect(x: c.minX + Self.vColW + 6, y: c.minY + 18, width: c.width - Self.vColW - 6, height: Self.cardChartH) }
         return NSRect(x: sparkX0, y: Self.top(brake) + Self.rowH * CGFloat(i) + 3, width: Self.sparkW, height: Self.sparkH)
     }
     // Mac: un riquadro per misura, affiancati; dentro nome e %, barra verticale + grafico 24 h, nota sotto
     static let cardChartH: CGFloat = 38, cardH: CGFloat = 76
     func cardRect(_ i: Int) -> NSRect {
-        let w = (blockW - 38 - 16) / CGFloat(max(bars.count, 1))
-        return NSRect(x: 38 + w * CGFloat(i), y: Self.top(brake), width: w, height: Self.cardH)
+        // lo spazio sta tra i riquadri, non dentro: l'ultimo finisce sul bordo della griglia degli account
+        let n = CGFloat(max(bars.count, 1)), gap: CGFloat = 14
+        let w = (bounds.width - 38 - gridPad - gap * (n - 1)) / n
+        return NSRect(x: 38 + (w + gap) * CGFloat(i), y: Self.top(brake), width: w, height: Self.cardH)
     }
     var foot: String? { didSet { if vertical { resize() } } }
-    private func resize() { setFrameSize(NSSize(width: blockW, height: Self.top(brake) + Self.cardH + (foot != nil ? 30 : 0) + 6)) }
+    private func resize() { setFrameSize(NSSize(width: bounds.width, height: Self.top(brake) + Self.cardH + (foot != nil ? 30 : 0) + 6)) }
     // Mouse sul grafico: riga e x; il disegno mette la linea verticale e al posto della nota scrive quando e quanto.
     private var hover: (row: Int, x: CGFloat)?
     private var tipStrings: [NSString] = []
@@ -1457,6 +1460,11 @@ final class AccountBlockView: NSView {
     static func top(_ brake: String?) -> CGFloat { brake == nil ? 27 : 27 + brakeH(brake) + 4 }
     required init?(coder: NSCoder) { nil }
     override var isFlipped: Bool { true }
+    override func setFrameSize(_ s: NSSize) {
+        let changed = s.width != frame.width
+        super.setFrameSize(s)
+        if changed { removeAllToolTips(); tipStrings = []; addSparkTips() }
+    }
     override func draw(_ dirty: NSRect) {
         if compactW != nil { drawCompact(); return }
         let braked = brake != nil
@@ -1469,7 +1477,7 @@ final class AccountBlockView: NSView {
         if sub, let ch = NSImage(systemSymbolName: "chevron.right", accessibilityDescription: nil)?.withSymbolConfiguration(.init(pointSize: 10, weight: .semibold)) {
             ch.isTemplate = true
             let tinted = NSImage(size: ch.size, flipped: false) { r in ch.draw(in: r); NSColor.secondaryLabelColor.set(); r.fill(using: .sourceAtop); return true }
-            tinted.draw(in: NSRect(x: blockW - 16, y: 9, width: ch.size.width, height: ch.size.height))
+            tinted.draw(in: NSRect(x: bounds.width - 16, y: 9, width: ch.size.width, height: ch.size.height))
         }
         let badgeShift: CGFloat = sub ? 12 : 0
         // Il blocco frenato ha una striscia arancione a sinistra: si vede chi è fermo senza leggere.
@@ -1484,7 +1492,7 @@ final class AccountBlockView: NSView {
         if let b = badge {
             let attr: [NSAttributedString.Key: Any] = [.font: NSFont.systemFont(ofSize: 10.5, weight: .semibold), .foregroundColor: badgeColor]
             let sz = (b as NSString).size(withAttributes: attr)
-            let r = NSRect(x: blockW - 16 - sz.width - 14 - badgeShift, y: 5, width: sz.width + 14, height: 17)
+            let r = NSRect(x: bounds.width - 16 - sz.width - 14 - badgeShift, y: 5, width: sz.width + 14, height: 17)
             badgeColor.withAlphaComponent(0.18).setFill()
             NSBezierPath(roundedRect: r, xRadius: 8.5, yRadius: 8.5).fill()
             (b as NSString).draw(at: NSPoint(x: r.minX + 7, y: r.minY + 2), withAttributes: attr)
@@ -1602,8 +1610,8 @@ final class AccountBlockView: NSView {
         }
         if let f = foot {
             let y = Self.top(brake) + Self.cardH + 2
-            NSColor.separatorColor.setFill(); NSRect(x: 38, y: y, width: blockW - 38 - 16, height: 1).fill()
-            (f as NSString).draw(with: NSRect(x: 38, y: y + 5, width: blockW - 38 - 16, height: 26), options: [.usesLineFragmentOrigin], attributes: small)
+            NSColor.separatorColor.setFill(); NSRect(x: 38, y: y, width: bounds.width - 38 - gridPad, height: 1).fill()
+            (f as NSString).draw(with: NSRect(x: 38, y: y + 5, width: bounds.width - 38 - gridPad, height: 26), options: [.usesLineFragmentOrigin], attributes: small)
         }
     }
     // Area + linea a gradini sulla scala piena (0…100%, o 0…2× per il ritmo): niente zoom che esageri le salite.
@@ -1640,24 +1648,35 @@ final class AccountBlockView: NSView {
     }
 }
 
-// Le card degli account affiancate: due colonne, le card di una riga alte uguali.
+// Le card degli account affiancate: due colonne, le card di una riga alte uguali. La griglia prende la larghezza vera
+// del menu (AppKit allarga le viste con .width), margini uguali ai due lati; una card rimasta sola occupa tutta la riga.
 let gridPad: CGFloat = 14, gridGap: CGFloat = 8
 let gridColW: CGFloat = (blockW - 2 * gridPad - gridGap) / 2
 final class GridView: NSView {
     override var isFlipped: Bool { true }
+    private let cards: [NSView], cols: Int
     init(_ views: [NSView], cols: Int = 2) {
+        cards = views; self.cols = cols
         var y: CGFloat = 3
-        var placed: [(NSView, NSRect)] = []
-        for start in stride(from: 0, to: views.count, by: cols) {
-            let row = Array(views[start..<min(start + cols, views.count)])
-            let h = row.map { $0.frame.height }.max() ?? 0
-            for (j, v) in row.enumerated() { placed.append((v, NSRect(x: gridPad + CGFloat(j) * (gridColW + gridGap), y: y, width: gridColW, height: h))) }
-            y += h + gridGap
-        }
+        for start in stride(from: 0, to: views.count, by: cols) { y += (views[start..<min(start + cols, views.count)].map { $0.frame.height }.max() ?? 0) + gridGap }
         super.init(frame: NSRect(x: 0, y: 0, width: blockW, height: y - gridGap + 4))
-        for (v, r) in placed { v.frame = r; addSubview(v) }
+        autoresizingMask = [.width]
+        views.forEach { addSubview($0) }
+        place()
     }
     required init?(coder: NSCoder) { nil }
+    override func resizeSubviews(withOldSize old: NSSize) { place() }
+    private func place() {
+        let inner = bounds.width - 2 * gridPad
+        var y: CGFloat = 3
+        for start in stride(from: 0, to: cards.count, by: cols) {
+            let row = Array(cards[start..<min(start + cols, cards.count)])
+            let h = row.map { $0.frame.height }.max() ?? 0
+            let w = (inner - gridGap * CGFloat(row.count - 1)) / CGFloat(row.count)
+            for (j, v) in row.enumerated() { v.frame = NSRect(x: gridPad + CGFloat(j) * (w + gridGap), y: y, width: w, height: h); v.needsDisplay = true }
+            y += h + gridGap
+        }
+    }
 }
 
 func inText(_ epoch: Int, now: Date = Date()) -> String {
@@ -2181,6 +2200,7 @@ func snapshotMenu(_ menu: NSMenu, path: String) -> Bool {
     for (item, depth) in flat(menu, 0) {
         let dx = CGFloat(depth) * indent
         if let view = item.view {
+            if view.autoresizingMask.contains(.width) { view.setFrameSize(NSSize(width: canvasW, height: view.frame.height)) }
             let w = max(1, view.frame.width), h = max(1, view.frame.height)
             let bounds = NSRect(x: 0, y: 0, width: w, height: h)
             guard let rep = view.bitmapImageRepForCachingDisplay(in: bounds) else { continue }
