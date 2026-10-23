@@ -10,6 +10,18 @@ import { localConfig } from '../../local-config.mjs';
 const DAY = 86400000;
 const WEEK = 7 * DAY;
 
+// Il safe-update, se trova OpenClaw occupato, interrompe l'update e riprova da solo: il job esce con errore ma non è rotto.
+// Lo leggo dall'ultima riga del suo log: «riprovo» = rimandato; un update partito da poco senza esito = in corso.
+const SAFE_UPDATE = { label: 'com.jarvis.openclaw-safe-update', log: path.join(os.homedir(), '.claude/jarvis/logs/openclaw-safe-update.log') };
+export function rinviatoOInCorso(label, now, log = SAFE_UPDATE.log) {
+  if (label !== SAFE_UPDATE.label) return false;
+  try {
+    const last = fs.readFileSync(log, 'utf8').trimEnd().split('\n').pop() || '';
+    if (/riprovo/.test(last)) return true;
+    return /openclaw update --yes/.test(last) && now - fs.statSync(log).mtimeMs < 30 * 60000;
+  } catch { return false; }
+}
+
 // I prefissi dei lavori di un cliente stanno in local.json (launchdPrefixes), non nel codice pubblico.
 const escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 const LOCAL_PREFIXES = Array.isArray(localConfig().launchdPrefixes) ? localConfig().launchdPrefixes : [];
@@ -173,7 +185,7 @@ export function readLaunchd({ dir = path.join(os.homedir(), 'Library/LaunchAgent
       let outcome = null;
       if (entry) {
         if (entry.pid !== '-' && entry.pid !== '') outcome = 'running';
-        else if (entry.status !== 0) outcome = 'error';
+        else if (entry.status !== 0) outcome = rinviatoOInCorso(label, now) ? 'running' : 'error';
         // launchd non registra quando un job parte: senza log e senza errore è «mai girato», con un log muto è l'ultimo exit
         else outcome = lastAt != null || atUnknown ? 'ok' : null;
       }
