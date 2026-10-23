@@ -55,31 +55,34 @@ test('(a) fuori dai dettagli tecnici niente id, domini, cron, exit o codici', ()
   assert.match(visible(render(real, { now: real.checkedAt })), CODES[3]);
 });
 
-test('(b) a sistema sano ogni card sta dentro un gruppo chiuso', () => {
+test('(b) a sistema sano nessuna card aperta: il pannello si apre solo scegliendo una riga', () => {
   assert.ok(!/<article class="au-card/.test(stripDetails(htmlOk)));
-  const sec = secs(htmlOk);
-  assert.ok(sec.includes('needs') && sec.includes('broken'));
-  assert.match(htmlOk, /Niente ti aspetta\./);
-  assert.match(htmlOk, /Niente di rotto\./);
+  assert.ok(!/cx-panel/.test(htmlOk));
+  const key = ok.groups.flatMap((g) => g.cards)[0];
+  const k = typeof key === 'string' ? key : key.key;
+  const open = render(ok, { now: ok.checkedAt, sel: k });
+  assert.match(open, /<aside class="cx-panel" role="dialog"/);
+  // I cinque pulsanti di feedback stanno nel pannello.
+  for (const fb of ['ok', 'cambia', 'nota', 'segnala', 'muta']) assert.match(open, new RegExp('data-fb="' + fb + '"'));
 });
 
 test('(c) le sezioni sono sempre nello stesso ordine', () => {
-  assert.deepEqual(secs(htmlOk), secs(htmlPb));
-  for (const s of ['needs', 'broken', 'works', 'workflows', 'footer']) {
-    assert.ok(secs(htmlOk).includes(s), s);
-  }
-  assert.deepEqual(secs(htmlOk), ['verdict', 'needs', 'broken', 'works', 'workflows', 'review', 'footer']);
+  const order = (h) => secs(h).filter((s) => s !== 'since' && s !== 'review');
+  assert.deepEqual(order(htmlOk), order(htmlPb));
+  assert.deepEqual(order(htmlOk), ['verdict', 'table', 'footer']);
 });
 
 test('(d) consegna mancata e prova esterna sono in parole', () => {
-  assert.match(htmlPb, /non ti è arrivato/);
-  // Prova mancante: la dice il motivo, una volta sola. Prova riuscita: riga «Prova:» che rassicura.
-  assert.match(htmlPb, /manca la prova/);
-  assert.equal(htmlPb.match(/manca la prova/g).length, 1);
-  const withProof = structuredClone(pb);
-  const c = withProof.broken.find((x) => x.proof);
+  const now = pb.checkedAt;
+  const all = [...pb.needsYou, ...pb.broken];
+  const failed = all.find((c) => c.last && c.last.delivered === 'failed');
+  assert.match(V.card(failed, {}, now), /non ti è arrivato/);
+  // Prova mancante: la dice il motivo, una volta sola nel pannello.
+  const noProof = all.find((c) => /manca la prova/.test(c.reason || ''));
+  assert.equal(V.card(noProof, {}, now).match(/manca la prova/g).length, 1);
+  const c = structuredClone(all.find((x) => x.proof));
   c.proof = { ok: true, words: 'commit del backup alle 4:33' };
-  assert.match(render(withProof, { now: withProof.checkedAt }), /Prova: commit del backup alle 4:33/);
+  assert.match(V.card(c, {}, now), /<dt>Prova<\/dt><dd class="">commit del backup alle 4:33/);
   assert.equal(deliveredWords('failed'), 'non ti è arrivato');
   assert.equal(deliveredWords('delivered'), 'ti è arrivato');
   assert.equal(deliveredWords('none'), '');
@@ -98,4 +101,32 @@ test('(e) lastWords nei cinque casi', () => {
 test('(f) il verdetto conta chi ti aspetta', () => {
   assert.match(htmlPb, /2 ti aspettano/);
   assert.match(htmlOk, /Tutto a posto/);
+});
+
+test('(g) gruppi per scopo, il sistema solo nel pannello', () => {
+  const table = htmlPb.slice(htmlPb.indexOf('data-sec="table"'), htmlPb.indexOf('data-sec="footer"'));
+  assert.doesNotMatch(visible(table), /OpenClaw|\bMac\b|launchd/);
+  assert.match(table, /data-au-area="posta-avvisi"|data-au-area="backup-sicurezza"/);
+  // Senza purpose l'area è stimata e lo dice.
+  const c = structuredClone(pb.broken[0]);
+  c.purpose = null;
+  assert.match(V.card(c, {}, pb.checkedAt), /\(area stimata\)/);
+  c.purpose = { area: 'clienti' };
+  assert.equal(V.areaOf(c), 'clienti');
+  assert.doesNotMatch(V.card(c, {}, pb.checkedAt), /area stimata/);
+});
+
+test('(h) workflow: passi con esecutore, token e risparmio; senza token niente numeri inventati', () => {
+  const run = { steps: [
+    { id: 'a', label: 'Legge', executor: 'free', tokens: 8000, outcome: 'ok' },
+    { id: 'b', label: 'Scrive', executor: 'claude', tokens: 2000, outcome: 'ok' },
+  ], tokensSavedVsClaude: 8000 };
+  const t = V.runTokens(run);
+  assert.equal(t.saved, 8000);
+  const h = V.flowHtml(run);
+  assert.match(h, /Legge/);
+  assert.match(h, /x-free/);
+  assert.match(h, /x-claude/);
+  assert.equal(V.runTokens({ steps: [{ id: 'a', label: 'x', executor: null, tokens: null }] }), null);
+  assert.equal(V.runTokens({}), null);
 });

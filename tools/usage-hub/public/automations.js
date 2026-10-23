@@ -1,7 +1,7 @@
 // Scheda «Automazioni»: rete, eventi, tastiera. Gira nel browser (usa j e $ di app.js).
 // Stato tenuto qui: modello, ripasso, «da ieri» e costi già chiesti.
 var auModel = null;
-var auUi = { review: { open: false, key: null }, seen: { newKeys: [], changedKeys: [] }, costs: {}, filter: 'all', q: '', by: 'sistema', offline: false };
+var auUi = { review: { open: false, key: null }, seen: { newKeys: [], changedKeys: [] }, costs: {}, filter: 'all', q: '', by: 'sistema', offline: false, sel: null, open: {} };
 try { if (localStorage.getItem('automations.by') === 'esito') auUi.by = 'esito'; } catch (e) { /* senza storage resta «per sistema» */ }
 var auUndoRef = null;
 
@@ -14,7 +14,7 @@ function auToday() {
 }
 
 function auUiNow() {
-  return { now: auModel.checkedAt, review: auUi.review, seen: auUi.seen, costs: auUi.costs, filter: auUi.filter, q: auUi.q, by: auUi.by, offline: auUi.offline };
+  return { now: auModel.checkedAt, review: auUi.review, seen: auUi.seen, costs: auUi.costs, filter: auUi.filter, q: auUi.q, by: auUi.by, offline: auUi.offline, sel: auUi.sel, open: auUi.open };
 }
 
 // Ridisegna tenendo il fuoco sulla stessa card: con la tastiera non si perde il posto a ogni salvataggio o giro dei 60 s.
@@ -24,12 +24,31 @@ function auRender() {
   var art = a && a.closest ? a.closest('#t-automations article.au-card') : null;
   // La ricerca ridisegna a ogni tasto: il campo si rimette a fuoco con il cursore dov'era.
   var typing = a && a.matches && a.matches('input[data-au-q]') ? a.selectionStart : null;
+  var rowKey = a && a.dataset && a.dataset.cx ? a.dataset.cx : null;
+  var areaKey = a && a.dataset && a.dataset.auArea ? a.dataset.auArea : null;
   $('t-automations').innerHTML = AutomationsView.render(auModel, auUiNow());
   if (typing !== null) {
     var q = $('t-automations').querySelector('input[data-au-q]');
     if (q) { q.focus(); q.setSelectionRange(typing, typing); }
   }
   if (art) auFocusCard(art.dataset.key);
+  else if (rowKey) { var r = $('t-automations').querySelector('[data-cx="' + CSS.escape(rowKey) + '"]'); if (r) r.focus(); }
+  else if (areaKey) { var g = $('t-automations').querySelector('[data-au-area="' + CSS.escape(areaKey) + '"]'); if (g) g.focus(); }
+}
+
+// Pannello di dettaglio: si apre su una riga, si chiude con ✕, Esc o clic fuori. Il fuoco torna alla riga.
+function auOpen(key) {
+  auUi.sel = key;
+  auRender();
+  var p = $('t-automations').querySelector('.cx-panel');
+  if (p) { var first = p.querySelector('article.au-card') || p.querySelector('.cx-x'); if (first) first.focus({ preventScroll: true }); }
+}
+function auClose() {
+  var k = auUi.sel;
+  auUi.sel = null;
+  auRender();
+  var r = k && $('t-automations').querySelector('[data-cx="' + CSS.escape(k) + '"]');
+  if (r) r.focus();
 }
 
 async function auRefresh() {
@@ -299,7 +318,12 @@ function auReviewGo(dir) {
 document.getElementById('t-automations').addEventListener('click', function (e) {
   var t = e.target;
   var flt = t.closest('[data-au-filter]');
-  if (flt) { auUi.filter = flt.dataset.auFilter; auUi.q = ''; auRender(); return; }
+  if (flt) { auUi.filter = flt.dataset.auFilter; auRender(); return; }
+  if (t.closest('[data-cx-close]')) { auClose(); return; }
+  var row = t.closest('[data-cx]');
+  if (row) { auOpen(row.dataset.cx); return; }
+  var area = t.closest('[data-au-area]');
+  if (area) { var id = area.dataset.auArea; auUi.open[id] = !auUi.open[id]; auRender(); return; }
   var by = t.closest('[data-au-by]');
   if (by) {
     auUi.by = by.dataset.auBy;
@@ -307,7 +331,7 @@ document.getElementById('t-automations').addEventListener('click', function (e) 
     auRender();
     return;
   }
-  if (t.closest('[data-au-clear]')) { auUi.q = ''; auRender(); return; }
+  if (t.closest('[data-au-clear]')) { auUi.q = ''; auUi.filter = 'all'; auRender(); return; }
   if (t.closest('[data-au-retry]')) { renderAutomations(); return; }
 });
 document.getElementById('t-automations').addEventListener('input', function (e) {
@@ -354,7 +378,21 @@ document.addEventListener('keydown', function (e) {
   var t = e.target;
   if (t && t.matches && t.matches('input,textarea,select')) return;
   if (t && t.isContentEditable) return;
-  if (e.key === 'Escape') { auCloseForm(); return; }
+  if (e.key === 'Escape') {
+    if ($('t-automations').querySelector('form.au-form')) { auCloseForm(); return; }
+    if (auUi.sel) { auClose(); return; }
+    if (t && t.matches && t.matches('input[data-au-q]')) { auUi.q = ''; auRender(); }
+    return;
+  }
+  if (e.key === '/' && !(t && t.matches && t.matches('input,textarea'))) { var qi = box.querySelector('input[data-au-q]'); if (qi) { e.preventDefault(); qi.focus(); } return; }
+  if (t && t.dataset && t.dataset.cx) {
+    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); auOpen(t.dataset.cx); return; }
+    var rows = Array.prototype.slice.call(box.querySelectorAll('[data-cx]'));
+    var i = rows.indexOf(t);
+    var kk = (e.key || '').toLowerCase();
+    if (kk === 'j' || e.key === 'ArrowDown') { e.preventDefault(); (rows[i + 1] || rows[i]).focus(); return; }
+    if (kk === 'k' || e.key === 'ArrowUp') { e.preventDefault(); (rows[i - 1] || rows[i]).focus(); return; }
+  }
   var art = t && t.closest ? t.closest('article.au-card') : null;
   if (!art || !box.contains(t)) return;
   var k = (e.key || '').toLowerCase();
