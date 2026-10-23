@@ -262,6 +262,7 @@ footer a { color:var(--mut); }
 .cx-n, .cx-sh { display:grid; grid-template-columns:18px minmax(0,1fr) 52px 64px 64px; gap:10px; padding:7px 0; border-bottom:1px solid var(--line); align-items:baseline; }
 .cx-sh { color:var(--mut); font-size:11.5px; padding:4px 0; }
 .cx-n > span:nth-child(3), .cx-n > span:nth-child(5), .cx-sh > span:nth-child(3), .cx-sh > span:nth-child(5) { text-align:right; }
+.cx-n, .cx-n.ok { color:var(--fg); }
 .cx-ex { color:var(--x); }
 .cx-no { color:var(--mut); } .cx-n.err .cx-no { color:var(--bad); font-weight:500; }
 
