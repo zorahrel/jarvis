@@ -130,3 +130,16 @@ test('(h) workflow: passi con esecutore, token e risparmio; senza token niente n
   assert.equal(V.runTokens({ steps: [{ id: 'a', label: 'x', executor: null, tokens: null }] }), null);
   assert.equal(V.runTokens({}), null);
 });
+
+test('(i) striscia delle 24 ore: un segno per quarto d\'ora, esito peggiore, ora attuale e prossimo giro', () => {
+  const now = ok.checkedAt;
+  const H = 3600000;
+  const day = [[now - H, 'ok'], [now - H + 60000, 'error'], [now - 2 * H, 'ok'], [now - 30 * H, 'ok']];
+  const h = V.stripHtml(day, now + H, now);
+  assert.equal((h.match(/class="s-error"/g) || []).length, 1);
+  assert.equal((h.match(/class="s-ok"/g) || []).length, 1); // quello di 30 h fa è fuori finestra
+  assert.match(h, /class="s-now"/);
+  assert.match(h, /class="s-next"/);
+  assert.match(h, /3 giri nelle ultime 22 ore, 1 fallito/);
+  assert.match(V.stripHtml([], null, now), /nessun giro/);
+});

@@ -37,6 +37,12 @@
               "outcome": "ok"
             }
           ],
+          "day": [
+            [
+              1792753200000,
+              "ok"
+            ]
+          ],
           "purpose": {
             "area": "posta-avvisi",
             "areaSource": "gruppo",
@@ -113,6 +119,20 @@
               "outcome": "ok"
             }
           ],
+          "day": [
+            [
+              1792763970000,
+              "ok"
+            ],
+            [
+              1792763910000,
+              "ok"
+            ],
+            [
+              1792763850000,
+              "ok"
+            ]
+          ],
           "purpose": {
             "area": "posta-avvisi",
             "areaSource": "gruppo",
@@ -187,6 +207,12 @@
               "outcome": "ok"
             }
           ],
+          "day": [
+            [
+              1792692000000,
+              "ok"
+            ]
+          ],
           "purpose": {
             "area": "posta-avvisi",
             "areaSource": "gruppo",
@@ -256,6 +282,7 @@
             "error": null
           },
           "history": [],
+          "day": [],
           "purpose": {
             "area": "posta-avvisi",
             "areaSource": "gruppo",
@@ -329,6 +356,12 @@
               "at": 1792762800000,
               "outcome": "ok"
             }
+          ],
+          "day": [
+            [
+              1792762800000,
+              "ok"
+            ]
           ],
           "purpose": {
             "area": "posta-avvisi",
@@ -410,6 +443,12 @@
               "outcome": "ok"
             }
           ],
+          "day": [
+            [
+              1792746000000,
+              "ok"
+            ]
+          ],
           "purpose": {
             "area": "backup-sicurezza",
             "areaSource": "gruppo",
@@ -483,6 +522,12 @@
               "at": 1792718340000,
               "outcome": "ok"
             }
+          ],
+          "day": [
+            [
+              1792718340000,
+              "ok"
+            ]
           ],
           "purpose": {
             "area": "backup-sicurezza",
@@ -558,6 +603,12 @@
               "outcome": "ok"
             }
           ],
+          "day": [
+            [
+              1792760400000,
+              "ok"
+            ]
+          ],
           "purpose": {
             "area": "backup-sicurezza",
             "areaSource": "gruppo",
@@ -631,6 +682,12 @@
               "at": 1792591200000,
               "outcome": "ok"
             }
+          ],
+          "day": [
+            [
+              1792591200000,
+              "ok"
+            ]
           ],
           "purpose": {
             "area": "backup-sicurezza",
@@ -712,6 +769,12 @@
               "outcome": "ok"
             }
           ],
+          "day": [
+            [
+              1792731600000,
+              "ok"
+            ]
+          ],
           "purpose": {
             "area": "jarvis-agenti",
             "areaSource": "gruppo",
@@ -786,6 +849,12 @@
               "outcome": "ok"
             }
           ],
+          "day": [
+            [
+              1792756800000,
+              "ok"
+            ]
+          ],
           "purpose": {
             "area": "jarvis-agenti",
             "areaSource": "gruppo",
@@ -859,6 +928,12 @@
               "at": 1792742400000,
               "outcome": "ok"
             }
+          ],
+          "day": [
+            [
+              1792742400000,
+              "ok"
+            ]
           ],
           "purpose": {
             "area": "jarvis-agenti",
@@ -938,6 +1013,16 @@
               "outcome": "ok"
             }
           ],
+          "day": [
+            [
+              1792763880000,
+              "ok"
+            ],
+            [
+              1792763580000,
+              "ok"
+            ]
+          ],
           "purpose": {
             "area": "manutenzione",
             "areaSource": "gruppo",
@@ -1011,6 +1096,12 @@
               "at": 1792738800000,
               "outcome": "ok"
             }
+          ],
+          "day": [
+            [
+              1792738800000,
+              "ok"
+            ]
           ],
           "purpose": {
             "area": "manutenzione",
@@ -1086,6 +1177,12 @@
               "outcome": "ok"
             }
           ],
+          "day": [
+            [
+              1792762200000,
+              "ok"
+            ]
+          ],
           "purpose": {
             "area": "manutenzione",
             "areaSource": "gruppo",
@@ -1154,6 +1251,12 @@
               "outcome": "ok"
             }
           ],
+          "day": [
+            [
+              1792504800000,
+              "ok"
+            ]
+          ],
           "purpose": {
             "area": "manutenzione",
             "areaSource": "gruppo",
@@ -1221,6 +1324,12 @@
               "at": 1792735200000,
               "outcome": "ok"
             }
+          ],
+          "day": [
+            [
+              1792735200000,
+              "ok"
+            ]
           ],
           "purpose": {
             "area": "manutenzione",
@@ -1302,6 +1411,12 @@
               "outcome": "ok"
             }
           ],
+          "day": [
+            [
+              1792731600000,
+              "ok"
+            ]
+          ],
           "purpose": {
             "area": "sviluppo-topics",
             "areaSource": "gruppo",
@@ -1376,6 +1491,12 @@
               "outcome": "ok"
             }
           ],
+          "day": [
+            [
+              1792591200000,
+              "ok"
+            ]
+          ],
           "purpose": {
             "area": "sviluppo-topics",
             "areaSource": "gruppo",
@@ -1449,6 +1570,12 @@
               "at": 1792728000000,
               "outcome": "ok"
             }
+          ],
+          "day": [
+            [
+              1792728000000,
+              "ok"
+            ]
           ],
           "purpose": {
             "area": "sviluppo-topics",
@@ -1807,6 +1934,12 @@
           "outcome": "ok"
         }
       ],
+      "day": [
+        [
+          1792753200000,
+          "ok"
+        ]
+      ],
       "purpose": {
         "area": "posta-avvisi",
         "areaSource": "gruppo",
@@ -1883,6 +2016,20 @@
           "outcome": "ok"
         }
       ],
+      "day": [
+        [
+          1792763970000,
+          "ok"
+        ],
+        [
+          1792763910000,
+          "ok"
+        ],
+        [
+          1792763850000,
+          "ok"
+        ]
+      ],
       "purpose": {
         "area": "posta-avvisi",
         "areaSource": "gruppo",
@@ -1957,6 +2104,12 @@
           "outcome": "ok"
         }
       ],
+      "day": [
+        [
+          1792692000000,
+          "ok"
+        ]
+      ],
       "purpose": {
         "area": "posta-avvisi",
         "areaSource": "gruppo",
@@ -2026,6 +2179,7 @@
         "error": null
       },
       "history": [],
+      "day": [],
       "purpose": {
         "area": "posta-avvisi",
         "areaSource": "gruppo",
@@ -2099,6 +2253,12 @@
           "at": 1792762800000,
           "outcome": "ok"
         }
+      ],
+      "day": [
+        [
+          1792762800000,
+          "ok"
+        ]
       ],
       "purpose": {
         "area": "posta-avvisi",
@@ -2174,6 +2334,12 @@
           "outcome": "ok"
         }
       ],
+      "day": [
+        [
+          1792746000000,
+          "ok"
+        ]
+      ],
       "purpose": {
         "area": "backup-sicurezza",
         "areaSource": "gruppo",
@@ -2247,6 +2413,12 @@
           "at": 1792718340000,
           "outcome": "ok"
         }
+      ],
+      "day": [
+        [
+          1792718340000,
+          "ok"
+        ]
       ],
       "purpose": {
         "area": "backup-sicurezza",
@@ -2322,6 +2494,12 @@
           "outcome": "ok"
         }
       ],
+      "day": [
+        [
+          1792760400000,
+          "ok"
+        ]
+      ],
       "purpose": {
         "area": "backup-sicurezza",
         "areaSource": "gruppo",
@@ -2395,6 +2573,12 @@
           "at": 1792591200000,
           "outcome": "ok"
         }
+      ],
+      "day": [
+        [
+          1792591200000,
+          "ok"
+        ]
       ],
       "purpose": {
         "area": "backup-sicurezza",
@@ -2470,6 +2654,12 @@
           "outcome": "ok"
         }
       ],
+      "day": [
+        [
+          1792731600000,
+          "ok"
+        ]
+      ],
       "purpose": {
         "area": "jarvis-agenti",
         "areaSource": "gruppo",
@@ -2543,6 +2733,12 @@
           "at": 1792756800000,
           "outcome": "ok"
         }
+      ],
+      "day": [
+        [
+          1792756800000,
+          "ok"
+        ]
       ],
       "purpose": {
         "area": "jarvis-agenti",
@@ -2618,6 +2814,12 @@
           "outcome": "ok"
         }
       ],
+      "day": [
+        [
+          1792742400000,
+          "ok"
+        ]
+      ],
       "purpose": {
         "area": "jarvis-agenti",
         "areaSource": "gruppo",
@@ -2689,6 +2891,16 @@
           "at": 1792763580000,
           "outcome": "ok"
         }
+      ],
+      "day": [
+        [
+          1792763880000,
+          "ok"
+        ],
+        [
+          1792763580000,
+          "ok"
+        ]
       ],
       "purpose": {
         "area": "manutenzione",
@@ -2764,6 +2976,12 @@
           "outcome": "ok"
         }
       ],
+      "day": [
+        [
+          1792738800000,
+          "ok"
+        ]
+      ],
       "purpose": {
         "area": "manutenzione",
         "areaSource": "gruppo",
@@ -2838,6 +3056,12 @@
           "outcome": "ok"
         }
       ],
+      "day": [
+        [
+          1792762200000,
+          "ok"
+        ]
+      ],
       "purpose": {
         "area": "manutenzione",
         "areaSource": "gruppo",
@@ -2906,6 +3130,12 @@
           "outcome": "ok"
         }
       ],
+      "day": [
+        [
+          1792504800000,
+          "ok"
+        ]
+      ],
       "purpose": {
         "area": "manutenzione",
         "areaSource": "gruppo",
@@ -2973,6 +3203,12 @@
           "at": 1792735200000,
           "outcome": "ok"
         }
+      ],
+      "day": [
+        [
+          1792735200000,
+          "ok"
+        ]
       ],
       "purpose": {
         "area": "manutenzione",
@@ -3048,6 +3284,12 @@
           "outcome": "ok"
         }
       ],
+      "day": [
+        [
+          1792731600000,
+          "ok"
+        ]
+      ],
       "purpose": {
         "area": "sviluppo-topics",
         "areaSource": "gruppo",
@@ -3122,6 +3364,12 @@
           "outcome": "ok"
         }
       ],
+      "day": [
+        [
+          1792591200000,
+          "ok"
+        ]
+      ],
       "purpose": {
         "area": "sviluppo-topics",
         "areaSource": "gruppo",
@@ -3195,6 +3443,12 @@
           "at": 1792728000000,
           "outcome": "ok"
         }
+      ],
+      "day": [
+        [
+          1792728000000,
+          "ok"
+        ]
       ],
       "purpose": {
         "area": "sviluppo-topics",

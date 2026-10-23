@@ -52,6 +52,12 @@ export function historyOf(item) {
   return newestFirst(out);
 }
 
+// Giri delle ultime 24 ore per la striscia: [ora, esito] compatti. Dove la fonte non li ha, i giri noti.
+export function dayOf(item) {
+  const src = item.day || (item.runs || []).map((r) => [r?.at, r?.outcome]);
+  return src.filter((r) => r[0] != null).map((r) => [r[0], HIST_OUT[r[1]] || 'running']);
+}
+
 // Token risparmiati rispetto a Claude: i token dei passi eseguiti da altri esecutori (free, muse, codex).
 // È una stima: quei modelli consumano token propri, non gli stessi di Claude. Senza token noti, null.
 export function savedTokens(steps) {
@@ -84,6 +90,7 @@ function singleCard(ev) {
     nextApprox: !!item.nextApprox,
     last: item.last,
     history: historyOf(item),
+    day: dayOf(item),
     purpose: purposeOf(item.key, desc, desc?.group),
     steps: item.steps ?? null,
     tokensSavedVsClaude: item.tokensSavedVsClaude ?? null,
@@ -123,6 +130,7 @@ function fusedCard(name, members, descriptions) {
     nextApprox: !!primary.item.nextApprox,
     last: primary.item.last,
     history: newestFirst(members.flatMap((m) => historyOf(m.item))),
+    day: members.flatMap((m) => dayOf(m.item)),
     purpose: purposeOf(`object:${name}`, odesc, odesc?.group),
     steps: null,
     tokensSavedVsClaude: null,

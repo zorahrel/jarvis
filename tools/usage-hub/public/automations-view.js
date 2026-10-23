@@ -201,10 +201,37 @@
     var bad = c.last && c.last.outcome === 'error';
     return '<span class="cx-g ' + (bad ? 'err' : 'ok') + '" aria-hidden="true"></span><span class="sr">' + (bad ? 'ultimo giro fallito' : 'regolare') + '</span>';
   }
+  // Striscia delle 24 ore (stile Cronitor): finestra da 22 h fa a 2 h avanti, un segno per quarto d'ora
+  // con giri, colorato per l'esito peggiore; linea dell'ora attuale; il prossimo giro come segno vuoto.
+  var STRIP_W = 120, STRIP_H = 16, BACK = 22 * 3600000, AHEAD = 2 * 3600000, SLOT = 900000;
+  var WORST = { error: 3, skipped: 2, running: 1, ok: 0 };
+  function stripHtml(day, next, now) {
+    var span = BACK + AHEAD, x0 = now - BACK;
+    var x = function (t) { return ((t - x0) / span * STRIP_W).toFixed(1); };
+    var slots = {}, n = 0, bad = 0;
+    for (const r of day || []) {
+      var at = r[0], o = r[1];
+      if (at < x0 || at > now) continue;
+      n++; if (o === 'error') bad++;
+      var k = Math.floor((at - x0) / SLOT);
+      if (slots[k] == null || WORST[o] > WORST[slots[k]]) slots[k] = o;
+    }
+    var marks = Object.keys(slots).map(function (k) {
+      var t = x0 + (Number(k) + 0.5) * SLOT;
+      return '<rect class="s-' + slots[k] + '" x="' + (x(t) - 0.75) + '" y="3" width="1.5" height="' + (STRIP_H - 6) + '" rx=".5"/>';
+    }).join('');
+    var nx = next && next > now && next < now + AHEAD ? '<rect class="s-next" x="' + (x(next) - 1.25) + '" y="4" width="2.5" height="' + (STRIP_H - 8) + '" rx=".8"/>' : '';
+    var label = n ? n + (n === 1 ? ' giro' : ' giri') + ' nelle ultime 22 ore' + (bad ? ', ' + bad + (bad === 1 ? ' fallito' : ' falliti') : '') : 'nessun giro nelle ultime 22 ore';
+    return '<span class="cx-strip" title="' + esc(label) + '"><svg viewBox="0 0 ' + STRIP_W + ' ' + STRIP_H + '" width="' + STRIP_W + '" height="' + STRIP_H + '" aria-hidden="true">' +
+      '<line class="s-base" x1="0" y1="' + (STRIP_H / 2) + '" x2="' + STRIP_W + '" y2="' + (STRIP_H / 2) + '"/>' + marks + nx +
+      '<line class="s-now" x1="' + x(now) + '" y1="0" x2="' + x(now) + '" y2="' + STRIP_H + '"/></svg><span class="sr">' + esc(label) + '</span></span>';
+  }
+
   function rowHtml(c, ui, now) {
     var nx = c.next ? (c.nextApprox ? '~' : '') + short(c.next, now) : '—';
     return '<div class="cx-row' + (ui.sel === c.key ? ' sel' : '') + '" role="button" tabindex="0" data-cx="' + esc(c.key) + '">' + glyph(c) +
       '<span class="cx-t">' + esc(c.title) + (isProblem(c) && c.reason ? '<small>' + esc(c.reason) + '</small>' : '') + '</span>' +
+      stripHtml(c.day || (c.history || []).map(function (h) { return [h.at, h.outcome]; }), c.next, now) +
       '<span class="cx-c' + (c.last && c.last.at ? '' : ' dim') + '">' + esc(short(c.last && c.last.at, now)) + '</span>' +
       '<span class="cx-c nx dim">' + esc(nx) + '</span><span class="cx-c rt dim">' + (c.runsToday || 0) + '</span></div>';
   }
@@ -214,7 +241,7 @@
     var bad = run.outcome === 'error';
     return '<div class="cx-row' + (ui.sel === 'wf:' + w.name ? ' sel' : '') + '" role="button" tabindex="0" data-cx="wf:' + esc(w.name) + '">' +
       '<span class="cx-g ' + (bad ? 'rotto' : 'ok') + '" aria-hidden="true"></span><span class="sr">' + (bad ? 'fallito' : 'riuscito') + '</span>' +
-      '<span class="cx-t">' + esc(wfTitle(w.name)) + '</span><span class="cx-c">' + esc(short(run.at, now)) + '</span>' +
+      '<span class="cx-t">' + esc(wfTitle(w.name)) + '</span>' + stripHtml((w.runs || []).map(function (r) { return [r.at, r.outcome]; }), null, now) + '<span class="cx-c">' + esc(short(run.at, now)) + '</span>' +
       '<span class="cx-c nx dim">' + esc(durWords(run.durationMs) || '—') + '</span><span class="cx-c rt' + (t && !t.saved ? ' claude' : ' dim') + '">' + esc(t ? tok(t.total) : '—') + '</span></div>';
   }
 
@@ -274,7 +301,7 @@
   function tableHtml(model, ui, now) {
     var cards = allCards(model).filter(function (c) { return matches(c, ui); });
     var searching = !!(ui.q || '').trim() || (ui.filter && ui.filter !== 'all');
-    var h = '<div class="cx-row cx-hdr" aria-hidden="true"><span></span><span>Nome</span><span class="cx-c">Ultimo</span><span class="cx-c nx">Prossimo</span><span class="cx-c rt">Oggi</span></div>';
+    var h = '<div class="cx-row cx-hdr" aria-hidden="true"><span></span><span>Nome</span><span class="cx-strip">ultime 24 h</span><span class="cx-c">Ultimo</span><span class="cx-c nx">Prossimo</span><span class="cx-c rt">Oggi</span></div>';
     var shown = 0;
     var pbs = cards.filter(isProblem);
     if (pbs.length) {
@@ -367,8 +394,16 @@
       }).join('') + '</div>' + (n.note ? '<div class="gnote">' + esc(n.note) + '</div>' : '');
     }
     var head = '<span class="gk">' + esc(KIND[n.kind] || n.kind) + '</span><span class="gl">' + esc(n.label) + '</span>' +
-      (n.kind !== 'model' && n.kind !== 'sources' && n.kind !== 'trigger' ? gStatus(n.outcome, n.inferred, n.ms) : '');
-    var more = n.detail ? '<div class="gd">' + esc(n.detail) + '</div>' : '';
+      (n.kind === 'model' ? (n.ms != null ? '<span class="gt">' + esc(durWords(n.ms)) + '</span>' : '')
+        : n.kind === 'deliver' ? gStatus(n.outcome, false, null) + (n.at ? '<span class="gt">alle ' + esc(hm(n.at)) + '</span>' : '')
+        : n.kind !== 'sources' && n.kind !== 'trigger' ? gStatus(n.outcome, n.inferred, n.ms) + '<span class="gt">' + (n.ms != null ? '' : 'tempo —') + '</span>' : '');
+    var io = n.io || {};
+    var more = (n.detail ? '<div class="gd">' + esc(n.detail) + '</div>' : '') +
+      (io.in ? '<div class="gio"><span>Ingresso</span><pre tabindex="0">' + esc(io.in) + '</pre></div>' : '') +
+      (io.out ? '<div class="gio"><span>Uscita <i>' + esc(io.outFrom || '') + '</i></span><pre tabindex="0">' + esc(io.out) + '</pre></div>'
+        : n.kind === 'model' ? '<div class="gio"><span>Uscita</span><p>non registrata per questo giro</p></div>' : '') +
+      (n.error ? '<div class="gio bad"><span>Errore</span><pre tabindex="0">' + esc(n.error) + '</pre></div>' : '') +
+      (n.kind === 'step' && !n.detail ? '' : n.kind === 'step' ? '<div class="gio"><span>Testo</span><p>il log dello script non registra ingresso e uscita di questo passo</p></div>' : '');
     return '<li class="gn ' + esc(n.kind) + '">' + (more
       ? '<details><summary class="gh2">' + head + '</summary>' + more + '</details>'
       : '<div class="gh2">' + head + '</div>') + body + '</li>';
@@ -494,7 +529,7 @@
   // Segnaposto al primo caricamento: stessa forma della tabella vera.
   function skeleton() {
     var r = '';
-    for (var i = 0; i < 8; i++) r += '<div class="cx-row cx-hdr"><span class="au-skl" style="width:10px;height:10px"></span><span class="au-skl" style="width:' + (35 + (i * 13) % 40) + '%"></span><span class="au-skl"></span><span class="au-skl nx"></span><span class="au-skl rt"></span></div>';
+    for (var i = 0; i < 8; i++) r += '<div class="cx-row cx-hdr"><span class="au-skl" style="width:10px;height:10px"></span><span class="au-skl" style="width:' + (35 + (i * 13) % 40) + '%"></span><span class="au-skl cx-strip"></span><span class="au-skl"></span><span class="au-skl nx"></span><span class="au-skl rt"></span></div>';
     return '<div role="status"><span class="sr">Carico le automazioni…</span><section class="cx-head" data-sec="verdict" aria-busy="true"><div class="au-skl" style="width:220px;height:20px"></div>' +
       '<div class="au-skl" style="width:160px;height:11px;margin:10px 0 14px"></div><div class="au-skl" style="height:58px;border-radius:10px"></div></section><section class="cx-tbl">' + r + '</section></div>';
   }
@@ -510,7 +545,7 @@
     return verdictHtml(model, ui) + tableHtml(model, ui, now) + footerHtml(model) + panelHtml(model, ui, now);
   }
 
-  var api = { render: render, skeleton: skeleton, errorHtml: errorHtml, lastWords: lastWords, deliveredWords: deliveredWords, esc: esc, card: card, graphHtml: graphHtml, areaOf: areaOf, runTokens: runTokens, flowHtml: flowHtml };
+  var api = { render: render, skeleton: skeleton, errorHtml: errorHtml, lastWords: lastWords, deliveredWords: deliveredWords, esc: esc, card: card, graphHtml: graphHtml, stripHtml: stripHtml, areaOf: areaOf, runTokens: runTokens, flowHtml: flowHtml };
   // Sempre sul globale: così il test con createRequire trova tutto anche se `module.exports` non esce.
   root.AutomationsView = api;
   if (typeof module !== 'undefined' && module.exports) module.exports = api;

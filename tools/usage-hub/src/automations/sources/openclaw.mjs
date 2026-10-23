@@ -66,6 +66,8 @@ export function readOpenclaw({ db = '~/.openclaw/state/openclaw.sqlite', now = D
           else delivered = 'none';
         }
         const runs = recs.slice(0, 10).map((r) => ({ at: r.started_at_ms, outcome: mapOutcome(r.status) }));
+        // Tutti i giri delle ultime 24 ore, per la striscia della tabella (i job al minuto ne hanno fino a 1440).
+        const day = recs.filter((r) => r.started_at_ms > now - DAY).slice(0, 2000).map((r) => [r.started_at_ms, mapOutcome(r.status)]);
         let runsToday = recs.filter((r) => r.started_at_ms >= midnightMs).length;
         if (every && recs.length >= 60 && recs[recs.length - 1].started_at_ms >= midnightMs) {
           runsToday = Math.floor((now - midnightMs) / job.schedule.everyMs); // stima per i job frequenti
@@ -84,6 +86,7 @@ export function readOpenclaw({ db = '~/.openclaw/state/openclaw.sqlite', now = D
           expectedLast: null,
           last: { at: lastAt, outcome, delivered, error: lastError },
           runs,
+          day,
           consecutiveErrors: state.consecutiveErrors ?? 0,
           runsToday,
           who: w.who,

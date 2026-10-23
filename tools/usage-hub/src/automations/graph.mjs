@@ -153,11 +153,13 @@ function deliverNode(job, card, run) {
     id: 'deliver', kind: 'deliver', label: d.channel === 'whatsapp' ? 'WhatsApp' : d.channel === 'last' ? "ultima chat" : d.channel,
     detail: d.mode === 'announce' ? 'OpenClaw consegna il testo' : d.mode,
     outcome: del === 'delivered' ? 'ok' : del === 'failed' ? 'error' : run.outcome === 'ok' ? null : run.outcome,
-    at: run.end,
+    at: run.end, error: run.deliveryError || null,
   };
 }
 
 // Grafo di un job di OpenClaw.
+const clip = (t, n = 6000) => { const x = String(t ?? '').trim(); return !x ? null : x.length > n ? x.slice(0, n) + '\n…' : x; };
+
 export function graphForJob(job, run, card = null) {
   const nodes = [triggerNode(job)];
   const from = ['cron OpenClaw «' + job.name + '»'];
@@ -189,7 +191,9 @@ export function graphForJob(job, run, card = null) {
       pre.forEach((s, i) => nodes.push(stepNode(s, i, 'pre')));
       if (models.length) {
         const opts = chainOutcomes(models, events, run).map((s) => ({ exec: s.exec, name: EXEC[s.exec], model: s.model, outcome: s.outcome, ms: s.ms, note: s.note, tokens: null }));
-        nodes.push({ id: 'model', kind: 'model', label: sc.chain ? 'Modello, con ripiego' : 'Modello', options: opts, gates: mid.map((s) => s.label) });
+        nodes.push({ id: 'model', kind: 'model', label: sc.chain ? 'Modello, con ripiego' : 'Modello', options: opts, gates: mid.map((s) => s.label),
+          io: { in: clip(p.input), out: clip(run.output), outFrom: 'testo del giro registrato da OpenClaw' },
+          ms: opts.reduce((n, o) => n + (o.ms || 0), 0) || null });
       }
       post.forEach((s, i) => nodes.push(stepNode(s, i, 'post')));
     } else {
@@ -199,7 +203,8 @@ export function graphForJob(job, run, card = null) {
     const refs = [p.model, ...(p.fallbacks || [])].filter(Boolean);
     const opts = refs.map((r, i) => ({ exec: execOfRef(r), name: EXEC[execOfRef(r)] || modelName(r), model: modelName(r), account: r.split('/')[0], outcome: i === 0 ? run.outcome : null, ms: i === 0 && run.end != null && run.at != null ? run.end - run.at : null, tokens: null }));
     if (!opts.length) opts.push({ exec: null, name: 'agente ' + (job.agentId || 'main'), model: null, outcome: run.outcome, ms: null, tokens: null });
-    nodes.push({ id: 'model', kind: 'model', label: refs.length > 1 ? 'Modello, con ripiego' : 'Modello', options: opts, note: refs.length > 1 ? 'OpenClaw non registra quale ha risposto' : null });
+    nodes.push({ id: 'model', kind: 'model', label: refs.length > 1 ? 'Modello, con ripiego' : 'Modello', options: opts, note: refs.length > 1 ? 'OpenClaw non registra quale ha risposto' : null,
+      io: { in: clip(p.message), out: clip(run.output), outFrom: 'testo del giro registrato da OpenClaw' }, ms: run.ms ?? null });
   } else {
     return null; // heartbeat e simili: niente passi
   }
@@ -225,6 +230,8 @@ export function graphForCron(key, { db = '~/.openclaw/state/openclaw.sqlite', ca
       at, end: rec && rec.started_at_ms === at ? rec.finished_at_ms : (at != null && state.lastDurationMs != null ? at + state.lastDurationMs : null),
       ms: state.lastDurationMs ?? (rec ? rec.finished_at_ms - rec.started_at_ms : null),
       outcome: state.lastRunStatus === 'interrupted' ? 'error' : (state.lastRunStatus ?? rec?.status ?? null),
+      output: state.lastDiagnostics?.summary ?? null,
+      deliveryError: state.lastDeliveryError ?? null,
     };
     return graphForJob(job, run, card);
   } catch {

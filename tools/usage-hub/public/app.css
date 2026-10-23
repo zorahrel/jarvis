@@ -214,7 +214,7 @@ details.au-group > details.au-row { margin-left:14px; }
 .cx-cnt { margin-left:auto; display:flex; gap:10px; font-family:var(--mono); text-transform:none; letter-spacing:0; font-weight:500; }
 .cx-cnt .te { color:var(--a-te); } .cx-cnt .bad { color:var(--a-bad); }
 .cx-gh.att { color:var(--a-fg2); }
-.cx-row { display:grid; grid-template-columns:18px minmax(0,1fr) 78px 78px 44px; gap:10px; align-items:center; padding:0 12px; min-height:38px; border-top:1px solid var(--a-line); cursor:pointer; outline:none; color:var(--a-fg); }
+.cx-row { display:grid; grid-template-columns:18px minmax(0,1fr) 120px 78px 78px 44px; gap:10px; align-items:center; padding:0 12px; min-height:38px; border-top:1px solid var(--a-line); cursor:pointer; outline:none; color:var(--a-fg); }
 .cx-row:hover { background:var(--a-s2); }
 .cx-row:focus-visible, .cx-row.sel { background:var(--a-s3); box-shadow:inset 2px 0 0 var(--a-fg); }
 .cx-hdr { cursor:default; min-height:30px; color:var(--a-mut); font-size:11.5px; border-top:0; }
@@ -349,3 +349,23 @@ summary.gh2:hover .gl { text-decoration:underline; text-decoration-color:var(--a
 @media (max-width:560px) { .gk { width:auto; } .gd, .gsrc, .gopts, .gnote { padding-left:10px; } .garr { flex-basis:100%; } }
 .cx-panel:has(.cx-graph) { width:min(580px,100%); }
 @media (max-width:560px) { .gopt { flex-basis:100%; } }
+
+/* Striscia delle 24 ore */
+.cx-strip { display:flex; align-items:center; width:120px; min-width:0; }
+.cx-hdr .cx-strip { color:var(--a-mut); font-size:11.5px; justify-content:center; }
+.cx-strip svg { display:block; overflow:visible; }
+.cx-strip .s-base { stroke:var(--a-line2); stroke-width:1; }
+.cx-strip .s-ok { fill:var(--a-ok); opacity:.8; } .cx-strip .s-error { fill:var(--a-bad); } .cx-strip .s-skipped { fill:var(--a-warn); } .cx-strip .s-running { fill:var(--a-fg2); }
+.cx-strip .s-next { fill:none; stroke:var(--a-fg2); stroke-width:1; }
+.cx-strip .s-now { stroke:var(--a-te); stroke-width:1.5; }
+@media (max-width:560px) { .cx-row .cx-strip { display:none; } }
+
+/* Ingresso e uscita di un nodo, al clic (stile Langfuse) */
+.gio { padding:0 10px 10px 78px; }
+.gio > span { display:block; font-size:10.5px; text-transform:uppercase; letter-spacing:.06em; color:var(--a-mut); font-weight:600; margin-bottom:4px; }
+.gio > span i { font-style:normal; text-transform:none; letter-spacing:0; font-weight:400; }
+.gio pre { margin:0; max-height:220px; overflow:auto; white-space:pre-wrap; overflow-wrap:anywhere; font-family:var(--mono); font-size:11.5px; line-height:1.5; color:var(--a-fg2); background:var(--a-bg); border:1px solid var(--a-line); border-radius:6px; padding:8px 10px; }
+.gio p { margin:0; font-size:12px; color:var(--a-mut); }
+.gio.bad pre { color:var(--a-bad); }
+.gn > details[open] > summary.gh2 { border-bottom:1px solid var(--a-line); margin-bottom:8px; }
+@media (max-width:560px) { .gio { padding-left:10px; } }

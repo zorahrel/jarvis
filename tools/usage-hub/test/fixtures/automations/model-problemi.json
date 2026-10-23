@@ -26,6 +26,7 @@
         "error": null
       },
       "history": [],
+      "day": [],
       "purpose": {
         "area": "posta-avvisi",
         "areaSource": "gruppo",
@@ -89,6 +90,7 @@
         "error": null
       },
       "history": [],
+      "day": [],
       "purpose": {
         "area": "posta-avvisi",
         "areaSource": "gruppo",
@@ -159,6 +161,12 @@
           "outcome": "error"
         }
       ],
+      "day": [
+        [
+          1792286340000,
+          "error"
+        ]
+      ],
       "purpose": {
         "area": "sviluppo-topics",
         "areaSource": "gruppo",
@@ -226,6 +234,12 @@
           "at": 1792746000000,
           "outcome": "error"
         }
+      ],
+      "day": [
+        [
+          1792746000000,
+          "error"
+        ]
       ],
       "purpose": {
         "area": "manutenzione",
@@ -295,6 +309,12 @@
           "outcome": "ok"
         }
       ],
+      "day": [
+        [
+          1792756800000,
+          "ok"
+        ]
+      ],
       "purpose": {
         "area": "posta-avvisi",
         "areaSource": "gruppo",
@@ -362,6 +382,12 @@
           "at": 1792760400000,
           "outcome": "ok"
         }
+      ],
+      "day": [
+        [
+          1792760400000,
+          "ok"
+        ]
       ],
       "purpose": {
         "area": "backup-sicurezza",
@@ -440,6 +466,12 @@
               "at": 1792756800000,
               "outcome": "ok"
             }
+          ],
+          "day": [
+            [
+              1792756800000,
+              "ok"
+            ]
           ],
           "purpose": {
             "area": "posta-avvisi",
@@ -532,6 +564,24 @@
               "at": 1792670400000,
               "outcome": "ok"
             }
+          ],
+          "day": [
+            [
+              1792763400000,
+              "ok"
+            ],
+            [
+              1792717200000,
+              "ok"
+            ],
+            [
+              1792724400000,
+              "ok"
+            ],
+            [
+              1792670400000,
+              "ok"
+            ]
           ],
           "purpose": {
             "area": "backup-sicurezza",
@@ -640,6 +690,12 @@
               "outcome": "ok"
             }
           ],
+          "day": [
+            [
+              1792749600000,
+              "ok"
+            ]
+          ],
           "purpose": {
             "area": "jarvis-agenti",
             "areaSource": "gruppo",
@@ -719,6 +775,12 @@
               "at": 1792756800000,
               "outcome": "ok"
             }
+          ],
+          "day": [
+            [
+              1792756800000,
+              "ok"
+            ]
           ],
           "purpose": {
             "area": "manutenzione",
@@ -1097,6 +1159,7 @@
         "error": null
       },
       "history": [],
+      "day": [],
       "purpose": {
         "area": "posta-avvisi",
         "areaSource": "gruppo",
@@ -1160,6 +1223,7 @@
         "error": null
       },
       "history": [],
+      "day": [],
       "purpose": {
         "area": "posta-avvisi",
         "areaSource": "gruppo",
@@ -1227,6 +1291,12 @@
           "at": 1792286340000,
           "outcome": "error"
         }
+      ],
+      "day": [
+        [
+          1792286340000,
+          "error"
+        ]
       ],
       "purpose": {
         "area": "sviluppo-topics",
@@ -1296,6 +1366,12 @@
           "outcome": "error"
         }
       ],
+      "day": [
+        [
+          1792746000000,
+          "error"
+        ]
+      ],
       "purpose": {
         "area": "manutenzione",
         "areaSource": "gruppo",
@@ -1364,6 +1440,12 @@
           "outcome": "ok"
         }
       ],
+      "day": [
+        [
+          1792756800000,
+          "ok"
+        ]
+      ],
       "purpose": {
         "area": "posta-avvisi",
         "areaSource": "gruppo",
@@ -1431,6 +1513,12 @@
           "at": 1792760400000,
           "outcome": "ok"
         }
+      ],
+      "day": [
+        [
+          1792760400000,
+          "ok"
+        ]
       ],
       "purpose": {
         "area": "backup-sicurezza",
@@ -1503,6 +1591,12 @@
           "at": 1792756800000,
           "outcome": "ok"
         }
+      ],
+      "day": [
+        [
+          1792756800000,
+          "ok"
+        ]
       ],
       "purpose": {
         "area": "posta-avvisi",
@@ -1589,6 +1683,24 @@
           "at": 1792670400000,
           "outcome": "ok"
         }
+      ],
+      "day": [
+        [
+          1792763400000,
+          "ok"
+        ],
+        [
+          1792717200000,
+          "ok"
+        ],
+        [
+          1792724400000,
+          "ok"
+        ],
+        [
+          1792670400000,
+          "ok"
+        ]
       ],
       "purpose": {
         "area": "backup-sicurezza",
@@ -1691,6 +1803,12 @@
           "outcome": "ok"
         }
       ],
+      "day": [
+        [
+          1792749600000,
+          "ok"
+        ]
+      ],
       "purpose": {
         "area": "jarvis-agenti",
         "areaSource": "gruppo",
@@ -1764,6 +1882,12 @@
           "at": 1792756800000,
           "outcome": "ok"
         }
+      ],
+      "day": [
+        [
+          1792756800000,
+          "ok"
+        ]
       ],
       "purpose": {
         "area": "manutenzione",

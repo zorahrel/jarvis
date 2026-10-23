@@ -62,3 +62,14 @@ test('graphForJob agente: modello e ripieghi dalla definizione, il primo con l\'
   assert.deepEqual(m.options.map((o) => o.name + ':' + o.outcome), ['Claude:ok', 'Muse:null']);
   assert.ok(!g.nodes.some((n) => n.kind === 'deliver'));
 });
+
+test('graphForJob: ingresso e uscita del modello dal prompt e dal testo del giro', () => {
+  const job = { id: 'z', name: 'agente', schedule: { kind: 'cron', expr: '0 9 * * *' }, payload: { kind: 'agentTurn', message: 'Fai il riepilogo', model: 'anthropic/claude-sonnet-5-5' }, delivery: { mode: 'announce', channel: 'whatsapp' } };
+  const g = graphForJob(job, { at: 1000, end: 61000, ms: 60000, outcome: 'ok', output: 'Ecco il riepilogo', deliveryError: null });
+  const m = g.nodes.find((n) => n.kind === 'model');
+  assert.equal(m.io.in, 'Fai il riepilogo');
+  assert.equal(m.io.out, 'Ecco il riepilogo');
+  assert.equal(m.ms, 60000);
+  const g2 = graphForJob(job, { at: 1000, end: null, ms: null, outcome: 'error', output: null });
+  assert.equal(g2.nodes.find((n) => n.kind === 'model').io.out, null);
+});
