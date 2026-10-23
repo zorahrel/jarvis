@@ -1,7 +1,8 @@
 // Scheda «Automazioni»: rete, eventi, tastiera. Gira nel browser (usa j e $ di app.js).
 // Stato tenuto qui: modello, ripasso, «da ieri» e costi già chiesti.
 var auModel = null;
-var auUi = { review: { open: false, key: null }, seen: { newKeys: [], changedKeys: [] }, costs: {} };
+var auUi = { review: { open: false, key: null }, seen: { newKeys: [], changedKeys: [] }, costs: {}, filter: 'all', q: '', by: 'sistema', offline: false };
+try { if (localStorage.getItem('automations.by') === 'esito') auUi.by = 'esito'; } catch (e) { /* senza storage resta «per sistema» */ }
 var auUndoRef = null;
 
 // Oggi in ora di Roma, «YYYY-MM-DD»: la base del confronto «da ieri».
@@ -13,7 +14,7 @@ function auToday() {
 }
 
 function auUiNow() {
-  return { now: auModel.checkedAt, review: auUi.review, seen: auUi.seen, costs: auUi.costs };
+  return { now: auModel.checkedAt, review: auUi.review, seen: auUi.seen, costs: auUi.costs, filter: auUi.filter, q: auUi.q, by: auUi.by, offline: auUi.offline };
 }
 
 // Ridisegna tenendo il fuoco sulla stessa card: con la tastiera non si perde il posto a ogni salvataggio o giro dei 60 s.
@@ -21,7 +22,13 @@ function auRender() {
   if (!auModel) return;
   var a = document.activeElement;
   var art = a && a.closest ? a.closest('#t-automations article.au-card') : null;
+  // La ricerca ridisegna a ogni tasto: il campo si rimette a fuoco con il cursore dov'era.
+  var typing = a && a.matches && a.matches('input[data-au-q]') ? a.selectionStart : null;
   $('t-automations').innerHTML = AutomationsView.render(auModel, auUiNow());
+  if (typing !== null) {
+    var q = $('t-automations').querySelector('input[data-au-q]');
+    if (q) { q.focus(); q.setSelectionRange(typing, typing); }
+  }
   if (art) auFocusCard(art.dataset.key);
 }
 
@@ -40,12 +47,16 @@ async function renderAutomations() {
   var el = $('t-automations');
   // Non ridisegna mentre scrivi: perderesti la nota.
   if (document.activeElement && document.activeElement.tagName === 'TEXTAREA') return;
+  // Primo caricamento: segnaposto subito, invece di una pagina vuota fino alla risposta.
+  if (!auModel && !el.querySelector('[data-sec]')) el.innerHTML = AutomationsView.skeleton();
   var m = await j('/api/automations');
   if (!m) {
-    // Senza cancellare la vista di prima: se non ce n'è una, dillo.
-    if (!el.innerHTML) el.innerHTML = '<section class="au-sec"><div class="au-empty">Hub non raggiungibile</div></section>';
+    // Con una vista di prima la tengo e lo dico in cima; senza, errore con «Riprova».
+    if (auModel) { auUi.offline = true; auRender(); }
+    else el.innerHTML = AutomationsView.errorHtml();
     return;
   }
+  auUi.offline = false;
   auModel = m;
   auUi.seen = auLoadSeen(m);
   // Il ripasso punta a una chiave che non esiste più: ricomincia dalla prima.
@@ -283,6 +294,27 @@ function auReviewGo(dir) {
   auRender();
   auFocusCard(next);
 }
+
+// Filtri, ricerca, raggruppamento e «Riprova»: stato di sola vista, niente rete.
+document.getElementById('t-automations').addEventListener('click', function (e) {
+  var t = e.target;
+  var flt = t.closest('[data-au-filter]');
+  if (flt) { auUi.filter = flt.dataset.auFilter; auUi.q = ''; auRender(); return; }
+  var by = t.closest('[data-au-by]');
+  if (by) {
+    auUi.by = by.dataset.auBy;
+    try { localStorage.setItem('automations.by', auUi.by); } catch (e2) { /* si perde alla chiusura */ }
+    auRender();
+    return;
+  }
+  if (t.closest('[data-au-clear]')) { auUi.q = ''; auRender(); return; }
+  if (t.closest('[data-au-retry]')) { renderAutomations(); return; }
+});
+document.getElementById('t-automations').addEventListener('input', function (e) {
+  if (!e.target.matches('input[data-au-q]')) return;
+  auUi.q = e.target.value;
+  auRender();
+});
 
 document.getElementById('t-automations').addEventListener('click', function (e) {
   var t = e.target;

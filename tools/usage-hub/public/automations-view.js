@@ -92,6 +92,40 @@
     return s;
   }
 
+  var PROVIDER = { openclaw: 'OpenClaw', launchd: 'Mac', desktop: 'Claude desktop', lobster: 'Workflow', workflow: 'Workflow', github: 'GitHub', pc: 'PC di casa' };
+  function provWord(p) {
+    return PROVIDER[p] || p || 'Altro';
+  }
+
+  // «15:00», «domani 4:32», «verso martedì alle 9:00»: il prossimo giro in poco spazio.
+  function nextShort(c, now) {
+    if (c.next == null) return '';
+    var pre = c.nextApprox ? 'verso ' : '';
+    var d = romeDay(c.next) - romeDay(now);
+    if (d <= 0) return pre + hm(c.next);
+    if (d === 1) return pre + 'domani ' + hm(c.next);
+    return pre + lastWords({ at: c.next }, now);
+  }
+
+  // Ultimi giri come punti: colore E altezza (i falliti sono più alti), più la frase per chi non vede.
+  function dotsHtml(c) {
+    var h = (c.history || []).slice(-10);
+    if (!h.length) return '';
+    var bad = h.filter(function (o) { return o === 'error'; }).length;
+    var label = 'ultimi ' + h.length + (h.length === 1 ? ' giro' : ' giri') + ': ' + (h.length - bad) + ' riusciti' +
+      (bad ? ', ' + bad + (bad === 1 ? ' fallito' : ' falliti') : '');
+    return '<span class="au-dots" role="img" aria-label="' + esc(label) + '">' + h.map(function (o) {
+      return '<i class="' + (o === 'ok' ? 'ok' : o === 'error' ? 'bad' : 'mut') + '"></i>';
+    }).join('') + '</span>';
+  }
+
+  // Tutte le card visibili (sono già divise per livello): servono a ricerca e raggruppamento per sistema.
+  function allCards(model) {
+    var out = (model.needsYou || []).concat(model.broken || []);
+    for (const g of model.groups || []) out = out.concat(g.cards || []);
+    return out;
+  }
+
   var VOTE_WORD = { ok: 'va bene', cambia: 'da cambiare' };
   function voteWord(v) {
     return VOTE_WORD[v] || v;
@@ -146,6 +180,14 @@
     return '';
   }
 
+  // Riga chiusa di un elenco: titolo a sinistra, storia e orari a destra. Si apre sulla card.
+  function rowHtml(c, ui, now) {
+    var nx = nextShort(c, now);
+    var meta = dotsHtml(c) + '<span class="au-rm-t">ultimo ' + esc(lastWords(c.last, now)) + (nx ? ' · prossimo ' + esc(nx) : '') + '</span>';
+    return '<details class="au-row" data-key="' + esc(c.key) + '"><summary><span class="au-rt">' + chipHtml(c.level) + esc(c.title) +
+      '</span><span class="au-rm">' + meta + '</span></summary>' + card(c, ui, now) + '</details>';
+  }
+
   // La card intera, usata nelle sezioni in alto e dentro le righe dei gruppi.
   function card(c, ui, now) {
     var fb = c.feedback || {};
@@ -175,7 +217,7 @@
     return h + '</article>';
   }
 
-  function verdictHtml(model, now) {
+  function verdictHtml(model, now, ui) {
     var v = model.verdict;
     var cls = '';
     var title;
@@ -192,8 +234,22 @@
     }
     if (model.feedbackOpen > 0) sub += ' · ' + model.feedbackOpen + (model.feedbackOpen === 1 ? ' richiesta aperta agli agenti' : ' richieste aperte agli agenti');
     if (model.stale) sub += " · dati di alle " + hm(model.checkedAt) + ", l'ultima lettura non è riuscita";
-    return '<section class="au-sec status' + (cls ? ' ' + cls : '') + '" data-sec="verdict"><div><b>' +
-      esc(title) + '</b><span class="mut small">' + esc(sub) + '</span></div></section>';
+    if (ui && ui.offline) sub += ' · hub non raggiungibile, mostro i dati di prima <button class="b" data-au-retry="1">Riprova</button>';
+    return '<section class="au-sec status' + (cls ? ' ' + cls : '') + '" data-sec="verdict"><div class="au-vbody"><div class="au-vt"><b>' +
+      esc(title) + '</b><span class="mut small">' + sub + '</span></div>' + barHtml(model, ui) + '</div></section>';
+  }
+
+  // Conteggi cliccabili che filtrano, più la ricerca. Lo stato sta in ui, non nel DOM.
+  function barHtml(model, ui) {
+    var v = model.verdict || {};
+    var f = (ui && ui.filter) || 'all';
+    var q = (ui && ui.q) || '';
+    var total = (v.needsYou || 0) + (v.broken || 0) + (v.ok || 0);
+    var chips = [['all', 'Tutte', total, ''], ['te', 'Ti aspettano', v.needsYou || 0, 'te'], ['rotto', 'Rotte', v.broken || 0, 'rotto'], ['va', 'Funzionano', v.ok || 0, '']];
+    return '<div class="au-bar" role="toolbar" aria-label="Filtra le automazioni">' + chips.map(function (c) {
+      return '<button class="au-f ' + c[3] + '" data-au-filter="' + c[0] + '" aria-pressed="' + (f === c[0]) + '"' +
+        (c[0] !== 'all' && !c[2] ? ' data-zero="1"' : '') + '>' + c[1] + ' <b>' + c[2] + '</b></button>';
+    }).join('') + '<input type="search" class="au-q" data-au-q placeholder="Cerca" aria-label="Cerca un\'automazione" value="' + esc(q) + '" autocomplete="off"></div>';
   }
 
   function sinceHtml(model, ui) {
@@ -218,19 +274,39 @@
   }
 
   function worksHtml(model, ui, now) {
-    var gs = (model.groups || []).map(function (g) {
+    var by = (ui && ui.by) || 'sistema';
+    var seg = '<span class="au-seg" role="group" aria-label="Raggruppa per">' +
+      ['sistema', 'esito'].map(function (k) {
+        return '<button data-au-by="' + k + '" aria-pressed="' + (by === k) + '">' + (k === 'sistema' ? 'Per sistema' : 'Per esito') + '</button>';
+      }).join('') + '</span>';
+    var gs = (by === 'sistema' ? systemGroups(model) : model.groups || []).map(function (g) {
       var n = (g.cards || []).length;
-      var summary = n
-        ? esc(g.title) + ' · ' + n + groupLast(g, now)
+      var bad = g.rotte ? ' · <span class="bad">' + g.rotte + (g.rotte === 1 ? ' rotta' : ' rotte') + '</span>' : '';
+      var wait = g.te ? ' · <span class="au-wait">' + g.te + (g.te === 1 ? ' ti aspetta' : ' ti aspettano') + '</span>' : '';
+      var summary = n || bad || wait
+        ? '<span class="au-gt">' + esc(g.title) + '</span><span class="au-gm">' + n + ' ok' + bad + wait + groupLast(g, now) + '</span>'
         : '<span class="au-none">' + esc(g.title) + ' · nessuna automazione</span>';
-      var inner = (g.cards || []).map(function (c) {
-        return '<details class="au-row" data-key="' + esc(c.key) + '"><summary><span>' + esc(c.title) +
-          '</span><span class="mut">' + esc(lastWords(c.last, now)) + '</span></summary>' +
-          card(c, ui, now) + '</details>';
-      }).join('');
+      var inner = (g.cards || []).map(function (c) { return rowHtml(c, ui, now); }).join('');
       return '<details class="au-group"><summary>' + summary + '</summary>' + inner + '</details>';
     }).join('');
-    return '<section class="au-sec" data-sec="works"><h3>Funzionano</h3>' + gs + '</section>';
+    return '<section class="au-sec" data-sec="works"><h3>Funzionano ' + seg + '</h3>' + gs + '</section>';
+  }
+
+  // Raggruppa per sistema: un gruppo per chi esegue, con i suoi ok e il conto di chi sta sopra (rotte, ti aspettano).
+  function systemGroups(model) {
+    var map = {};
+    var order = [];
+    for (const c of allCards(model)) {
+      if (c.level === 'nascosto') continue;
+      var id = provWord(c.provider);
+      if (!map[id]) { map[id] = { id: id, title: id, cards: [], rotte: 0, te: 0 }; order.push(id); }
+      if (c.level === 'rotto') map[id].rotte++;
+      else if (c.level === 'te') map[id].te++;
+      else map[id].cards.push(c);
+    }
+    return order.map(function (k) { return map[k]; }).sort(function (a, b) {
+      return (b.rotte + b.te) - (a.rotte + a.te) || b.cards.length - a.cards.length;
+    });
   }
 
   // L'ultimo giro più recente del gruppo, a destra del titolo.
@@ -238,7 +314,7 @@
     var m = 0;
     for (const c of g.cards || []) if (c.last && c.last.at && c.last.at > m) m = c.last.at;
     if (!m) return '';
-    return ' <span class="mut">ultimo ' + esc(lastWords({ at: m }, now)) + '</span>';
+    return ' · ultimo ' + esc(lastWords({ at: m }, now));
   }
 
   function phaseDots(ph) {
@@ -351,20 +427,53 @@
       (extra.length ? '<div class="small mut au-extra">' + extra.join(' · ') + '</div>' : '') + '</section>';
   }
 
+  // Risultati della ricerca: tutte le automazioni che combaciano, quelle con problemi per prime.
+  function resultsHtml(model, q, ui, now) {
+    var n = q.toLowerCase();
+    var rank = { te: 0, rotto: 1 };
+    var hit = allCards(model).filter(function (c) {
+      return c.level !== 'nascosto' && [c.title, c.cosa, c.who, c.means, provWord(c.provider)].join(' ').toLowerCase().indexOf(n) !== -1;
+    }).sort(function (a, b) { return (rank[a.level] ?? 2) - (rank[b.level] ?? 2); });
+    var head = hit.length + (hit.length === 1 ? ' risultato' : ' risultati') + ' per «' + esc(q) + '»';
+    var body = hit.length
+      ? hit.slice(0, 50).map(function (c) { return rowHtml(c, ui, now); }).join('')
+      : '<div class="au-empty">Nessuna automazione combacia. <button class="b" data-au-clear="1">Togli la ricerca</button></div>';
+    return '<section class="au-sec" data-sec="results"><h3>' + head + '</h3>' + body + '</section>';
+  }
+
+  // Segnaposto al primo caricamento: stesse sezioni e stessa altezza di quelle vere, così non saltano.
+  function skeleton() {
+    var row = '<div class="au-skl row"></div>';
+    return '<div role="status" aria-live="polite"><span class="au-sr">Carico le automazioni…</span>' +
+      '<section class="au-sec status au-sk" data-sec="verdict" aria-busy="true"><div class="au-vbody"><div class="au-skl w40"></div><div class="au-skl w60 s"></div><div class="au-skl bar"></div></div></section>' +
+      '<section class="au-sec au-sk" data-sec="needs"><div class="au-skl w30 s"></div>' + row + '</section>' +
+      '<section class="au-sec au-sk" data-sec="works"><div class="au-skl w30 s"></div>' + row + row + row + '</section></div>';
+  }
+
+  function errorHtml(msg) {
+    return '<section class="au-sec au-err" data-sec="error" role="alert"><b>Non riesco a leggere le automazioni</b>' +
+      '<div class="small mut">' + esc(msg || "L'hub non risponde. Se il Mac è sotto carico può metterci un minuto.") + '</div>' +
+      '<div class="au-act"><button class="b" data-au-retry="1">Riprova</button></div></section>';
+  }
+
   function render(model, ui) {
     ui = ui || {};
     var now = (ui.now != null) ? ui.now : model.checkedAt;
-    return verdictHtml(model, now) +
-      sinceHtml(model, ui) +
-      listHtml('needs', 'Ti aspettano', model.needsYou || [], 'Niente ti aspetta.', ui, now, 'au-needs') +
-      listHtml('broken', 'Rotte, possono aspettare', model.broken || [], 'Niente di rotto.', ui, now, 'au-broken') +
-      worksHtml(model, ui, now) +
-      workflowsHtml(model, ui, now) +
-      reviewHtml(model, ui) +
-      footerHtml(model);
+    var q = (ui.q || '').trim();
+    var f = ui.filter || 'all';
+    var head = verdictHtml(model, now, ui);
+    if (q) return head + resultsHtml(model, q, ui, now) + footerHtml(model);
+    var needs = listHtml('needs', 'Ti aspettano', model.needsYou || [], 'Niente ti aspetta.', ui, now, 'au-needs');
+    var broken = listHtml('broken', 'Rotte, possono aspettare', model.broken || [], 'Niente di rotto.', ui, now, 'au-broken');
+    var works = worksHtml(model, ui, now);
+    var wf = workflowsHtml(model, ui, now);
+    if (f === 'te') return head + needs + footerHtml(model);
+    if (f === 'rotto') return head + broken + footerHtml(model);
+    if (f === 'va') return head + works + wf + footerHtml(model);
+    return head + sinceHtml(model, ui) + needs + broken + works + wf + reviewHtml(model, ui) + footerHtml(model);
   }
 
-  var api = { render: render, lastWords: lastWords, deliveredWords: deliveredWords, esc: esc, card: card };
+  var api = { render: render, skeleton: skeleton, errorHtml: errorHtml, systemGroups: systemGroups, lastWords: lastWords, deliveredWords: deliveredWords, esc: esc, card: card };
   // Sempre sul globale: così il test con createRequire trova tutto anche se `module.exports` non esce.
   root.AutomationsView = api;
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
