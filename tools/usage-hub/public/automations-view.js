@@ -123,6 +123,9 @@
     var s = String(name || '').replace(/[-_]+/g, ' ').trim();
     return s ? s[0].toUpperCase() + s.slice(1) : 'Workflow';
   }
+  function num(n) {
+    return Number(n || 0).toLocaleString('it-IT');
+  }
   function tok(n) {
     if (n == null) return '—';
     if (n >= 1e6) return (n / 1e6).toFixed(1).replace('.', ',') + ' M';
@@ -149,18 +152,6 @@
     var saved = run.tokensSavedVsClaude != null ? run.tokensSavedVsClaude : total - by.claude;
     return { by: by, total: total, saved: saved, pct: total ? Math.round(saved / total * 100) : 0 };
   }
-  // Token dei workflow in 7 giorni e quota delegata, in una riga. Senza token registrati: i giri di oggi.
-  function weekWords(model, v) {
-    var wf = model.workflows || {}, total = 0, saved = 0, known = 0;
-    for (const w of wf.byName || []) for (const r of w.runs || []) {
-      var t = runTokens(r);
-      if (!t) continue;
-      total += t.total; saved += t.saved; known++;
-    }
-    if (!known) return (v.runsToday || 0) + ' giri oggi';
-    var pct = total ? Math.round(saved / total * 100) : 0;
-    return '<span class="' + (pct ? '' : 'claude') + '">' + tok(total) + ' token</span> nei workflow in ' + (wf.days || 7) + ' giorni, ' + pct + '% delegato';
-  }
   // Fasi del giro con l'esecutore se è uno solo (i passi non dicono a che fase appartengono).
   function runPhases(run) {
     var exs = {};
@@ -176,26 +167,29 @@
       return { title: s.label || s.id || 'passo', agents: 1, executor: s.executor, tokens: s.tokens, failed: s.outcome === 'error' ? 1 : 0, outcome: s.outcome };
     });
   }
-  function tokenLine(t) {
-    if (!t) return '<span class="dim">non registrati</span>';
-    if (!t.saved) return '<span class="claude">' + tok(t.total) + '</span>, tutti Claude';
-    return tok(t.total) + ', ' + t.pct + '% fuori da Claude (' + tok(t.saved) + ' risparmiati)';
+  function saveWords(t) {
+    if (!t) return { big: '—', small: 'token non registrati per questo giro', cls: 'none' };
+    if (!t.saved) return { big: tok(t.total), small: 'token, tutti su Claude: nessun passo delegato', cls: 'claude' };
+    return { big: t.pct + '%', small: 'dei token fuori da Claude · ' + tok(t.saved) + ' risparmiati su ' + tok(t.total), cls: '' };
   }
   function flowHtml(run) {
-    var t = runTokens(run);
-    var h = '<div class="cx-fl"><div class="cx-kv"><span>Token</span><span>' + tokenLine(t) + '</span></div>';
-    var on = t ? EXEC_ORDER.filter(function (k) { return t.by[k]; }) : [];
-    if (on.length > 1) {
+    var t = runTokens(run), sw = saveWords(t);
+    var h = '<div class="cx-fl"><div class="cx-save ' + sw.cls + '"><b>' + esc(sw.big) + '</b><span>' + esc(sw.small) + '</span></div>';
+    if (t) {
+      var on = EXEC_ORDER.filter(function (k) { return t.by[k]; });
       h += '<div class="cx-bar" role="img" aria-label="' + esc(on.map(function (k) { return EXEC[k] + ' ' + tok(t.by[k]); }).join(', ')) + '">' +
         on.map(function (k) { return '<i class="x-' + k + '" style="flex:' + t.by[k] + '"></i>'; }).join('') + '</div>' +
         '<div class="cx-leg">' + on.map(function (k) { return '<span class="x-' + k + '"><i></i>' + EXEC[k] + ' ' + tok(t.by[k]) + '</span>'; }).join('') + '</div>';
     }
-    h += '<ol class="cx-steps"><li class="cx-sh" aria-hidden="true"><span>#</span><span>Passo</span><span>Agenti</span><span>Esegue</span><span>Esito</span></li>' + runPhases(run).map(function (p, i) {
+    h += '<ol class="cx-steps">' + runPhases(run).map(function (p) {
       var st = p.outcome === 'error' ? 'err' : p.outcome === 'ok' ? 'ok' : 'run';
-      return '<li class="cx-n ' + st + '"><span class="dim">' + (i + 1) + '</span><span>' + esc(p.title) + (p.tokens != null ? ' <span class="dim">' + tok(p.tokens) + '</span>' : '') + '</span>' +
-        '<span>' + (p.agents || '—') + '</span>' +
-        '<span class="' + (p.executor ? 'cx-ex x-' + p.executor : 'dim') + '">' + (p.executor ? EXEC[p.executor] : '—') + '</span>' +
-        '<span class="cx-no">' + (st === 'ok' ? 'ok' : st === 'err' ? (p.failed > 1 ? p.failed + ' falliti' : 'fallito') : 'in corso') + '</span></li>';
+      var meta = [];
+      if (p.agents) meta.push(p.agents === 1 ? '1 agente' : p.agents + ' agenti');
+      meta.push(p.executor ? '<span class="cx-ex x-' + p.executor + '">' + EXEC[p.executor] + '</span>' : 'esecutore non registrato');
+      if (p.tokens != null) meta.push(tok(p.tokens) + ' token');
+      if (p.failed) meta.push('<span class="bad">' + p.failed + (p.failed === 1 ? ' fallito' : ' falliti') + '</span>');
+      return '<li class="cx-n ' + st + '"><span class="cx-nd" aria-hidden="true"></span><div><b>' + esc(p.title) + '</b><span>' + meta.join(' · ') + '</span></div>' +
+        '<span class="cx-no">' + (st === 'ok' ? 'riuscito' : st === 'err' ? 'fallito' : 'in corso') + '</span></li>';
     }).join('') + '</ol></div>';
     return h;
   }
@@ -205,7 +199,7 @@
     if (c.level === 'te') return '<span class="cx-g te" aria-hidden="true"></span><span class="sr">Ti aspetta</span>';
     if (c.level === 'rotto') return '<span class="cx-g rotto" aria-hidden="true"></span><span class="sr">Rotta</span>';
     var bad = c.last && c.last.outcome === 'error';
-    return '<span class="cx-g ' + (bad ? 'err' : 'ok') + '" aria-hidden="true"></span><span class="sr">' + (bad ? 'ultimo giro fallito' : 'ok') + '</span>';
+    return '<span class="cx-g ' + (bad ? 'err' : 'ok') + '" aria-hidden="true"></span><span class="sr">' + (bad ? 'ultimo giro fallito' : 'regolare') + '</span>';
   }
   function rowHtml(c, ui, now) {
     var nx = c.next ? (c.nextApprox ? '~' : '') + short(c.next, now) : '—';
@@ -245,20 +239,24 @@
       var p = [];
       if (v.needsYou) p.push(v.needsYou + (v.needsYou === 1 ? ' ti aspetta' : ' ti aspettano'));
       if (v.broken) p.push(v.broken + (v.broken === 1 ? ' rotta' : ' rotte'));
-      title = p.join(', ');
+      title = p.join(' · ');
     }
-    var meta = [cards.length + ' automazioni', weekWords(model, v), 'dati delle ' + hm(model.checkedAt)];
-    if (model.feedbackOpen > 0) meta.push(model.feedbackOpen + (model.feedbackOpen === 1 ? ' nota aperta' : ' note aperte'));
-    if (model.stale) meta.push('<span class="bad">ultima lettura fallita</span>');
-    if (ui.offline) meta.push('<span class="bad">hub irraggiungibile</span> <button class="b" data-au-retry="1">Riprova</button>');
+    var fresh = 'controllato alle ' + hm(model.checkedAt);
+    if (model.stale) fresh = "ultima lettura fallita · dati delle " + hm(model.checkedAt);
+    if (ui.offline) fresh = 'hub muto · dati delle ' + hm(model.checkedAt) + ' <button class="cx-btn" data-au-retry="1">Riprova</button>';
+    var srcs = (model.footer || {}).sources || [];
+    var srcOk = srcs.filter(function (s) { return s.ok; }).length;
     var pb = cards.filter(isProblem).length;
-    var seg = [['all', 'Tutte', cards.length], ['pb', 'Problemi', pb]];
+    var seg = [['all', 'Tutte', cards.length], ['pb', 'Problemi', pb], ['ok', 'Ok', cards.length - pb]];
     var f = ui.filter || 'all';
-    return '<section class="cx-head" data-sec="verdict"><h2 class="cx-state ' + tone + '">' + esc(title) + '</h2>' +
-      '<p class="cx-meta">' + meta.join('<i aria-hidden="true">·</i>') + '</p>' +
+    return '<section class="cx-head" data-sec="verdict"><div class="cx-state ' + tone + '"><span class="cx-sq" aria-hidden="true"></span><h2>' + esc(title) + '</h2><span class="cx-fresh">' + fresh + '</span></div>' +
+      '<div class="cx-stats"><div><b>' + num(cards.length) + '</b><span>automazioni</span></div>' +
+      '<div><b class="' + (v.needsYou ? 'te' : '') + '">' + (v.needsYou || 0) + '</b><span>ti aspettano</span></div>' +
+      '<div><b class="' + (v.broken ? 'bad' : '') + '">' + (v.broken || 0) + '</b><span>rotte</span></div>' +
+      '<div><b>' + num(v.runsToday || 0) + '</b><span>giri oggi · ' + srcOk + '/' + srcs.length + ' fonti</span></div></div>' +
       '<div class="cx-tools"><div class="cx-seg" role="group" aria-label="Filtro">' + seg.map(function (s) {
-        return '<button data-au-filter="' + s[0] + '" aria-pressed="' + (f === s[0]) + '">' + s[1] + ' <b>' + s[2] + '</b></button>';
-      }).join('') + '</div><label class="cx-q"><span class="sr">Cerca</span><input type="search" data-au-q placeholder="Cerca" value="' + esc(ui.q || '') + '" autocomplete="off"><kbd aria-hidden="true">/</kbd></label></div></section>';
+        return '<button data-au-filter="' + s[0] + '" aria-pressed="' + (f === s[0]) + '">' + s[1] + '<b>' + s[2] + '</b></button>';
+      }).join('') + '</div><label class="cx-q"><span class="sr">Cerca</span><input type="search" data-au-q placeholder="Cerca per nome, scopo, chi la esegue" value="' + esc(ui.q || '') + '" autocomplete="off"><kbd aria-hidden="true">/</kbd></label></div></section>';
   }
 
   function sinceHtml(model, ui) {
@@ -276,12 +274,11 @@
   function tableHtml(model, ui, now) {
     var cards = allCards(model).filter(function (c) { return matches(c, ui); });
     var searching = !!(ui.q || '').trim() || (ui.filter && ui.filter !== 'all');
-    var openSet = ui.open || {};
     var h = '<div class="cx-row cx-hdr" aria-hidden="true"><span></span><span>Nome</span><span class="cx-c">Ultimo</span><span class="cx-c nx">Prossimo</span><span class="cx-c rt">Oggi</span></div>';
     var shown = 0;
     var pbs = cards.filter(isProblem);
     if (pbs.length) {
-      h += '<div class="cx-gh att"><span>Problemi</span><span class="cx-cnt">' + pbs.length + '</span></div>';
+      h += '<div class="cx-gh att">Richiede attenzione<span class="cx-cnt">' + pbs.length + '</span></div>';
       for (const c of pbs) h += rowHtml(c, ui, now);
       shown += pbs.length;
     }
@@ -289,14 +286,13 @@
     for (const a of areas) {
       var all = allCards(model).filter(function (c) { return areaOf(c) === a.id; });
       var rest = cards.filter(function (c) { return !isProblem(c) && areaOf(c) === a.id; });
-      if (!all.length || (!rest.length && searching)) continue;
+      if (!rest.length) continue;
       var te = all.filter(function (c) { return c.level === 'te'; }).length;
       var ro = all.filter(function (c) { return c.level === 'rotto'; }).length;
-      var open = searching || !!openSet[a.id];
-      var cnt = (te ? '<span class="te">' + te + ' in attesa</span>' : '') + (ro ? '<span class="bad">' + ro + (ro === 1 ? ' rotta' : ' rotte') + '</span>' : '') + '<span>' + all.length + '</span>';
-      h += '<button class="cx-gh" data-au-area="' + esc(a.id) + '" aria-expanded="' + open + '"><span>' + esc(a.title) + '</span><span class="cx-cnt">' + cnt + '</span></button>';
-      if (open) for (const c of rest) h += rowHtml(c, ui, now);
-      shown += open ? rest.length : 0;
+      h += '<div class="cx-gh">' + esc(a.title) + '<span class="cx-cnt"><span>' + (all.length - te - ro) + ' ok</span>' +
+        (te ? '<span class="te">' + te + ' ▲</span>' : '') + (ro ? '<span class="bad">' + ro + ' ✕</span>' : '') + '</span></div>';
+      for (const c of rest) h += rowHtml(c, ui, now);
+      shown += rest.length;
     }
     var ws = ((model.workflows || {}).byName || []).filter(function (w) {
       var q = (ui.q || '').trim().toLowerCase();
@@ -304,10 +300,10 @@
       return !q || (wfTitle(w.name) + ' ' + ((w.runs[0] || {}).summary || '')).toLowerCase().indexOf(q) !== -1;
     });
     if (ws.length) {
-      var wopen = searching || !!openSet.wf;
       var wf = model.workflows || {};
-      h += '<button class="cx-gh" data-au-area="wf" aria-expanded="' + wopen + '"><span>Workflow</span><span class="cx-cnt">' + (wf.failed ? '<span class="bad">' + wf.failed + (wf.failed === 1 ? ' fallito' : ' falliti') + '</span>' : '') + '<span>' + wf.total + ' giri, ' + wf.days + ' gg</span></span></button>';
-      if (wopen) for (const w of ws) h += wfRowHtml(w, ui, now);
+      h += '<div class="cx-gh">Workflow · ' + wf.days + ' giorni<span class="cx-cnt"><span>' + wf.total + ' giri</span>' +
+        (wf.failed ? '<span class="bad">' + wf.failed + ' ✕</span>' : '') + '</span></div>';
+      for (const w of ws) h += wfRowHtml(w, ui, now);
     }
     if (!shown && searching && !ws.length) {
       h += '<div class="cx-empty"><b>Niente da mostrare</b>' + ((ui.q || '').trim() ? 'Nessuna automazione contiene «' + esc(ui.q.trim()) + '».' : 'Nessuna voce con questo filtro.') + ' <button class="b" data-au-clear="1">Togli il filtro</button></div>';
@@ -328,14 +324,12 @@
     return out;
   }
 
-  // Ultimi giri: barrette con il conto scritto accanto, mai da sole.
   function ticks(c) {
     var h = (c.history || []).slice().sort(function (a, b) { return a.at - b.at; }).slice(-20);
     if (h.length < 2) return '';
     var bad = h.filter(function (x) { return x.outcome === 'error'; }).length;
-    return '<dt>Ultimi giri</dt><dd class="cx-hist"><span class="cx-ticks" aria-hidden="true">' +
-      h.map(function (x) { return '<i class="' + (x.outcome === 'error' ? 'err' : x.outcome === 'ok' ? 'ok' : '') + '"></i>'; }).join('') + '</span>' +
-      '<span class="' + (bad ? 'bad' : '') + '">' + (h.length - bad) + ' su ' + h.length + ' riusciti</span></dd>';
+    return '<span class="cx-ticks" aria-hidden="true">' + h.map(function (x) { return '<i class="' + (x.outcome === 'error' ? 'err' : x.outcome === 'ok' ? 'ok' : '') + '"></i>'; }).join('') + '</span> ' +
+      '<span class="m' + (bad ? ' bad' : '') + '">' + (h.length - bad) + '/' + h.length + '</span>';
   }
 
   function techHtml(c) {
@@ -351,41 +345,46 @@
       (cmd ? '<pre>' + esc(cmd) + '</pre>' : '') + (t.url ? '<a href="' + esc(t.url) + '">Apri in OpenClaw</a>' : '') + '</details>';
   }
 
+  var LEVEL = { te: 'Ti aspetta', rotto: 'Rotta' };
+  // Barra in cima al pannello, come in A: stato, sistema, chiudi.
+  function panelHead(chipCls, chip, sys) {
+    return '<div class="cx-ph"><span class="cx-chip ' + chipCls + '">' + esc(chip) + '</span><span class="cx-sys">' + esc(sys) + '</span>' +
+      '<button class="cx-x" data-cx-close="1" aria-label="Chiudi">✕</button></div>';
+  }
+
   // La card del pannello: qui stanno i pulsanti di feedback (automations.js li gestisce su article.au-card).
-  // Tre blocchi senza titoli: quando, cosa succede se va male, chi.
   function card(c, ui, now) {
     var l = c.last || {};
     var fb = c.feedback || {};
     var area = AREAS.find(function (a) { return a.id === areaOf(c); });
-    var when = [], risk = [], who = [];
-    when.push('<dt>Ultimo</dt><dd>' + esc(l.at == null ? (l.atUnknown ? outcomeWord(l.outcome) + ', ora non registrata' : 'mai partito') : (l.atApprox ? 'verso ' : '') + lastWords(l, now) + ', ' + outcomeWord(l.outcome)) + '</dd>');
-    when.push('<dt>Prossimo</dt><dd>' + esc(c.next ? (c.nextApprox ? 'verso ' : '') + lastWords({ at: c.next }, now) : '—') + '</dd>');
-    if (c.when) when.push('<dt>Cadenza</dt><dd>' + esc(c.when) + '</dd>');
+    var facts = [];
+    facts.push('<dt>Ultimo giro</dt><dd>' + esc(l.at == null ? (l.atUnknown ? outcomeWord(l.outcome) + ', ora non registrata' : 'mai partito') : (l.atApprox ? 'verso ' : '') + lastWords(l, now) + ', ' + outcomeWord(l.outcome)) + '</dd>');
+    facts.push('<dt>Prossimo</dt><dd>' + esc(c.next ? (c.nextApprox ? 'verso ' : '') + lastWords({ at: c.next }, now) : '—') + '</dd>');
+    facts.push('<dt>Giri oggi</dt><dd class="m">' + (c.runsToday || 0) + '</dd>');
     var tk = ticks(c);
-    if (tk) when.push(tk);
+    if (tk) facts.push('<dt>Ultimi giri</dt><dd>' + tk + '</dd>');
     var dw = deliveredWords(l.delivered);
-    if (dw) risk.push('<dt>Consegna</dt><dd class="' + (l.delivered === 'failed' ? 'bad' : '') + '">' + dw + '</dd>');
-    if (c.proof && !(c.proof.ok === false && c.reason && c.reason.indexOf(c.proof.words) !== -1)) risk.push('<dt>Prova</dt><dd class="' + (c.proof.ok === false ? 'bad' : '') + '">' + esc(c.proof.words || '') + '</dd>');
+    if (dw) facts.push('<dt>Consegna</dt><dd class="' + (l.delivered === 'failed' ? 'bad' : '') + '">' + dw + '</dd>');
+    if (c.proof && !(c.proof.ok === false && c.reason && c.reason.indexOf(c.proof.words) !== -1)) facts.push('<dt>Prova</dt><dd class="' + (c.proof.ok === false ? 'bad' : '') + '">' + esc(c.proof.words || '') + '</dd>');
     var br = ifBroken(c);
-    risk.push('<dt>Se si rompe</dt><dd' + (br ? '' : ' class="dim"') + '>' + esc(br || 'non scritto') + '</dd>');
-    if (c.who) who.push('<dt>Esegue</dt><dd>' + esc(c.who) + '</dd>');
-    if (c.means) who.push('<dt>Ti scrive</dt><dd>' + esc(c.means) + '</dd>');
-    who.push('<dt>Sistema</dt><dd>' + esc(SYS[c.provider] || c.provider || '—') + ((c.sources || []).length > 1 ? ', ' + c.sources.length + ' fonti' : '') + '</dd>');
+    facts.push('<dt>Se si rompe</dt><dd' + (br ? '' : ' class="dim"') + '>' + esc(br || 'non scritto') + '</dd>');
+    if (c.who) facts.push('<dt>Esegue</dt><dd>' + esc(c.who) + '</dd>');
+    if (c.means) facts.push('<dt>Ti scrive</dt><dd>' + esc(c.means) + '</dd>');
+    facts.push('<dt>Area</dt><dd>' + esc(area ? area.title : '') + (c.purpose && c.purpose.area ? '' : ' (area stimata)') + '</dd>');
     var pressed = function (v) { return fb.vote && fb.vote.v === v ? ' aria-pressed="true"' : ' aria-pressed="false"'; };
-    var dl = function (rows) { return rows.length ? '<dl class="cx-dl">' + rows.join('') + '</dl>' : ''; };
-    return '<article class="au-card lv-' + esc(c.level || 'va') + '" tabindex="0" data-key="' + esc(c.key) + '"' + (c.fp ? ' data-fp="' + esc(c.fp) + '"' : '') + '>' +
-      '<div class="cx-kick">' + esc(area ? area.title : '') + (c.purpose && c.purpose.area ? '' : ' (area stimata)') + '</div>' +
-      '<h3 id="cx-pt">' + esc(c.title) + '</h3>' +
-      (isProblem(c) && c.reason ? '<p class="au-why">' + esc(c.reason) + '</p>' : '') +
-      (forYou(c) ? '<p class="cx-for">' + esc(forYou(c)) + '</p>' : '') +
-      dl(when) + dl(risk) + dl(who) +
-      feedbackLines(fb).map(function (s) { return '<div class="au-fb">' + esc(s) + '</div>'; }).join('') +
-      '<div class="au-act"><button class="b pri" data-fb="ok" aria-keyshortcuts="v"' + pressed('ok') + '>Va bene</button>' +
-      '<button class="b" data-fb="cambia" aria-keyshortcuts="c"' + pressed('cambia') + '>Da cambiare</button>' +
-      '<button class="b" data-fb="nota" aria-keyshortcuts="n">Nota</button>' +
-      '<button class="b ghost" data-fb="segnala" aria-keyshortcuts="s">Segnala</button>' +
-      '<button class="b ghost" data-fb="muta" aria-keyshortcuts="m">Non avvisarmi più</button></div>' +
-      techHtml(c) + '</article>';
+    return '<article class="au-card lv-' + esc(c.level || 'va') + '" tabindex="-1" data-key="' + esc(c.key) + '"' + (c.fp ? ' data-fp="' + esc(c.fp) + '"' : '') + '>' +
+      panelHead(c.level === 'te' || c.level === 'rotto' ? c.level : 'va', LEVEL[c.level] || 'Ok', (SYS[c.provider] || c.provider || '—') + ((c.sources || []).length > 1 ? ' · ' + c.sources.length + ' fonti' : '')) +
+      '<div class="cx-pb"><h3 id="cx-pt">' + esc(c.title) + '</h3>' +
+      (isProblem(c) && c.reason ? '<p class="au-why ' + esc(c.level) + '">' + esc(c.reason) + '</p>' : '') +
+      (forYou(c) ? '<p class="cx-desc">' + esc(forYou(c)) + '</p>' : '') +
+      '<dl class="cx-dl">' + facts.join('') + '</dl>' +
+      feedbackLines(fb).map(function (s) { return '<div class="cx-fbl">' + esc(s) + '</div>'; }).join('') +
+      '<div class="au-act"><button class="cx-btn pri" data-fb="ok" aria-keyshortcuts="v"' + pressed('ok') + '>Va bene <kbd>V</kbd></button>' +
+      '<button class="cx-btn" data-fb="cambia" aria-keyshortcuts="c"' + pressed('cambia') + '>Da cambiare <kbd>C</kbd></button>' +
+      '<button class="cx-btn" data-fb="nota" aria-keyshortcuts="n">Nota <kbd>N</kbd></button>' +
+      '<button class="cx-btn" data-fb="segnala" aria-keyshortcuts="s">Segnala <kbd>S</kbd></button>' +
+      '<button class="cx-btn" data-fb="muta" aria-keyshortcuts="m">Non avvisarmi più <kbd>M</kbd></button></div>' +
+      techHtml(c) + '</div></article>';
   }
 
   function costHtml(runId, ui) {
@@ -403,9 +402,10 @@
     var prev = (w.runs || []).slice(1, 8).map(function (r) {
       return '<li><span>' + esc(short(r.at, now)) + '</span><span class="' + (r.outcome === 'error' ? 'bad' : '') + '">' + esc(outcomeWord(r.outcome)) + '</span><span>' + esc(durWords(r.durationMs)) + '</span></li>';
     }).join('');
-    return '<div class="cx-wf"><div class="cx-kick">Workflow</div>' +
-      '<h3 id="cx-pt">' + esc(wfTitle(w.name)) + '</h3><p class="cx-for">' + esc(run.summary || '') + '</p><p class="cx-meta">' + bits.map(function (b, i) { return i === 1 && run.outcome === 'error' ? '<span class="bad">' + esc(b) + '</span>' : esc(b); }).join('<i aria-hidden="true">·</i>') + ' ' + (run.runId ? costHtml(run.runId, ui) : '') + '</p>' +
-      flowHtml(run) + (prev ? '<h4 class="cx-h4">Giri precedenti</h4><ul class="cx-prev">' + prev + '</ul>' : '') + '</div>';
+    return '<div class="cx-wf">' + panelHead(run.outcome === 'error' ? 'rotto' : 'va', outcomeWord(run.outcome), 'Workflow') +
+      '<div class="cx-pb"><h3 id="cx-pt">' + esc(wfTitle(w.name)) + '</h3>' + (run.summary ? '<p class="cx-desc">' + esc(run.summary) + '</p>' : '') +
+      '<p class="cx-bits">' + esc(bits.join(' · ')) + ' ' + (run.runId ? costHtml(run.runId, ui) : '') + '</p>' +
+      flowHtml(run) + (prev ? '<h4 class="cx-h4">Giri precedenti</h4><ul class="cx-prev">' + prev + '</ul>' : '') + '</div></div>';
   }
 
   function panelHtml(model, ui, now) {
@@ -420,8 +420,7 @@
       if (c) body = card(c, ui, now);
     }
     if (!body) return '';
-    return '<div class="cx-scrim" data-cx-close="1"></div><aside class="cx-panel" role="dialog" aria-modal="true" aria-labelledby="cx-pt">' +
-      '<button class="cx-x" data-cx-close="1" aria-label="Chiudi il dettaglio">✕</button><div class="cx-pb">' + body + '</div></aside>';
+    return '<div class="cx-scrim" data-cx-close="1"></div><aside class="cx-panel" role="dialog" aria-modal="true" aria-labelledby="cx-pt">' + body + '</aside>';
   }
 
   function reviewHtml(model, ui) {
@@ -436,24 +435,19 @@
       body = '<div class="au-rev-now"><div class="cx-sub">' + (unc.indexOf(key) + 1) + '/' + n + '</div>' + (c ? card(c, ui, ui.now || model.checkedAt) : '') +
         '<div class="au-act"><button class="b" data-review="prev">Indietro</button><button class="b" data-review="next">Dopo</button><button class="b" data-review="close">Chiudi</button></div></div>';
     }
-    return '<section class="cx-rev" data-sec="review"><div class="au-rev-head">' + n + ' da confermare <button class="cx-link" data-review="start">Ripassa, ' + mins + ' min</button></div>' + body + '</section>';
+    return '<section class="cx-rev" data-sec="review"><div class="au-rev-head">' + n + (n === 1 ? ' mai confermata' : ' mai confermate') +
+      ' · <button class="b" data-review="start">Ripassale (≈' + mins + ' min)</button></div>' + body + '</section>';
   }
 
-  // Freschezza in una riga; le fonti al clic. Chi non risponde si vede subito, in rosso.
   function footerHtml(model) {
     var f = model.footer || {};
-    var all = f.sources || [];
-    var down = all.filter(function (s) { return !s.at && !(s.note && s.note !== '?'); });
-    var rows = all.map(function (s) {
-      var st = s.note && s.note !== '?' ? esc(s.note) : s.at ? hm(s.at) : (s.pending ? 'primo giro in corso' : 'non risponde');
-      return '<li><span>' + esc(s.label) + '</span><span class="' + (!s.at && !(s.note && s.note !== '?') ? 'bad' : '') + '">' + st + '</span></li>';
-    }).join('');
+    var srcs = (f.sources || []).map(function (s) {
+      if (s.note && s.note !== '?') return '<span>' + esc(s.note) + '</span>';
+      return '<span>' + esc(s.label) + ' ' + (s.at ? hm(s.at) : '<span class="cx-qm" title="' + (s.pending ? 'primo giro in corso' : 'non risponde') + '">?</span>') + '</span>';
+    });
     var hid = f.hidden || {};
-    var hidden = hid.count > 0 ? '<li class="cx-hid"><span>Nascoste</span><span>' + hid.count + '</span></li>' + (hid.why || []).map(function (w) {
-      return '<li class="dim"><span>' + esc(w.title) + '</span><span>' + esc(w.reason) + '</span></li>';
-    }).join('') : '';
-    var head = all.length + ' fonti' + (down.length ? ', <span class="bad">' + down.map(function (s) { return esc(s.label); }).join(', ') + ' senza risposta</span>' : ', tutte lette');
-    return '<section class="cx-foot" data-sec="footer"><details><summary>' + head + '</summary><ul>' + rows + hidden + '</ul></details></section>';
+    if (hid.count > 0) srcs.push('<span title="' + esc((hid.why || []).map(function (w) { return w.title + ': ' + w.reason; }).join('\n')) + '">nascoste ' + hid.count + '</span>');
+    return '<section class="cx-foot" data-sec="footer">' + srcs.join('<span aria-hidden="true">·</span>') + '</section>';
   }
 
   // Segnaposto al primo caricamento: stessa forma della tabella vera.
@@ -472,7 +466,7 @@
   function render(model, ui) {
     ui = ui || {};
     var now = (ui.now != null) ? ui.now : model.checkedAt;
-    return verdictHtml(model, ui) + sinceHtml(model, ui) + tableHtml(model, ui, now) + reviewHtml(model, ui) + footerHtml(model) + panelHtml(model, ui, now);
+    return verdictHtml(model, ui) + tableHtml(model, ui, now) + footerHtml(model) + panelHtml(model, ui, now);
   }
 
   var api = { render: render, skeleton: skeleton, errorHtml: errorHtml, lastWords: lastWords, deliveredWords: deliveredWords, esc: esc, card: card, areaOf: areaOf, runTokens: runTokens, flowHtml: flowHtml };

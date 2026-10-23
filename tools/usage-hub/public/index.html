@@ -3,11 +3,10 @@
 <meta charset="utf-8">
 <title>Usage hub</title>
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap">
 <link rel="stylesheet" href="/app.css">
 <body>
 <main>
-  <header><h1>Usage hub</h1><span class="sub" id="sub"></span></header>
+  <header class="top"><h1 class="hub-mark"><i aria-hidden="true"></i>Hub</h1>
   <nav id="nav" aria-label="Sezioni">
     <button data-t="automations">Automazioni<span class="badge" id="nauto" hidden></span></button>
     <button data-t="sessions">Sessioni<span class="badge" id="nsess" hidden></span></button>
@@ -19,7 +18,7 @@
     <button data-t="services">Servizi</button>
     <button data-t="settings">Impostazioni</button>
     <button data-t="logs">Log</button>
-  </nav>
+  </nav><span class="sub" id="sub"></span></header>
   <div class="tab" id="t-overview"><p class="mut small">Carico quote, agenti e Mac…</p></div>
   <div class="tab" id="t-projects"></div>
   <div class="tab" id="t-accounts"></div>

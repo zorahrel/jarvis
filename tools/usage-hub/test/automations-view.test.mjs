@@ -106,7 +106,7 @@ test('(f) il verdetto conta chi ti aspetta', () => {
 test('(g) gruppi per scopo, il sistema solo nel pannello', () => {
   const table = htmlPb.slice(htmlPb.indexOf('data-sec="table"'), htmlPb.indexOf('data-sec="footer"'));
   assert.doesNotMatch(visible(table), /OpenClaw|\bMac\b|launchd/);
-  assert.match(table, /data-au-area="posta-avvisi"|data-au-area="backup-sicurezza"/);
+  assert.match(table, /<div class="cx-gh">(Posta e avvisi|Backup e sicurezza)/);
   // Senza purpose l'area è stimata e lo dice.
   const c = structuredClone(pb.broken[0]);
   c.purpose = null;
