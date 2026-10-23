@@ -165,7 +165,7 @@ export function createServer(config, deps = {}) {
   // «Da cambiare» passa a un agente: una voce in coda con la nota e il modo di chiuderla.
   const changeRequest = (row, card) => enqueue({
     task: `Automazione «${(card && card.title) || row.key}» (${row.key}): Attilio ha detto «da cambiare». La sua nota: «${row.note}». ` +
-      `Cambiala come chiede (descrizioni in ~/.claude/jarvis/private/automazioni/descrizioni.json, feedback con: node ~/Projects/claude-usage-hub/bin/usage-hub.mjs feedback --open). ` +
+      `Cambiala come chiede (descrizioni in ~/.claude/jarvis/private/automazioni/descrizioni.json, feedback con: node ~/.claude/jarvis/tools/usage-hub/bin/usage-hub.mjs feedback --open).` +
       `Quando hai finito chiudi la richiesta: curl -s -X POST http://127.0.0.1:3360/api/feedback -H 'content-type: application/json' -d '{"kind":"resolve","ref":"${row.id}","commit":"<sha o file cambiato>"}'. ` +
       `Se l'automazione cambia id o sistema scrivi anche {"kind":"migration","from":"${row.key}","to":"<chiave nuova>"}.`,
     dir: row.key.startsWith('cron:') ? path.join(os.homedir(), '.openclaw') : path.join(os.homedir(), '.claude', 'jarvis'),
