@@ -95,7 +95,7 @@ def main():
         return 0
     STATE.parent.mkdir(parents=True, exist_ok=True)
     STATE.write_text(json.dumps({"healed_at": now}))
-    r = subprocess.run([OC_RESTART], capture_output=True, text=True, timeout=900)
+    r = subprocess.run([OC_RESTART, "--now"], capture_output=True, text=True, timeout=900)
     log(f"oc-restart exit {r.returncode}: {(r.stdout or r.stderr).strip()[-300:]}")
     return r.returncode
 

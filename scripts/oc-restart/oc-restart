@@ -5,11 +5,15 @@ OpenClaw non riprende i sottoagenti che un riavvio interrompe: li segna interrup
 subagent-error, e nessuno li rilancia (misurato 15/10: 7 su 7 fermi). Aspettare che finiscano non
 serve, durano 30-80 minuti (--safe ha atteso 10 minuti e li ha interrotti lo stesso). Quindi:
 
-  oc-restart                 fotografa i sottoagenti vivi, aspetta che nessuna chat stia rispondendo
-                             (max 2 min), riavvia (restart --force), aspetta gateway e WhatsApp,
-                             poi chiede a ogni canale di rilanciare i suoi
+  oc-restart                 NON taglia turni: se c'e' lavoro in corso (sottoagenti, run cron, chat che
+                             risponde) si stacca in background e riavvia da solo appena il gateway e'
+                             libero (max 6 h, poi riavvia comunque con la ripresa); se e' libero riavvia
+                             subito. Chi lo chiama da dentro un turno non resta bloccato: il suo turno
+                             finisce e il riavvio parte dopo.
+  oc-restart --now           riavvia adesso come prima (taglia i turni vivi e li riprende): solo per un
+                             gateway rotto (WhatsApp bloccato, heartbeat morto)
   oc-restart --resume-since N  solo la ripresa: sottoagenti finiti male negli ultimi N minuti
-  oc-restart --dry-run       dice cosa farebbe, non riavvia e non scrive a nessuno
+  oc-restart --dry-run       dice cosa farebbe e cosa blocca, non riavvia e non scrive a nessuno
 
 La ripresa e' un messaggio interno alla sessione del canale che li aveva lanciati (senza --deliver):
 e' quell'agente a ricontrollare git/worktree e a rilanciarli, con il contesto che ha gia'."""
@@ -99,6 +103,57 @@ def wait_replies(dry):
         busy = replying()
     if busy:
         print(f"risposta ancora in corso in {', '.join(busy)}" + ("" if dry else f": riavvio dopo {REPLY_WAIT_S} s lo stesso"))
+
+
+IDLE_QUIET_S = 20            # gateway libero per tanto di fila prima di riavviare
+IDLE_POLL_S = 5
+IDLE_MAX_WAIT_S = 6 * 3600
+
+
+def blockers():
+    """Lavoro che un riavvio taglierebbe: sottoagenti vivi, run cron in corso, chat che sta rispondendo."""
+    out = [("sottoagente", p.get("label", "?")) for p in running()]
+    out += [("chat", k) for k in replying()]
+    con = sqlite3.connect(f"file:{DB}?mode=ro", uri=True, timeout=10)
+    try:
+        for (job,) in con.execute("select job_id from cron_run_receipts where status='running' and started_at_ms > ?",
+                                  ((time.time() - 7200) * 1000,)):
+            out.append(("cron", job[:8]))
+    finally:
+        con.close()
+    return out
+
+
+def wait_idle(max_wait=IDLE_MAX_WAIT_S):
+    """Aspetta gateway libero per IDLE_QUIET_S di fila. True = libero, False = scaduto il tempo."""
+    end, quiet_since = time.time() + max_wait, None
+    while time.time() < end:
+        b = blockers()
+        if b:
+            quiet_since = None
+        elif quiet_since is None:
+            quiet_since = time.time()
+        elif time.time() - quiet_since >= IDLE_QUIET_S:
+            return True
+        time.sleep(IDLE_POLL_S)
+    return False
+
+
+def log_request(mode, busy):
+    """Chi chiede un riavvio e quando: la catena dei processi padre, per trovare chi lo fa."""
+    chain, pid = [], os.getppid()
+    for _ in range(6):
+        r = subprocess.run(["ps", "-o", "ppid=,command=", "-p", str(pid)], capture_output=True, text=True).stdout.strip()
+        if not r:
+            break
+        ppid, _, cmd = r.partition(" ")
+        chain.append(cmd.strip()[:90])
+        pid = int(ppid) if ppid.strip().isdigit() else 0
+        if pid <= 1:
+            break
+    STATE.mkdir(parents=True, exist_ok=True)
+    with open(STATE / "oc-restart-requests.jsonl", "a") as f:
+        f.write(json.dumps({"t": time.strftime("%Y-%m-%dT%H:%M:%S"), "mode": mode, "bloccanti": len(busy), "chain": chain}) + "\n")
 
 
 def gateway_pid():
@@ -270,7 +325,7 @@ def resume(lost, when, dry):
 def main():
     a = sys.argv[1:]
     # un'opzione sconosciuta (--help, -h, refusi) non deve riavviare: il 15/10 «--help» ha riavviato davvero
-    unknown = [x for x in a if x.startswith("-") and x not in ("--dry-run", "--resume-since")]
+    unknown = [x for x in a if x.startswith("-") and x not in ("--dry-run", "--resume-since", "--now", "--wait-idle")]
     if unknown:
         print(__doc__)
         sys.exit(0 if set(unknown) <= {"-h", "--help"} else 2)
@@ -282,11 +337,32 @@ def main():
         resume(lost, time.strftime("%H:%M"), dry)
         discord_catchup((time.time() - mins * 60) * 1000, time.time() * 1000, dry)
         return 0
+    now_mode, wait_mode = "--now" in a, "--wait-idle" in a
+    busy = blockers()
+    if dry:
+        print(f"{len(busy)} cose in corso: " + (", ".join(f"{k} {v}" for k, v in busy) or "nessuna"))
+        print("riavvierebbe subito" if now_mode or not busy else "si staccherebbe e aspetterebbe il gateway libero")
+        return 0
+    if not now_mode and not wait_mode:
+        log_request("default", busy)
+        if busy:
+            STATE.mkdir(parents=True, exist_ok=True)
+            out = STATE / f"oc-restart-wait-{time.strftime('%Y%m%d-%H%M%S')}.log"
+            subprocess.Popen([sys.executable, str(Path(__file__).resolve()), "--wait-idle"],
+                             stdout=open(out, "w"), stderr=subprocess.STDOUT, start_new_session=True)
+            print(f"rimandato: {len(busy)} cose in corso ({', '.join(f'{k} {v}' for k, v in busy[:5])}). "
+                  f"Riavvio da solo appena il gateway e' libero (max 6 h). Esito in {out}")
+            return 0
+    elif now_mode:
+        log_request("now", busy)
+    if wait_mode:
+        print(f"{time.strftime('%H:%M:%S')} attendo il gateway libero")
+        ok = wait_idle()
+        print(f"{time.strftime('%H:%M:%S')} " + ("gateway libero" if ok else "tempo scaduto: riavvio comunque con la ripresa"))
     alive = running()
     print(f"{len(alive)} sottoagenti vivi: " + ", ".join(p.get("label", "?") for p in alive))
-    wait_replies(dry)
-    if dry:
-        return 0
+    if not wait_mode:
+        wait_replies(dry)
     STATE.mkdir(parents=True, exist_ok=True)
     snap = STATE / f"oc-restart-{time.strftime('%Y%m%d-%H%M%S')}.json"
     snap.write_text(json.dumps([{"run": p["_run"], "req": p["_req"], "label": p.get("label")} for p in alive], ensure_ascii=False))
