@@ -1,11 +1,8 @@
 # Proposta: il lavoro pesante va sul PC da solo (hook `offload-guard`)
 
-## Da decidere
+## Stato
 
-1. **Attivare l'hook in Claude Code** (consigliata): è da lì che partono le suite che soffocano il Mac (il 23/10 alle 02:40, tre `playwright test` WebKit da sessioni Claude Code, carico 5-6 per core). Una riga in `~/.claude/settings.json`, sotto.
-2. **Attivarlo anche in Codex**: stesso script, stesso protocollo (exit 2 + motivo su stderr), un blocco in `~/.codex/hooks.json`. Codex chiede di fidarsi del nuovo hook al primo avvio.
-
-ok / ok ma 2 no
+**Approvata e attiva dal 23/10** (Attilio: «ma tutto anche muse no?»): Claude Code, Codex, Muse e jcode usano lo stesso script. Dove sta ogni riga: `~/.claude/setup/shared/tools/pc-offload.md`.
 
 ## Perché un hook e non una riga in più
 
@@ -49,4 +46,4 @@ La riga su `offload` c'è in `TOOLS.md` (e quindi in `~/.agents/AGENTS.md`) dal 
 
 ## Fuori
 
-jcode, OpenClaw e Muse non hanno un hook sui comandi con questo protocollo (jcode ha `[hooks] pre_tool_timeout_ms` ma nessun formato documentato): per loro resta la riga dell'hub. Il router di delega non si tocca.
+OpenClaw non ha un hook sui comandi con questo protocollo: per lui resta la riga dell'hub. Muse e jcode invece ce l'hanno (Muse legge gli hook nel formato di Claude, jcode ha `[hooks] pre_tool` con exit 2), e sono stati accesi anche loro. Il router di delega non si tocca.
