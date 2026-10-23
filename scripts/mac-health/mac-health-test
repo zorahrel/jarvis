@@ -83,6 +83,14 @@ check("binario non firmato in /tmp", f(odd=[dict(path="/tmp/x", signer="non firm
 check("binario firmato in /tmp: zitto", f(odd=[dict(path="/tmp/x", signer="Bit4id srl")]), None)
 check("FileVault spento", f(posture__filevault=False), "FileVault spento")
 
+ag = dict(claude=dict(n=85, ok=73), topics=dict(n=20, ok=12, lost=3), orphans=0, gb=None)
+check("Topics 60% contro Claude Code 86%: segnalato", f(agents=ag), "Topics porta in fondo il 60%")
+check("Topics a 8 punti da Claude Code: zitto", f(agents=dict(ag, topics=dict(n=20, ok=16, lost=0))), None)
+check("Topics con 4 lavori: campione troppo piccolo, zitto", f(agents=dict(ag, topics=dict(n=4, ok=0, lost=4))), None)
+check("Topics illeggibile: zitto", f(agents=dict(ag, topics=None)), None)
+check("11 orfani da Topics: segnalato", f(agents=dict(ag, topics=dict(n=0, ok=0, lost=0), orphans=11)), "11 processi orfani")
+check("10 orfani: zitto", f(agents=dict(ag, topics=dict(n=0, ok=0, lost=0), orphans=10)), None)
+
 proc = dict(pid=1, name="Parsec", what="firmato Parsec", avg=5.0, hours=7, fp=100, hot=True, heavy=False)
 check("CPU media 5% da 7 ore", f(weekly=False, procs=[proc]), "5% di CPU in media")
 check("memoria oltre il 5%", f(weekly=False, procs=[dict(proc, hot=False, heavy=True, fp=2000)]), "GB di memoria")

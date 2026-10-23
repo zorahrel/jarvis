@@ -82,6 +82,18 @@ PROTECTED = [                              # residenti gestiti altrove
 ]
 OWNER_HINTS = ["Claude.app", "claude-code", "jcode", "tmux", "Terminal"]
 
+# Seconda regola, indipendente dalla pressione: i server statici usa e getta.
+# Il 24/10 una sessione Claude di armonia-site aveva lasciato 27
+# `python -m http.server` orfani, uno per ogni build confrontata, accumulati in
+# quattro giorni: il comando finisce con `&`, la shell muore e il server resta
+# a launchd. Qui l'orfananza conta perche' la congiunzione e' stretta: server
+# statico + cartella in una scratchpad di Claude + padre launchd + nessuna
+# connessione + piu' vecchio di SCRATCH_AGE. Servono file da disco, ucciderli
+# non perde niente.
+SCRATCH_PATTERN = r"-m\s+http\.server\b"
+SCRATCH_CWD = r"^/(private/)?tmp/claude-\d+/"
+SCRATCH_AGE = _env("DEVREAP_SCRATCH_AGE", 3600, int)
+
 
 def log(msg, echo=False):
     LOG.parent.mkdir(parents=True, exist_ok=True)
@@ -285,6 +297,43 @@ def print_rows(rows, swap):
         print(f"        {r['cmd'][:110]}")
 
 
+def scratch_servers(procs):
+    """I server statici orfani lasciati nelle scratchpad di Claude."""
+    rows = []
+    for pid, info in procs.items():
+        if info["ppid"] != 1 or info["age"] < SCRATCH_AGE:
+            continue
+        if not re.search(SCRATCH_PATTERN, info["cmd"]):
+            continue
+        cwd = cwd_of(pid)
+        if not re.match(SCRATCH_CWD, cwd):
+            continue
+        if ONLY_PATH and ONLY_PATH not in info["cmd"] + "\n" + cwd:
+            continue                         # recinto della suite
+        ports, inbound = net(pid)
+        if inbound:
+            continue
+        rows.append({"pid": pid, "ports": sorted(ports), "age": info["age"],
+                     "cwd": cwd})
+    return rows
+
+
+def reap_scratch(procs, dry, listing=False):
+    rows = scratch_servers(procs)
+    if listing:
+        for r in rows:
+            print(f"  usa e getta pid={r['pid']} porte={','.join(r['ports']) or '-'} "
+                  f"eta={r['age']//60}m  {r['cwd'][-90:]}")
+        return
+    if not rows:
+        return
+    # Un solo giro di segnali: kill_tree aspetta 6 s, non va pagato per ognuno.
+    res = kill_tree([r["pid"] for r in rows], dry)
+    for r in rows:
+        log(f"REAP-SCRATCH pid={r['pid']} porte={','.join(r['ports']) or '-'} "
+            f"eta={r['age']//60}m [{res}] :: {r['cwd']}", echo=True)
+
+
 def main():
     flags = set(sys.argv[1:])
     listing = "--list" in flags
@@ -296,7 +345,11 @@ def main():
 
     if listing:
         print_rows(survey(procs), swap)
+        reap_scratch(procs, dry, listing=True)
         return
+
+    # Prima del gate: questi non aspettano che il Mac soffra.
+    reap_scratch(procs, dry)
 
     # Gate: se la macchina respira, non c'e' niente da raccogliere.
     if swap < SWAP_PRESSURE_PCT and not force:

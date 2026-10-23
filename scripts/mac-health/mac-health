@@ -56,6 +56,16 @@ UNUSED_APPS_GB = 1     # sette app da 100 MB in tutto non valgono un messaggio
 PRIVATE_MAX_H = 48     # private/sync.sh gira ogni notte alle 04:32
 UNPUSHED_DAYS = 7      # senza Time Machine un commit non spinto esiste solo su questo disco
 TM_MAX_DAYS = 7
+# Lavori lunghi degli agenti: Topics contro Claude Code (claude -p lanciato da OpenClaw).
+# Nato il 24/10 dalla domanda «Topics e' meglio, e lo resta?»: la riga c'e' sempre nel
+# rapporto, il messaggio parte solo se Topics peggiora.
+AGENTS_DAYS = 7
+AGENTS_LONG_MIN = 15    # sotto e' una risposta, non un lavoro
+AGENTS_MIN_N = 5        # con meno lavori la percentuale non dice niente
+AGENTS_GAP_PTS = 10     # Topics che arriva in fondo 10 punti meno di Claude Code
+TOPICS_ORPHANS_MAX = 10 # il 24/10 erano 37, 27 server statici lasciati da un agente
+OPENCLAW_DB = Path(HOME) / ".openclaw/state/openclaw.sqlite"
+TOPICS_DB = Path(HOME) / "Projects/topics-app/data/topics.db"
 
 # Dove un eseguibile non firmato non ha motivo di stare. Le cartelle nascoste
 # della home no: qui ci vivono jcode, bun, uv, tutti firmati ad hoc e legittimi.
@@ -598,7 +608,7 @@ def read_facts(weekly):
     f = dict(now=time.time(), weekly=weekly, ram_mb=ram_mb, uptime_h=uptime_h,
              disk=dict(free_gb=st.f_bavail * st.f_frsize / 1e9, total_gb=st.f_blocks * st.f_frsize / 1e9),
              startup=btm_items(), failures=launchd_failures(uptime_h), posture=posture(),
-             extensions=extensions(), backup=backup(), blind=[], blind_keys=[])
+             extensions=extensions(), backup=backup(), agents=agents(time.time()), blind=[], blind_keys=[])
     net = network(rows)
     if net is None:
         f["blind"].append("lsof non ha risposto: connessioni e porte in LAN NON controllate")
@@ -630,6 +640,80 @@ def read_facts(weekly):
     except Exception:
         f["accepted"] = []
     return f
+
+
+def _ro(path):
+    import sqlite3
+    return sqlite3.connect(f"file:{path}?mode=ro", uri=True, timeout=5)
+
+
+def _iso(t):
+    try:
+        return datetime.datetime.fromisoformat(t.replace("Z", "+00:00")).timestamp() if t else None
+    except ValueError:
+        return None
+
+
+def agents(now):
+    """Lavori lunghi degli ultimi AGENTS_DAYS: quanti, quanti arrivati in fondo. None = fonte illeggibile."""
+    since, long_s = now - AGENTS_DAYS * DAY, AGENTS_LONG_MIN * 60
+    out = dict(claude=None, topics=None, orphans=None, gb=None)
+    try:  # claude -p da OpenClaw: modello anthropic/*, runtime claude-cli
+        n = ok = 0
+        for pj, in _ro(OPENCLAW_DB).execute("SELECT payload_json FROM subagent_runs WHERE created_at >= ?", (since * 1000,)):
+            r = json.loads(pj)
+            if not str(r.get("model") or "").startswith("anthropic/"):
+                continue
+            ex = r.get("execution") or {}
+            a, b, st = ex.get("startedAt"), ex.get("endedAt"), (ex.get("outcome") or {}).get("status")
+            if b is None and a and now - a / 1000 < 2 * 3600:
+                continue  # ancora vivo: non e' ne' finito ne' perso
+            if b is not None and a and (b - a) / 1000 < long_s and st != "timeout":
+                continue
+            n += 1
+            ok += b is not None and st == "ok"
+        out["claude"] = dict(n=n, ok=ok)
+    except Exception:
+        pass
+    try:  # Topics: sotto-agenti (spawn_agent) e tentativi delle card
+        n = ok = lost = 0
+        db = _ro(TOPICS_DB)
+        rows = [(s_, a, b, s_ == "retired", s_ == "lost") for s_, a, b in
+                db.execute("SELECT state, created_at, ended_at FROM subagents WHERE state NOT IN ('running','stopped')")]
+        rows += [(s_, a, b, s_ in ("delivered", "selected", "discarded"), False) for s_, a, b in
+                 db.execute("SELECT state, created_at, ended_at FROM task_attempts WHERE state != 'running'")]
+        for _, a, b, good, gone in rows:
+            ta, tb = _iso(a), _iso(b)
+            if ta is None or ta < since:
+                continue
+            if not gone and (tb is None or tb - ta < long_s):
+                continue
+            n += 1; ok += good; lost += gone
+        out["topics"] = dict(n=n, ok=ok, lost=lost)
+    except Exception:
+        pass
+    try:  # orfani lasciati dai terminali di Topics, e GB fissi delle due app
+        import ctypes
+        resp = ctypes.CDLL(None).responsibility_get_pid_responsible_for_pid
+        resp.restype, resp.argtypes = ctypes.c_int, [ctypes.c_int]
+        procs = {}
+        for line in run(["ps", "-Ao", "pid=,ppid=,command="]).splitlines():
+            m = re.match(r"\s*(\d+)\s+(\d+)\s+(.*)", line)
+            if m:
+                procs[int(m[1])] = (int(m[2]), m[3])
+        host = {p for p, (_, c) in procs.items() if "Topics Host.app" in c}
+        out["orphans"] = sum(1 for p, (pp, _) in procs.items() if pp == 1 and p not in host and resp(p) in host)
+        fp = lambda keys: sum(memhog.footprint_mb(p) or 0 for p, (_, c) in procs.items() if any(k in c for k in keys)) / 1024
+        # il nucleo di ciascuna app; i processi delle sessioni (CLI, MCP) pesano uguale da tutte e due le parti
+        out["gb"] = dict(topics=fp(["topics-app/server.ts", "topics-app/server/ai-bridge.mjs", "Topics Host.app", "Topics.app/Contents/MacOS"]),
+                         claude=fp(["/Applications/Claude.app/Contents/"]))
+    except Exception:
+        pass
+    return out
+
+
+def rate(x):
+    return None if not x or not x["n"] else 100 * x["ok"] / x["n"]
 
 
 # ---------------------------------------------------------------- decisione
@@ -746,6 +830,16 @@ def findings(f):
         top = ", ".join(f"{a['name']} {gb(a['kb'])}" for a in apps[:5])
         add("app", "unused", f"{len(apps)} app non aperte da {UNUSED_DAYS} giorni, {gb(tot)} in tutto: {top}",
             f"{len(apps)} app ferme da 6 mesi, {gb(tot)}")
+    # agenti: Topics contro Claude Code sui lavori lunghi
+    ag = f.get("agents") or {}
+    tp, cc = ag.get("topics"), ag.get("claude")
+    if tp and cc and tp["n"] >= AGENTS_MIN_N and cc["n"] >= AGENTS_MIN_N and rate(tp) < rate(cc) - AGENTS_GAP_PTS:
+        add("agenti", "topics-peggio", f"Topics porta in fondo il {rate(tp):.0f}% dei lavori lunghi ({tp['ok']} su {tp['n']}, {tp['lost']} persi), "
+            f"Claude Code il {rate(cc):.0f}% ({cc['ok']} su {cc['n']}): i lavori lunghi restano su Claude Code",
+            f"Topics {rate(tp):.0f}% contro Claude Code {rate(cc):.0f}% sui lavori lunghi")
+    if (ag.get("orphans") or 0) > TOPICS_ORPHANS_MAX:
+        add("agenti", "orfani", f"{ag['orphans']} processi orfani lasciati dai terminali di Topics (soglia {TOPICS_ORPHANS_MAX})",
+            f"{ag['orphans']} orfani da Topics")
     for line in f["blind"]:
         add("cieco", line, line, line)
     return out
@@ -779,7 +873,7 @@ def snapshot(f, keep):
 
 # ---------------------------------------------------------------- uscita
 
-SECTIONS = ("cieco", "backup", "sicurezza", "avvio", "disco", "processi", "app")
+SECTIONS = ("cieco", "backup", "sicurezza", "avvio", "agenti", "disco", "processi", "app")
 MSG_MAX = 600  # regola di Attilio per ogni resoconto: esito per primo, al massimo 600 caratteri
 
 
@@ -860,6 +954,17 @@ def report_md(f, keep, quiet):
     L.append("- estensioni attive:")
     L += [f"  - {e['browser']}: {e['name']}{'' if e['store'] else ' (fuori store)'}" for e in f["extensions"] if e["enabled"]]
     L.append(f"- estensioni spente: {sum(1 for e in f['extensions'] if not e['enabled'])}")
+    ag = f.get("agents") or {}
+    side = lambda x, extra="": "fonte illeggibile" if x is None else (
+        f"{x['ok']} su {x['n']} ({rate(x):.0f}%){extra}" if x["n"] else "nessuno")
+    g = ag.get("gb")
+    tp = ag.get("topics")
+    gbs = f"Topics {g['topics']:.1f}, Claude {g['claude']:.1f}".replace(".", ",") if g else "n.d."
+    orph = "n.d." if ag.get("orphans") is None else ag["orphans"]
+    lost = f", {tp['lost']} persi" if tp else ""
+    L += ["", f"## Agenti, lavori lunghi ({AGENTS_DAYS} giorni, oltre {AGENTS_LONG_MIN} min)",
+          f"- Topics: {side(tp, lost)} · Claude Code: {side(ag.get('claude'))} · "
+          f"orfani da Topics: {orph} · GB fissi: {gbs}"]
     b = f["backup"]
     L += ["", "## Backup",
           f"- Time Machine: {'non configurato' if not b['tm_dest'] else (datetime.datetime.fromtimestamp(b['tm_last']).strftime('%d/%m/%Y %H:%M') if b['tm_last'] else 'data illeggibile')}",

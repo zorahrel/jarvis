@@ -12,6 +12,7 @@ SANDBOX="$HOME/Projects/.devreap-test/node_modules/.bin"
 STATE="$HOME/.claude/jarvis/state/devreap.json"
 STATE_BAK="$STATE.testbak"
 PIDS=()
+SCRATCH_TEST="/private/tmp/claude-$(id -u)/devreap-test-scratch"
 PASS=0; FAIL=0
 
 cleanup() {
@@ -21,9 +22,9 @@ cleanup() {
   pkill -9 -f "Projects/.devreap-test" 2>/dev/null
   # Il finto della prova 9 gira con path relativo e il pkill sopra non lo vede:
   # lo si prende per porta, che e' sua per costruzione.
-  lsof -nP -iTCP:39101-39104 -sTCP:LISTEN -t 2>/dev/null | xargs kill -9 2>/dev/null
+  lsof -nP -iTCP:39101-39107 -sTCP:LISTEN -t 2>/dev/null | xargs kill -9 2>/dev/null
   sleep 1
-  rm -rf "$HOME/Projects/.devreap-test"
+  rm -rf "$HOME/Projects/.devreap-test" "$SCRATCH_TEST"
   [ -f "$STATE_BAK" ] && mv "$STATE_BAK" "$STATE" || rm -f "$STATE"
 }
 trap cleanup EXIT
@@ -147,6 +148,28 @@ REL=$(cd "$SANDBOX/../.." && { python3 node_modules/.bin/next 39104 50 >/dev/nul
 sleep 3
 "$REAP" --list | grep -q "39104" && ok "vede il dev server lanciato con path relativo" \
                                   || bad "non vede il dev server lanciato con path relativo"
+
+echo
+echo "== 10. il caso del 24/10: server statici orfani nelle scratchpad di Claude"
+# 27 `python -m http.server` lasciati da una sessione di armonia-site. Si
+# raccolgono senza pressione, ma solo se orfani, in una scratchpad e vecchi.
+mkdir -p "$SCRATCH_TEST/scratchpad/dist"
+port_pid() { lsof -nP -iTCP:"$1" -sTCP:LISTEN -t 2>/dev/null | head -1; }
+# Il lanciatore esce subito: il server resta a launchd, come nel caso vero.
+# Con un sottoguscio `( … & )` il padre restava la suite, non launchd.
+python3 -c 'import subprocess,sys; subprocess.Popen([sys.executable,"-m","http.server","39105","--bind","127.0.0.1"], cwd=sys.argv[1], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)' "$SCRATCH_TEST/scratchpad/dist"
+# Questo invece ha un padre vivo (la suite): non va toccato.
+cd "$SCRATCH_TEST/scratchpad/dist" && { python3 -m http.server 39106 --bind 127.0.0.1 >/dev/null 2>&1 & PIDS+=("$!"); }; cd - >/dev/null
+sleep 2
+ORPH=$(port_pid 39105); KEPT=$(port_pid 39106)
+check "l'orfano ha launchd come padre" "$(ps -o ppid= -p "$ORPH" | tr -d ' ')" "1"
+export DEVREAP_ONLY_PATH="$SCRATCH_TEST" DEVREAP_SWAP_PCT=999
+DEVREAP_SCRATCH_AGE=99999 "$REAP" >/dev/null 2>&1; sleep 1
+kill -0 "$ORPH" 2>/dev/null && ok "giovane: non lo tocca" || bad "ucciso un orfano giovane"
+DEVREAP_SCRATCH_AGE=0 "$REAP" --list | grep -q "pid=$ORPH" && ok "il censimento lo mostra" || bad "il censimento non lo mostra"
+DEVREAP_SCRATCH_AGE=0 "$REAP" >/dev/null 2>&1; sleep 7
+kill -0 "$ORPH" 2>/dev/null && bad "l'orfano vecchio e' sopravvissuto" || ok "orfano vecchio raccolto anche senza pressione"
+kill -0 "$KEPT" 2>/dev/null && ok "quello col padre vivo e' intatto" || bad "ucciso un server con padre vivo"
 
 echo
 echo "passati $PASS, falliti $FAIL"
