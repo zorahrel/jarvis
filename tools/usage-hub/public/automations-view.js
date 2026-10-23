@@ -149,6 +149,18 @@
     var saved = run.tokensSavedVsClaude != null ? run.tokensSavedVsClaude : total - by.claude;
     return { by: by, total: total, saved: saved, pct: total ? Math.round(saved / total * 100) : 0 };
   }
+  // Quarta cifra in testa: token dei workflow in 7 giorni e quanti delegati. Senza token registrati, i giri di oggi.
+  function weekStat(model, v) {
+    var wf = model.workflows || {}, total = 0, saved = 0, known = 0;
+    for (const w of wf.byName || []) for (const r of w.runs || []) {
+      var t = runTokens(r);
+      if (!t) continue;
+      total += t.total; saved += t.saved; known++;
+    }
+    if (!known) return '<div><b>' + (v.runsToday || 0) + '</b><span>giri oggi' + (wf.total ? ' · ' + wf.total + ' workflow' : '') + '</span></div>';
+    var pct = total ? Math.round(saved / total * 100) : 0;
+    return '<div><b class="' + (pct ? '' : 'claude') + '">' + tok(total) + '</b><span>token workflow, ' + (wf.days || 7) + ' giorni · ' + pct + '% delegato</span></div>';
+  }
   // Fasi del giro con l'esecutore se è uno solo (i passi non dicono a che fase appartengono).
   function runPhases(run) {
     var exs = {};
@@ -251,7 +263,7 @@
       '<div class="cx-stats"><div><b>' + cards.length + '</b><span>automazioni</span></div>' +
       '<div><b class="' + (v.needsYou ? 'te' : '') + '">' + (v.needsYou || 0) + '</b><span>ti aspettano</span></div>' +
       '<div><b class="' + (v.broken ? 'bad' : '') + '">' + (v.broken || 0) + '</b><span>rotte</span></div>' +
-      '<div><b>' + (v.runsToday || 0).toLocaleString('it-IT') + '</b><span>giri oggi' + (wf.total ? ' · ' + wf.total + ' workflow' : '') + '</span></div></div>' +
+      weekStat(model, v) + '</div>' +
       '<div class="cx-tools"><div class="cx-seg" role="group" aria-label="Filtro">' + seg.map(function (s) {
         return '<button data-au-filter="' + s[0] + '" aria-pressed="' + (f === s[0]) + '">' + s[1] + '<b>' + s[2] + '</b></button>';
       }).join('') + '</div><label class="cx-q"><span class="sr">Cerca</span><input type="search" data-au-q placeholder="Cerca per nome o per cosa fa" value="' + esc(ui.q || '') + '" autocomplete="off"><kbd aria-hidden="true">/</kbd></label></div></section>';
