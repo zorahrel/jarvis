@@ -1,0 +1,55 @@
+/* Base comune alle varianti: reset, colori degli esecutori, diagramma dei workflow, segnaposto.
+   Ogni variante ridefinisce i token in :root e aggiunge solo il suo layout. */
+:root {
+  --bg:#0c0d0f; --s1:#131417; --s2:#191b1f; --s3:#22252a; --line:#24272c;
+  --fg:#ececee; --fg2:#a8acb4; --mut:#7d828b;
+  --te:#f2c14e; --bad:#f2716b; --ok:#6fcf8e;
+  --x-free:#2dd4bf; --x-muse:#60a5fa; --x-codex:#a78bfa; --x-claude:#f0915a;
+  --mono:ui-monospace,"SF Mono",SFMono-Regular,Menlo,monospace;
+  --sans:-apple-system,"SF Pro Text",system-ui,sans-serif;
+}
+* { box-sizing:border-box; }
+html { color-scheme:dark; }
+body { margin:0; background:var(--bg); color:var(--fg); font:14px/1.5 var(--sans); -webkit-font-smoothing:antialiased; }
+button { font:inherit; color:inherit; }
+a { color:inherit; }
+.sr { position:absolute; width:1px; height:1px; overflow:hidden; clip:rect(0 0 0 0); white-space:nowrap; }
+:focus-visible { outline:2px solid var(--fg2); outline-offset:2px; }
+
+/* Esecutori: un colore ciascuno, usato solo qui */
+.x-free { --x:var(--x-free); } .x-muse { --x:var(--x-muse); } .x-codex { --x:var(--x-codex); } .x-claude { --x:var(--x-claude); }
+
+/* Diagramma a passi */
+.fl { display:flex; flex-direction:column; gap:14px; }
+.fl-flag { font-size:12px; color:var(--te); }
+.fl-save-n { display:flex; align-items:baseline; gap:10px; flex-wrap:wrap; margin-bottom:8px; }
+.fl-save-n b { font-size:26px; font-weight:600; letter-spacing:-.03em; font-variant-numeric:tabular-nums; }
+.fl-save-n span { color:var(--fg2); font-size:13px; }
+.fl-save-n.none b { color:var(--x-claude); }
+.fl-bar { display:flex; gap:2px; height:8px; border-radius:4px; overflow:hidden; }
+.fl-bar i { display:block; background:var(--x); }
+.fl-leg { display:flex; gap:4px 14px; flex-wrap:wrap; margin-top:8px; font-size:12px; color:var(--fg2); font-variant-numeric:tabular-nums; }
+.fl-leg i { display:inline-block; width:8px; height:8px; border-radius:2px; background:var(--x); margin-right:6px; }
+.fl-steps { list-style:none; margin:0; padding:0; position:relative; }
+.fl-n { position:relative; display:grid; grid-template-columns:20px minmax(0,1fr) auto; gap:12px; align-items:start; padding:0 0 16px; }
+.fl-n:last-child { padding-bottom:0; }
+.fl-n::before { content:''; position:absolute; left:9px; top:16px; bottom:-2px; width:2px; background:var(--line); }
+.fl-n:last-child::before { display:none; }
+.fl-dot { width:20px; height:20px; border-radius:50%; border:2px solid var(--fg2); background:var(--bg); position:relative; z-index:1; }
+.fl-n.ok .fl-dot { border-color:var(--ok); }
+.fl-n.ok .fl-dot::after { content:''; position:absolute; inset:4px; border-radius:50%; background:var(--ok); }
+.fl-n.err .fl-dot { border-color:var(--bad); background:var(--bad); }
+.fl-b { min-width:0; }
+.fl-b b { display:block; font-weight:600; }
+.fl-b span { color:var(--fg2); font-size:12.5px; font-variant-numeric:tabular-nums; }
+.fl-ex { color:var(--x); font-weight:600; }
+.fl-bad { color:var(--bad); }
+.fl-o { font-size:12px; color:var(--mut); padding-top:1px; }
+.fl-n.err .fl-o { color:var(--bad); }
+
+/* Segnaposto e notifiche */
+.sk { background:var(--s2); border-radius:6px; animation:skp 1.5s ease-in-out infinite; }
+@keyframes skp { 50% { opacity:.45; } }
+@media (prefers-reduced-motion:reduce) { .sk { animation:none; } }
+.toast { position:fixed; left:50%; bottom:18px; transform:translateX(-50%); background:var(--fg); color:var(--bg); padding:8px 16px; border-radius:8px; opacity:0; transition:opacity .15s; pointer-events:none; font-weight:500; z-index:50; }
+.toast.on { opacity:1; }

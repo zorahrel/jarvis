@@ -2,220 +2,203 @@
 <html lang="it">
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Automazioni · Ti aspettano</title>
+<title>Automazioni · Lavoro e risparmio</title>
+<link rel="stylesheet" href="/varianti/base.css">
 <style>
-/* B · Inbox: solo ciò che serve a te, grande e calmo. Il resto è una riga per sistema. */
-:root {
-  --bg:#13110e; --s1:#1b1814; --s2:#221f1a; --s3:#2b2721; --line:#2f2a23;
-  --fg:#efe8dc; --fg2:#cfc6b6; --mut:#9a9081;
-  --amber:#e9ad5a; --coral:#f0806a; --ok:#8fbf7f;
-  --serif:ui-serif,"New York","Iowan Old Style",Georgia,serif;
-  --r:14px;
-}
-* { box-sizing:border-box; }
-html { color-scheme:dark; }
-body { margin:0; background:var(--bg); color:var(--fg); font:15px/1.55 -apple-system,"SF Pro Text",system-ui,sans-serif; -webkit-font-smoothing:antialiased; }
-button { font:inherit; color:inherit; }
-.sr { position:absolute; width:1px; height:1px; overflow:hidden; clip:rect(0 0 0 0); white-space:nowrap; }
+/* B · Lavoro e risparmio: si parte da ciò per cui i workflow esistono, i token fuori da Claude.
+   Gli avvisi stanno in una riga; le aree in fondo, compatte. */
+:root { --bg:#0b0c10; --s1:#12141a; --s2:#181b22; --s3:#20242c; --line:#22262e; --fg:#eceef2; --fg2:#a7adb8; --mut:#7b818c; }
+.top { display:flex; align-items:center; gap:20px; padding:0 20px; height:48px; border-bottom:1px solid var(--line); }
+.top b { font-weight:600; }
+.top nav { display:flex; gap:18px; height:100%; overflow-x:auto; scrollbar-width:none; flex:1; min-width:0; }
+.top nav::-webkit-scrollbar { display:none; }
+.top nav a { display:flex; align-items:center; text-decoration:none; color:var(--mut); white-space:nowrap; border-bottom:2px solid transparent; }
+.top nav a[aria-current] { color:var(--fg); border-bottom-color:var(--fg); }
+main { max-width:760px; margin:0 auto; padding:28px 20px 80px; }
 
-.top { display:flex; align-items:center; gap:4px; padding:12px 20px; overflow-x:auto; scrollbar-width:none; border-bottom:1px solid var(--line); }
-.top::-webkit-scrollbar { display:none; }
-.top a { color:var(--mut); text-decoration:none; padding:6px 12px; border-radius:99px; white-space:nowrap; font-size:14px; }
-.top a:hover { color:var(--fg); }
-.top a[aria-current] { color:var(--bg); background:var(--fg); font-weight:600; }
+/* Riga avvisi */
+.alert { display:flex; align-items:center; gap:12px; padding:12px 14px; border-radius:10px; background:color-mix(in srgb,var(--te) 9%,var(--s1)); border:1px solid color-mix(in srgb,var(--te) 28%,var(--line)); margin-bottom:28px; }
+.alert.bad { background:color-mix(in srgb,var(--bad) 8%,var(--s1)); border-color:color-mix(in srgb,var(--bad) 28%,var(--line)); }
+.alert .k { font-weight:600; color:var(--te); white-space:nowrap; }
+.alert.bad .k { color:var(--bad); }
+.alert .t { flex:1; min-width:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.alert button { border:0; background:none; color:var(--fg); cursor:pointer; white-space:nowrap; text-decoration:underline; text-underline-offset:3px; text-decoration-color:var(--fg2); min-height:28px; }
+.calm { color:var(--fg2); margin:0 0 28px; font-size:13.5px; }
+.calm b { color:var(--ok); font-weight:600; }
 
-main { max-width:680px; margin:0 auto; padding:32px 20px 72px; }
-.kick { color:var(--mut); font-size:13px; letter-spacing:.02em; margin:0 0 6px; }
-h1 { font-family:var(--serif); font-weight:500; font-size:34px; line-height:1.15; letter-spacing:-.015em; margin:0 0 6px; }
-.lede { color:var(--fg2); margin:0 0 28px; }
-.lede b { color:var(--fg); font-weight:600; }
+/* Risparmio della settimana */
+.hero { margin-bottom:36px; }
+.hero h1 { font-size:13px; font-weight:500; color:var(--mut); margin:0 0 6px; }
+.hero .big { display:flex; align-items:baseline; gap:12px; flex-wrap:wrap; margin-bottom:14px; }
+.hero .big b { font-size:52px; line-height:1; font-weight:600; letter-spacing:-.045em; font-variant-numeric:tabular-nums; }
+.hero .big span { font-size:15px; color:var(--fg2); max-width:34ch; }
+.hero .big.none b { color:var(--x-claude); }
+.hero .fl-bar { height:12px; border-radius:6px; }
+.hero .flag { margin-top:10px; font-size:12px; color:var(--te); }
 
-/* Card */
-.inbox { display:flex; flex-direction:column; gap:14px; margin-bottom:40px; }
-.card { background:var(--s1); border:1px solid var(--line); border-radius:var(--r); padding:20px 20px 16px; outline:none; position:relative; }
-.card::before { content:''; position:absolute; left:-1px; top:18px; bottom:18px; width:3px; border-radius:0 3px 3px 0; background:var(--amber); }
-.card.rotto::before { background:var(--coral); }
-.card:focus-visible, .card.cur { border-color:color-mix(in srgb,var(--fg) 30%,var(--line)); box-shadow:0 0 0 4px color-mix(in srgb,var(--fg) 8%,transparent); }
-.meta { display:flex; gap:8px; align-items:center; flex-wrap:wrap; font-size:12.5px; color:var(--mut); margin-bottom:8px; }
-.tag { font-weight:600; letter-spacing:.02em; color:var(--amber); }
-.card.rotto .tag { color:var(--coral); }
-.card h2 { font-family:var(--serif); font-weight:500; font-size:23px; line-height:1.2; letter-spacing:-.01em; margin:0 0 8px; }
-.reason { margin:0 0 6px; font-weight:500; color:var(--fg); }
-.what { color:var(--fg2); margin:0 0 14px; font-size:14px; }
-.facts { display:flex; gap:4px 18px; flex-wrap:wrap; font-size:13px; color:var(--mut); margin-bottom:16px; }
-.facts b { color:var(--fg2); font-weight:500; }
-.acts { display:flex; gap:8px; flex-wrap:wrap; }
-.btn { min-height:40px; padding:0 16px; border-radius:99px; border:1px solid var(--line); background:var(--s2); cursor:pointer; display:inline-flex; gap:10px; align-items:center; font-size:14px; text-decoration:none; color:var(--fg); }
-.btn:hover { background:var(--s3); }
+/* Workflow */
+.wfs > h2, .areas > h2 { font-size:15px; font-weight:600; margin:0 0 12px; display:flex; justify-content:space-between; gap:12px; }
+.wfs > h2 span, .areas > h2 span { color:var(--mut); font-weight:400; font-size:13px; }
+.w { border:1px solid var(--line); border-radius:12px; background:var(--s1); margin-bottom:10px; }
+.w > button { width:100%; text-align:left; border:0; background:none; cursor:pointer; padding:14px 16px; display:grid; grid-template-columns:minmax(0,1fr) auto; gap:4px 16px; align-items:center; }
+.w .n b { font-weight:600; }
+.w .n small { display:block; color:var(--mut); font-size:12.5px; }
+.w .n small.bad { color:var(--bad); }
+.w .p { text-align:right; font-variant-numeric:tabular-nums; }
+.w .p b { font-size:17px; font-weight:600; letter-spacing:-.02em; }
+.w .p small { display:block; font-size:11.5px; color:var(--mut); }
+.mf { grid-column:1 / -1; display:flex; align-items:center; gap:0; margin-top:8px; overflow:hidden; }
+.mf span { display:inline-flex; align-items:center; gap:6px; font-size:12px; color:var(--fg2); padding:3px 8px; border-radius:6px; background:var(--s2); white-space:nowrap; min-width:0; overflow:hidden; text-overflow:ellipsis; }
+.mf span i { width:7px; height:7px; border-radius:50%; background:var(--x,var(--mut)); flex:none; }
+.mf span.err { color:var(--bad); }
+.mf em { flex:0 0 14px; height:1px; background:var(--line); }
+.w .body { padding:4px 16px 18px; border-top:1px solid var(--line); }
+.w .body > p { color:var(--fg2); font-size:13.5px; margin:14px 0 16px; }
+.w .hist { margin-top:16px; font-size:12.5px; color:var(--mut); }
+
+/* Aree, compatte */
+.areas { margin-top:36px; }
+.ag { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:8px; }
+.a { text-align:left; border:1px solid var(--line); background:var(--s1); border-radius:10px; padding:12px; cursor:pointer; min-height:76px; display:flex; flex-direction:column; justify-content:space-between; gap:8px; }
+.a[aria-expanded="true"] { border-color:var(--fg2); }
+.a b { font-weight:600; font-size:13.5px; }
+.a span { font-size:12.5px; color:var(--mut); }
+.a span.te { color:var(--te); } .a span.bad { color:var(--bad); }
+.al { margin-top:10px; border:1px solid var(--line); border-radius:10px; background:var(--s1); padding:4px 14px; }
+.al p.ld { color:var(--fg2); font-size:13px; margin:10px 0 6px; }
+.li { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:2px 12px; padding:10px 0; border-top:1px solid var(--line); }
+.li:first-of-type { border-top:0; }
+.li b { font-weight:500; }
+.li small { color:var(--mut); font-size:12.5px; grid-column:1; }
+.li .st { font-size:12.5px; color:var(--mut); grid-row:1; grid-column:2; text-align:right; white-space:nowrap; }
+.li .st.te { color:var(--te); } .li .st.bad { color:var(--bad); }
+.btn { min-height:34px; padding:0 14px; border-radius:8px; border:1px solid var(--line); background:var(--s2); cursor:pointer; display:inline-flex; align-items:center; text-decoration:none; }
 .btn.pri { background:var(--fg); color:var(--bg); border-color:var(--fg); font-weight:600; }
-.btn kbd { font:600 11px ui-monospace,Menlo,monospace; opacity:.6; }
-.btn.ghost { background:none; border-color:transparent; color:var(--mut); }
-.note { display:none; margin-top:12px; gap:8px; flex-direction:column; }
+.det { grid-column:1 / -1; padding:8px 0 4px; font-size:13px; }
+.det p { margin:0 0 8px; }
+.det .lbl { color:var(--mut); }
+.acts { display:flex; gap:8px; flex-wrap:wrap; margin-top:8px; }
+.note { display:none; flex-direction:column; gap:8px; margin-top:10px; }
 .note.on { display:flex; }
-.note textarea { min-height:84px; background:var(--bg); color:var(--fg); border:1px solid var(--line); border-radius:10px; padding:10px 12px; font:inherit; font-size:14px; resize:vertical; }
-.note label { color:var(--mut); font-size:13px; }
-.done { color:var(--ok); font-size:13.5px; font-weight:500; }
+.note textarea { min-height:64px; background:var(--bg); color:var(--fg); border:1px solid var(--line); border-radius:8px; padding:8px 10px; font:inherit; resize:vertical; }
+.ok-msg { color:var(--ok); }
 
-/* Vuoto: la buona notizia */
-.calm { text-align:center; padding:36px 20px 40px; background:var(--s1); border:1px solid var(--line); border-radius:var(--r); margin-bottom:40px; }
-.calm .ring { width:56px; height:56px; margin:0 auto 14px; border-radius:50%; border:2px solid var(--ok); display:grid; place-items:center; color:var(--ok); font-size:24px; }
-.calm h2 { font-family:var(--serif); font-weight:500; font-size:24px; margin:0 0 4px; }
-.calm p { color:var(--mut); margin:0; }
-
-/* Il resto */
-h3 { font-family:var(--serif); font-weight:500; font-size:19px; margin:0 0 4px; }
-.sub { color:var(--mut); font-size:13.5px; margin:0 0 14px; }
-.sys { border-top:1px solid var(--line); }
-.sys:last-of-type { border-bottom:1px solid var(--line); }
-.sys > summary { list-style:none; cursor:pointer; display:grid; grid-template-columns:minmax(0,1fr) auto; gap:2px 12px; padding:14px 2px; }
-.sys > summary::-webkit-details-marker { display:none; }
-.sys .nm { font-weight:600; }
-.sys .st { color:var(--mut); font-size:13.5px; grid-column:1; }
-.sys .when { color:var(--mut); font-size:13px; grid-row:1 / span 2; grid-column:2; align-self:center; text-align:right; }
-.sys .when::after { content:' ›'; display:inline-block; transition:transform .15s; }
-.sys[open] .when::after { transform:rotate(90deg); }
-.sys .st .w { color:var(--amber); } .sys .st .x { color:var(--coral); } .sys .st .q { color:var(--amber); }
-.list { padding:0 2px 14px; }
-.it { display:flex; justify-content:space-between; gap:12px; padding:7px 0; font-size:14px; border-top:1px dashed var(--line); }
-.it:first-child { border-top:0; }
-.it span:last-child { color:var(--mut); font-size:13px; white-space:nowrap; }
-.foot { margin-top:26px; color:var(--mut); font-size:12.5px; }
-.foot a { color:var(--fg2); }
-
-/* Segnaposto */
-.sk { background:var(--s2); border-radius:8px; animation:p 1.6s ease-in-out infinite; }
-@keyframes p { 50% { opacity:.45; } }
-@media (prefers-reduced-motion:reduce) { .sk { animation:none; } }
-.toast { position:fixed; left:50%; bottom:22px; transform:translateX(-50%); background:var(--fg); color:var(--bg); padding:10px 18px; border-radius:99px; opacity:0; transition:.15s; pointer-events:none; font-weight:500; font-size:14px; }
-.toast.on { opacity:1; }
-
-@media (max-width:480px) {
-  main { padding:24px 16px 56px; }
-  h1 { font-size:28px; }
-  .card { padding:18px 16px 14px; }
-  .card h2 { font-size:21px; }
-  .btn { flex:1 1 auto; justify-content:center; }
-  .btn kbd { display:none; }
+@media (max-width:560px) {
+  main { padding:22px 16px 64px; }
+  .hero .big b { font-size:42px; }
+  .ag { grid-template-columns:repeat(2,minmax(0,1fr)); }
+  .alert { flex-wrap:wrap; }
+  .alert .t { white-space:normal; }
 }
 </style>
 <body>
-<nav class="top" aria-label="Sezioni">
-  <a href="#" aria-current="page">Automazioni</a><a href="/#sessions">Sessioni</a><a href="/#accounts">Account</a><a href="/#usage">Consumi</a><a href="/#overview">Panoramica</a><a href="/#services">Servizi</a>
-</nav>
+<header class="top"><b>Hub</b><nav aria-label="Sezioni"><a href="#" aria-current="page">Automazioni</a><a href="/#sessions">Sessioni</a><a href="/#accounts">Account</a><a href="/#usage">Consumi</a><a href="/#overview">Panoramica</a></nav></header>
 <main id="app" aria-live="polite"></main>
 <div class="toast" id="toast" role="status"></div>
 <script src="/varianti/common.js"></script>
 <script>
-var H = HubV, model = null, cur = 0, done = {};
+var H = HubV, model = null, ui = { wf: -1, area: null, item: null, saved: {}, allWf: false };
 var $ = function (id) { return document.getElementById(id); };
-var WORDS = ['Niente', 'Una cosa', 'Due cose', 'Tre cose', 'Quattro cose', 'Cinque cose'];
 
 function skeleton() {
-  var c = '<div class="card" aria-hidden="true"><div class="sk" style="width:30%;height:12px;margin-bottom:12px"></div><div class="sk" style="width:70%;height:24px;margin-bottom:12px"></div><div class="sk" style="width:90%;height:14px;margin-bottom:8px"></div><div class="sk" style="width:60%;height:14px;margin-bottom:18px"></div><div class="sk" style="width:200px;height:40px;border-radius:99px"></div></div>';
-  return '<span class="sr">Carico le automazioni…</span><div class="sk" style="width:120px;height:13px;margin-bottom:12px"></div><div class="sk" style="width:62%;height:34px;margin-bottom:12px"></div><div class="sk" style="width:80%;height:15px;margin-bottom:28px"></div><div class="inbox">' + c + c + '</div>';
+  var w = '<div class="w" aria-hidden="true" style="padding:16px"><div class="sk" style="width:40%;height:14px;margin-bottom:8px"></div><div class="sk" style="width:25%;height:11px;margin-bottom:12px"></div><div class="sk" style="width:70%;height:20px"></div></div>';
+  return '<span class="sr">Carico le automazioni…</span><div class="sk" style="height:46px;border-radius:10px;margin-bottom:28px"></div><div class="sk" style="width:30%;height:12px;margin-bottom:10px"></div><div class="sk" style="width:55%;height:50px;margin-bottom:14px"></div><div class="sk" style="height:12px;margin-bottom:36px"></div>' + w.repeat(3);
 }
 
-function cardHtml(c, i, now) {
-  var l = c.last || {};
-  var tag = c.level === 'te' ? 'Ti aspetta' : 'Rotta, può aspettare';
-  var facts = [];
-  facts.push('<span>Sistema <b>' + H.esc(H.sys(c.provider).name) + '</b></span>');
-  facts.push('<span>Ultimo <b>' + H.esc(l.at ? H.when(l.at, now) : 'mai') + '</b></span>');
-  if (c.next) facts.push('<span>Prossimo <b>' + H.esc((c.nextApprox ? 'verso ' : '') + H.when(c.next, now)) + '</b></span>');
-  if (c.who) facts.push('<span>Esegue <b>' + H.esc(c.who) + '</b></span>');
-  var d = done[c.key];
-  return '<article class="card ' + c.level + (i === cur ? ' cur' : '') + '" tabindex="0" data-i="' + i + '" data-k="' + H.esc(c.key) + '" aria-labelledby="t' + i + '">' +
-    '<div class="meta"><span class="tag">' + tag + '</span><span aria-hidden="true">·</span><span>' + (i + 1) + ' di ' + list().length + '</span></div>' +
-    '<h2 id="t' + i + '">' + H.esc(c.title) + '</h2>' +
-    (c.reason ? '<p class="reason">' + H.esc(c.reason) + '</p>' : '') +
-    (c.cosa ? '<p class="what">' + H.esc(c.cosa) + '</p>' : '') +
-    '<div class="facts">' + facts.join('') + '</div>' +
-    (d ? '<div class="done">' + H.esc(d) + '</div>' :
-      '<div class="acts"><button class="btn pri" data-a="ok">Va bene così <kbd>V</kbd></button><button class="btn" data-a="cambia">Va cambiata <kbd>C</kbd></button><a class="btn ghost" href="/#automations">Altro</a></div>' +
-      '<div class="note"><label for="n' + i + '">Cosa va cambiato? Lo passo a un agente.</label><textarea id="n' + i + '"></textarea><div><button class="btn pri" data-a="salva">Manda <kbd>⏎</kbd></button></div></div>') +
-    '</article>';
+// Somma i token di tutti i workflow della settimana (ultimo giro di ciascuno).
+function week(ws) {
+  var by = { free: 0, muse: 0, codex: 0, claude: 0 }, tot = 0, ex = false;
+  for (const w of ws) { var ph = H.wfPhases(w.last); if (ph.example) ex = true; var t = H.wfTokens(ph); for (const k in by) by[k] += t.by[k] || 0; tot += t.total; }
+  return { by: by, total: tot, saved: tot - by.claude, pct: tot ? Math.round((tot - by.claude) / tot * 100) : 0, example: ex };
 }
 
-function list() {
-  return (model.needsYou || []).concat(model.broken || []);
+function miniFlow(w) {
+  var ph = H.wfPhases(w.last).phases;
+  return '<div class="mf" aria-hidden="true">' + ph.map(function (p, i) {
+    return (i ? '<em></em>' : '') + '<span class="' + (p.executor ? 'x-' + p.executor : '') + (p.outcome === 'error' ? ' err' : '') + '"><i></i>' + H.esc(p.title) + '</span>';
+  }).join('') + '</div>';
+}
+
+function wfHtml(w, i, now) {
+  var open = ui.wf === i, t = H.wfTokens(H.wfPhases(w.last)), bad = w.last.outcome === 'error';
+  var h = '<div class="w"><button aria-expanded="' + open + '" data-wf="' + i + '"><span class="n"><b>' + H.esc(w.title) + '</b><small class="' + (bad ? 'bad' : '') + '">' + H.esc(H.when(w.last.at, now) + ' · ' + H.outcome(w.last.outcome) + (w.last.durationMs ? ' in ' + H.dur(w.last.durationMs) : '')) + '</small></span>' +
+    '<span class="p">' + (t.saved ? '<b>' + t.pct + '%</b><small>' + H.tok(t.saved) + ' risparmiati</small>' : '<b>' + H.tok(t.total) + '</b><small>token, tutti Claude</small>') + '</span>' + (open ? '' : miniFlow(w)) + '</button>';
+  if (open) {
+    h += '<div class="body">' + (w.last.summary ? '<p>' + H.esc(w.last.summary) + '</p>' : '') + H.flowHtml(w, now) +
+      (w.runs.length > 1 ? '<div class="hist">Giri precedenti: ' + w.runs.slice(1, 6).map(function (r) { return H.short(r.at, now) + ' ' + (r.outcome === 'error' ? 'fallito' : 'riuscito'); }).join(' · ') + '</div>' : '') + '</div>';
+  }
+  return h + '</div>';
+}
+
+function itemHtml(c, now) {
+  var open = ui.item === c.key, l = c.last || {}, s = ui.saved[c.key];
+  var st = c.level === 'te' ? '<span class="st te">ti aspetta</span>' : c.level === 'rotto' ? '<span class="st bad">rotta</span>' : '<span class="st">' + H.esc(l.at ? H.short(l.at, now) : 'mai') + '</span>';
+  var h = '<div class="li" data-li="' + H.esc(c.key) + '"><b>' + H.esc(c.title) + '</b>' + st + '<small>' + H.esc(c.level === 'te' || c.level === 'rotto' ? (c.reason || '') : H.forYou(c)) + '</small>';
+  if (open) {
+    var br = H.ifBroken(c);
+    h += '<div class="det">' + (c.level === 'te' || c.level === 'rotto' ? '<p>' + H.esc(H.forYou(c)) + '</p>' : '') +
+      (br ? '<p><span class="lbl">Se si rompe: </span>' + H.esc(br) + '</p>' : '') +
+      '<p class="lbl">Ultimo ' + H.esc(l.at ? H.when(l.at, now) + ', ' + H.outcome(l.outcome) : 'mai') + (c.next ? ' · prossimo ' + H.esc(H.when(c.next, now)) : '') + '</p>' +
+      (s ? '<p class="ok-msg">' + H.esc(s) + '</p>' : '<div class="acts"><button class="btn pri" data-a="ok">Va bene così</button><button class="btn" data-a="cambia">Va cambiata</button></div><div class="note"><label class="sr" for="n' + H.esc(c.key) + '">Cosa va cambiato</label><textarea id="n' + H.esc(c.key) + '" placeholder="Cosa va cambiato? Lo passo a un agente."></textarea><div><button class="btn pri" data-a="salva">Manda</button></div></div>') + '</div>';
+  } else {
+    h += '<button class="sr" data-it="' + H.esc(c.key) + '">Apri ' + H.esc(c.title) + '</button>';
+  }
+  return h + '</div>';
 }
 
 function render() {
-  var m = model, now = m.checkedAt, v = m.verdict || {}, L = list();
-  var h = '<p class="kick">Automazioni · controllato ' + H.ago(m.checkedAt, Date.now()) + '</p>';
-  if (L.length) {
-    var w = v.needsYou ? (WORDS[v.needsYou] || v.needsYou + ' cose') + (v.needsYou === 1 ? ' ti aspetta' : ' ti aspettano') : (WORDS[v.broken] || v.broken + ' cose') + (v.broken === 1 ? ' è rotta' : ' sono rotte');
-    h += '<h1>' + H.esc(w) + '.</h1><p class="lede">' +
-      (v.needsYou && v.broken ? 'Poi ' + v.broken + (v.broken === 1 ? ' rotta che può aspettare' : ' rotte che possono aspettare') + '. ' : '') +
-      'Il resto, <b>' + H.n(v.ok) + ' automazioni</b>, gira da sé: ' + H.n(v.runsToday) + ' giri oggi.</p>';
-    h += '<div class="inbox">' + L.map(function (c, i) { return cardHtml(c, i, now); }).join('') + '</div>';
+  var m = model, now = m.checkedAt, ws = H.workflows(m), q = (m.needsYou || []).concat(m.broken || []);
+  var h = '';
+  if (q.length) {
+    var c = q[0];
+    h += '<div class="alert' + (c.level === 'rotto' ? ' bad' : '') + '"><span class="k">' + (c.level === 'te' ? 'Ti aspetta' : 'Rotta') + '</span><span class="t">' + H.esc(c.title) + (q.length > 1 ? ' e altre ' + (q.length - 1) : '') + '</span><button data-go="' + H.esc(H.areaOf(c)) + '|' + H.esc(c.key) + '">Vedi</button></div>';
   } else {
-    h += '<h1>Niente ti aspetta.</h1><p class="lede"><b>' + H.n(v.ok) + ' automazioni</b> girano da sé: ' + H.n(v.runsToday) + ' giri oggi.</p>' +
-      '<div class="calm"><div class="ring" aria-hidden="true">✓</div><h2>Tutto a posto</h2><p>Quando qualcosa avrà bisogno di te, comparirà qui.</p></div>';
+    h += '<p class="calm"><b>Tutto regolare.</b> ' + H.all(m).length + ' automazioni, ' + H.n((m.verdict || {}).runsToday) + ' giri oggi.</p>';
   }
-  h += '<h3>Il resto va da sé</h3><p class="sub">Un sistema per riga. Aprilo per vedere cosa gira.</p>';
-  for (const g of H.systems(m)) {
-    var s = g.source, down = H.down(s);
-    var st = [];
-    if (g.cards.length && g.ok) st.push(g.ok === g.cards.length ? (g.ok === 1 ? '1 automazione, a posto' : g.ok + ' automazioni, tutte a posto') : g.ok + ' a posto');
-    if (g.te) st.push('<span class="w">' + g.te + ' ti aspetta</span>');
-    if (g.rotto) st.push('<span class="x">' + g.rotto + (g.rotto === 1 ? ' rotta' : ' rotte') + '</span>');
-    if (down) st.push('<span class="q">' + (s.pending ? 'primo controllo in corso' : 'non risponde') + '</span>');
-    if (!st.length) st.push(s && s.note && s.note !== '?' ? H.esc(s.note) : 'nessuna automazione');
-    var items = g.cards.filter(function (c) { return c.level !== 'te' && c.level !== 'rotto'; }).map(function (c) {
-      return '<div class="it"><span>' + H.esc(c.title) + '</span><span>' + H.esc(c.last && c.last.at ? H.when(c.last.at, now) : 'mai') + '</span></div>';
-    }).join('');
-    h += '<details class="sys"><summary><span class="nm">' + H.esc(g.name) + '</span><span class="st">' + st.join(' · ') + '</span>' +
-      '<span class="when">' + (g.last ? H.esc(H.short(g.last, now)) : '') + '</span></summary>' +
-      (items ? '<div class="list">' + items + '</div>' : '') + '</details>';
+  if (ws.length) {
+    var wk = week(ws);
+    h += '<section class="hero"><h1>Workflow, ultimi ' + ((m.workflows || {}).days || 7) + ' giorni</h1>' + (wk.saved ? '<div class="big"><b>' + wk.pct + '%</b><span>dei token non è passato da Claude: ' + H.tok(wk.saved) + ' su ' + H.tok(wk.total) + '.</span></div>' : '<div class="big none"><b>' + H.tok(wk.total) + '</b><span>token, tutti su Claude. Nessun passo è andato a gratis, Muse o Codex: qui si può risparmiare.</span></div>') +
+      '<div class="fl-bar" role="img" aria-label="Token per esecutore">' + ['free', 'muse', 'codex', 'claude'].map(function (k) { return wk.by[k] ? '<i class="x-' + k + '" style="flex:' + wk.by[k] + '"></i>' : ''; }).join('') + '</div>' +
+      '<div class="fl-leg">' + ['free', 'muse', 'codex', 'claude'].filter(function (k) { return wk.by[k]; }).map(function (k) { return '<span class="x-' + k + '"><i></i>' + H.execName(k) + ' ' + H.tok(wk.by[k]) + '</span>'; }).join('') + '</div>' +
+      (wk.example ? '<div class="flag">Esecutori e token di esempio: l’hub non li registra ancora.</div>' : '') + '</section>';
+    h += '<section class="wfs"><h2>Ogni workflow <span>' + ws.length + ' · tocca per il diagramma</span></h2>' + ws.map(function (w, i) { return ui.allWf || i < 5 ? wfHtml(w, i, now) : ''; }).join('') + (ws.length > 5 ? '<button class="btn" data-allwf>' + (ui.allWf ? 'Mostra meno' : 'Mostra tutti i ' + ws.length) + '</button>' : '') + '</section>';
   }
-  var wf = m.workflows || {};
-  if (wf.total) h += '<p class="foot">Workflow negli ultimi ' + wf.days + ' giorni: ' + wf.total + (wf.failed ? ', ' + wf.failed + (wf.failed === 1 ? ' fallito' : ' falliti') : ', nessuno fallito') + '. <a href="/#automations">Pagina completa</a></p>';
-  var a = document.activeElement, fk = a && a.dataset ? a.dataset.k : null;
+  var gs = H.areas(m).filter(function (g) { return g.cards.length; });
+  h += '<section class="areas"><h2>Le automazioni, per scopo <span>' + H.all(m).length + '</span></h2><div class="ag">' + gs.map(function (g) {
+    return '<button class="a" aria-expanded="' + (ui.area === g.id) + '" data-area="' + g.id + '"><b>' + H.esc(g.title) + '</b><span class="' + (g.te ? 'te' : g.rotto ? 'bad' : '') + '">' + H.esc(H.areaWord(g)) + ' · ' + g.cards.length + '</span></button>';
+  }).join('') + '</div>';
+  var ga = gs.find(function (g) { return g.id === ui.area; });
+  if (ga) h += '<div class="al"><p class="ld">' + H.esc(ga.lede) + '</p>' + ga.cards.map(function (c) { return itemHtml(c, now); }).join('') + '</div>';
+  h += '</section>';
   $('app').innerHTML = h;
-  if (fk) { var el = document.querySelector('.card[data-k="' + CSS.escape(fk) + '"]'); if (el) el.focus(); }
 }
 
 function toast(t) { var e = $('toast'); e.textContent = t; e.classList.add('on'); clearTimeout(toast.t); toast.t = setTimeout(function () { e.classList.remove('on'); }, 2400); }
-
-async function act(card, a) {
-  var c = list()[+card.dataset.i]; if (!c) return;
-  if (a === 'cambia') { card.querySelector('.note').classList.add('on'); card.querySelector('textarea').focus(); return; }
+function find(k) { return H.all(model).find(function (c) { return c.key === k; }); }
+async function act(el, a) {
+  var li = el.closest('.li'), c = find(li.dataset.li); if (!c) return;
+  if (a === 'cambia') { li.querySelector('.note').classList.add('on'); li.querySelector('textarea').focus(); return; }
   var r;
-  if (a === 'salva') { var n = card.querySelector('textarea').value.trim(); if (!n) return card.querySelector('textarea').focus(); r = await H.vote(c, 'cambia', n); if (r && r.ok !== false) done[c.key] = 'Passata a un agente: «' + n + '»'; }
-  if (a === 'ok') { r = await H.vote(c, 'ok'); if (r && r.ok !== false) done[c.key] = 'Segnata come «va bene».'; }
+  if (a === 'salva') { var n = li.querySelector('textarea').value.trim(); if (!n) return li.querySelector('textarea').focus(); r = await H.vote(c, 'cambia', n); if (r && r.ok !== false) ui.saved[c.key] = 'Passata a un agente.'; }
+  if (a === 'ok') { r = await H.vote(c, 'ok'); if (r && r.ok !== false) ui.saved[c.key] = 'Segnata come «va bene».'; }
   toast(r && r.ok !== false ? 'Salvato' : 'Non salvato, riprova');
-  cur = Math.min(+card.dataset.i + 1, list().length - 1);
   render();
-  var nx = document.querySelector('.card[data-i="' + cur + '"]'); if (nx) nx.focus();
 }
-
 document.addEventListener('click', function (e) {
-  var b = e.target.closest('[data-a]'); if (b) { act(b.closest('.card'), b.dataset.a); return; }
-  if (e.target.closest('[data-retry]')) refresh();
+  var t = e.target, b;
+  if ((b = t.closest('[data-a]'))) return act(b, b.dataset.a);
+  if ((b = t.closest('[data-wf]'))) { var i = +b.dataset.wf; ui.wf = ui.wf === i ? -1 : i; render(); var f = document.querySelector('[data-wf="' + i + '"]'); if (f) f.focus(); return; }
+  if ((b = t.closest('[data-area]'))) { ui.area = ui.area === b.dataset.area ? null : b.dataset.area; ui.item = null; render(); return; }
+  if ((b = t.closest('[data-go]'))) { var p = b.dataset.go.split('|'); ui.area = p[0]; ui.item = p[1]; render(); var el = document.querySelector('[data-li="' + CSS.escape(p[1]) + '"]'); if (el) el.scrollIntoView({ block: 'center' }); return; }
+  if ((b = t.closest('.li')) && !t.closest('.det')) { var k = b.dataset.li; ui.item = ui.item === k ? null : k; render(); return; }
+  if (t.closest('[data-allwf]')) { ui.allWf = !ui.allWf; render(); return; }
+  if (t.closest('[data-retry]')) refresh();
 });
-document.addEventListener('focusin', function (e) { var c = e.target.closest && e.target.closest('.card'); if (c) cur = +c.dataset.i; });
-document.addEventListener('keydown', function (e) {
-  var t = e.target;
-  if (t.tagName === 'TEXTAREA') { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); act(t.closest('.card'), 'salva'); } if (e.key === 'Escape') t.closest('.note').classList.remove('on'); return; }
-  if (t.matches('input')) return;
-  var cards = document.querySelectorAll('.card');
-  if (!cards.length) return;
-  var card = t.closest && t.closest('.card');
-  if (e.key === 'j' || e.key === 'ArrowDown') { e.preventDefault(); (cards[(card ? +card.dataset.i : -1) + 1] || cards[cards.length - 1]).focus(); }
-  if (e.key === 'k' || e.key === 'ArrowUp') { e.preventDefault(); (cards[(card ? +card.dataset.i : 1) - 1] || cards[0]).focus(); }
-  if (card && !done[card.dataset.k]) {
-    if (e.key === 'v') { e.preventDefault(); act(card, 'ok'); }
-    if (e.key === 'c') { e.preventDefault(); act(card, 'cambia'); }
-  }
-});
+document.addEventListener('keydown', function (e) { if (e.target.tagName === 'TEXTAREA' && e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); act(e.target, 'salva'); } });
 
 async function refresh() {
   var m = await H.load();
-  if (!m) {
-    if (!model) $('app').innerHTML = '<p class="kick">Automazioni</p><h1>Non riesco a leggere le automazioni.</h1><p class="lede">L’hub non risponde. Se il Mac è sotto carico può metterci un minuto.</p><button class="btn pri" data-retry>Riprova</button>';
-    return;
-  }
+  if (!m) { if (!model) $('app').innerHTML = '<p class="calm" style="color:var(--fg)">Non riesco a leggere le automazioni: l’hub non risponde. Se il Mac è sotto carico può metterci un minuto.</p><button class="btn pri" data-retry>Riprova</button>'; return; }
   model = m;
   if (!document.activeElement || document.activeElement.tagName !== 'TEXTAREA') render();
 }

@@ -2,312 +2,220 @@
 <html lang="it">
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Automazioni · Console</title>
+<title>Automazioni · Il quadro</title>
+<link rel="stylesheet" href="/varianti/base.css">
 <style>
-/* A · Console: densa, quasi monocroma, il colore solo per lo stato. */
-:root {
-  --bg:#0b0c0e; --s1:#111215; --s2:#16181c; --s3:#1d2025; --line:#22252b; --line2:#2c3038;
-  --fg:#e8e9ec; --fg2:#b4b8c0; --mut:#868b95;
-  --ok:#3fb950; --te:#9d9cff; --bad:#ff6b5e; --warn:#e3b341;
-  --mono:ui-monospace,"SF Mono",SFMono-Regular,Menlo,monospace;
-  --r:8px;
-}
-* { box-sizing:border-box; }
-html { color-scheme:dark; }
-body { margin:0; background:var(--bg); color:var(--fg); font:13px/1.45 -apple-system,"SF Pro Text",system-ui,sans-serif; -webkit-font-smoothing:antialiased; }
-a { color:inherit; }
-button { font:inherit; color:inherit; }
-.sr { position:absolute; width:1px; height:1px; overflow:hidden; clip:rect(0 0 0 0); white-space:nowrap; }
+/* A · Il quadro: una colonna, una cosa importante in cima, poi le aree e i workflow. */
+:root { --bg:#0d0e10; --s1:#141518; --s2:#1a1c20; --line:#24262b; }
+.bar { position:sticky; top:0; z-index:5; display:flex; align-items:center; gap:18px; height:48px; padding:0 20px; background:color-mix(in srgb,var(--bg) 90%,transparent); backdrop-filter:blur(10px); border-bottom:1px solid var(--line); }
+.bar b { font-weight:600; letter-spacing:-.01em; }
+.bar nav { display:flex; gap:16px; flex:1; min-width:0; overflow-x:auto; scrollbar-width:none; }
+.bar nav::-webkit-scrollbar { display:none; }
+.bar nav a { color:var(--mut); text-decoration:none; white-space:nowrap; }
+.bar nav a[aria-current], .bar nav a:hover { color:var(--fg); }
+.bar .t { color:var(--mut); font-size:12px; white-space:nowrap; }
+main { max-width:720px; margin:0 auto; padding:36px 20px 80px; }
 
-/* Cornice */
-.top { position:sticky; top:0; z-index:10; display:flex; align-items:center; gap:14px; height:46px; padding:0 16px; background:color-mix(in srgb,var(--bg) 88%,transparent); backdrop-filter:blur(8px); border-bottom:1px solid var(--line); }
-.mark { display:flex; align-items:center; gap:8px; font-weight:600; letter-spacing:-.01em; white-space:nowrap; }
-.mark i { width:10px; height:10px; border-radius:3px; background:var(--fg); }
-.nav { display:flex; gap:2px; overflow-x:auto; scrollbar-width:none; flex:1; min-width:0; }
-.nav::-webkit-scrollbar { display:none; }
-.nav a { padding:6px 10px; border-radius:6px; color:var(--mut); text-decoration:none; white-space:nowrap; }
-.nav a:hover { color:var(--fg); background:var(--s2); }
-.nav a[aria-current] { color:var(--fg); background:var(--s3); }
-.fresh { color:var(--mut); font-family:var(--mono); font-size:11.5px; white-space:nowrap; }
+h1 { font-size:28px; line-height:1.15; font-weight:600; letter-spacing:-.025em; margin:0; }
+.sum { color:var(--fg2); margin:8px 0 32px; }
 
-main { max-width:980px; margin:0 auto; padding:18px 16px 56px; }
-
-/* Stato */
-.state { display:flex; align-items:center; gap:10px; margin-bottom:12px; }
-.state .sq { width:12px; height:12px; border-radius:3px; background:var(--ok); flex:none; }
-.state.te .sq { background:var(--te); } .state.bad .sq { background:var(--bad); }
-.state h1 { margin:0; font-size:19px; font-weight:600; letter-spacing:-.015em; }
-.stats { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); border:1px solid var(--line); border-radius:var(--r); background:var(--s1); margin-bottom:16px; }
-.stat { padding:10px 12px; border-left:1px solid var(--line); min-width:0; }
-.stat:first-child { border-left:0; }
-.stat b { display:block; font-family:var(--mono); font-size:17px; font-weight:500; letter-spacing:-.02em; }
-.stat span { color:var(--mut); font-size:11.5px; }
-.stat b.te { color:var(--te); } .stat b.bad { color:var(--bad); }
-
-/* Barra strumenti */
-.tools { display:flex; gap:8px; align-items:center; margin-bottom:10px; flex-wrap:wrap; }
-.seg { display:inline-flex; background:var(--s1); border:1px solid var(--line); border-radius:7px; padding:2px; }
-.seg button { border:0; background:none; padding:0 10px; min-height:28px; border-radius:5px; color:var(--mut); cursor:pointer; white-space:nowrap; }
-.seg button[aria-pressed="true"] { background:var(--s3); color:var(--fg); }
-.seg button b { font-family:var(--mono); font-weight:500; margin-left:4px; color:var(--fg2); }
-.search { flex:1 1 160px; position:relative; min-width:0; }
-.search input { width:100%; min-height:32px; padding:0 34px 0 10px; background:var(--s1); color:var(--fg); border:1px solid var(--line); border-radius:7px; font:inherit; }
-.search input::placeholder { color:var(--mut); }
-.search input:focus { outline:none; border-color:var(--line2); box-shadow:0 0 0 3px color-mix(in srgb,var(--te) 25%,transparent); }
-.search kbd { position:absolute; right:8px; top:50%; transform:translateY(-50%); }
-kbd { font-family:var(--mono); font-size:11px; color:var(--mut); border:1px solid var(--line2); border-bottom-width:2px; border-radius:4px; padding:0 5px; background:var(--s2); }
-
-/* Tabella */
-.tbl { border:1px solid var(--line); border-radius:var(--r); background:var(--s1); overflow:hidden; }
-.gh { display:flex; align-items:center; gap:10px; padding:8px 12px; background:var(--s2); border-top:1px solid var(--line); font-size:11.5px; color:var(--mut); text-transform:uppercase; letter-spacing:.06em; font-weight:600; }
-.gh:first-child { border-top:0; }
-.gh .cnt { margin-left:auto; display:flex; gap:10px; font-family:var(--mono); text-transform:none; letter-spacing:0; font-weight:500; }
-.gh .cnt .te { color:var(--te); } .gh .cnt .bad { color:var(--bad); }
-.gh.att { color:var(--fg2); }
-.row { display:grid; grid-template-columns:18px minmax(0,1fr) 78px 78px 44px; gap:10px; align-items:center; padding:0 12px; min-height:38px; border-top:1px solid var(--line); cursor:pointer; outline:none; }
-.row:hover { background:var(--s2); }
-.row:focus-visible, .row.sel { background:var(--s3); box-shadow:inset 2px 0 0 var(--fg); }
-.row .t { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-.row .t small { color:var(--mut); margin-left:8px; font-size:12px; }
-.row .c { font-family:var(--mono); font-size:12px; color:var(--fg2); text-align:right; white-space:nowrap; }
-.row .c.dim { color:var(--mut); }
-.hdr { cursor:default; min-height:30px; color:var(--mut); font-size:11.5px; }
-.hdr:hover { background:none; }
-.hdr .c { font-family:inherit; color:var(--mut); }
-.g { width:14px; height:14px; display:grid; place-items:center; font-size:11px; line-height:1; }
-.g.ok::before { content:''; width:7px; height:7px; border-radius:50%; background:var(--ok); opacity:.85; }
-.g.te::before { content:'▲'; color:var(--te); font-size:10px; }
-.g.rotto::before { content:'✕'; color:var(--bad); font-weight:700; }
-.g.err::before { content:''; width:7px; height:7px; border-radius:50%; border:1.5px solid var(--bad); }
-.empty { padding:28px 16px; text-align:center; color:var(--mut); }
-.empty b { display:block; color:var(--fg); font-weight:500; margin-bottom:4px; }
-
-.foot { margin-top:14px; display:flex; gap:6px 14px; flex-wrap:wrap; color:var(--mut); font-size:11.5px; font-family:var(--mono); }
-.foot .q { color:var(--warn); }
-
-/* Pannello di dettaglio */
-.scrim { position:fixed; inset:0; background:rgba(0,0,0,.45); opacity:0; pointer-events:none; transition:opacity .12s; z-index:20; }
-.scrim.on { opacity:1; pointer-events:auto; }
-.panel { position:fixed; top:0; right:0; bottom:0; width:min(460px,100%); background:var(--s1); border-left:1px solid var(--line2); z-index:21; transform:translateX(100%); transition:transform .14s ease-out; display:flex; flex-direction:column; }
-.panel.on { transform:none; }
-.ph { display:flex; align-items:center; gap:8px; padding:12px 16px; border-bottom:1px solid var(--line); }
-.ph .x { margin-left:auto; border:0; background:none; color:var(--mut); width:32px; height:32px; border-radius:6px; cursor:pointer; font-size:16px; }
-.ph .x:hover { background:var(--s3); color:var(--fg); }
-.pb { padding:16px; overflow:auto; flex:1; }
-.pb h2 { margin:0 0 6px; font-size:17px; font-weight:600; letter-spacing:-.01em; }
-.why { margin:0 0 10px; font-weight:500; }
-.why.te { color:var(--te); } .why.rotto { color:var(--bad); }
-.desc { color:var(--fg2); margin:0 0 14px; }
-.chip { display:inline-flex; align-items:center; gap:6px; font-size:11.5px; font-weight:600; padding:2px 8px; border-radius:99px; border:1px solid var(--line2); color:var(--fg2); }
-.chip.te { color:var(--te); border-color:color-mix(in srgb,var(--te) 45%,transparent); }
-.chip.rotto { color:var(--bad); border-color:color-mix(in srgb,var(--bad) 45%,transparent); }
-.chip.va { color:var(--ok); border-color:color-mix(in srgb,var(--ok) 40%,transparent); }
-dl { display:grid; grid-template-columns:110px minmax(0,1fr); gap:7px 12px; margin:0 0 16px; }
-dt { color:var(--mut); } dd { margin:0; overflow-wrap:anywhere; }
-dd.m { font-family:var(--mono); font-size:12px; }
-.fb { color:var(--mut); font-size:12px; margin:-6px 0 14px; }
-.acts { display:flex; gap:8px; flex-wrap:wrap; }
-.btn { min-height:34px; padding:0 12px; border-radius:7px; border:1px solid var(--line2); background:var(--s2); cursor:pointer; display:inline-flex; align-items:center; gap:8px; text-decoration:none; }
+/* La cosa che ti aspetta */
+.focus { border:1px solid var(--line); border-radius:12px; background:var(--s1); padding:20px; margin-bottom:44px; }
+.focus .k { font-size:12px; font-weight:600; letter-spacing:.04em; color:var(--te); }
+.focus.rotto .k { color:var(--bad); }
+.focus h2 { font-size:20px; font-weight:600; letter-spacing:-.015em; margin:6px 0 4px; }
+.focus .why { margin:0 0 14px; }
+.focus .two { display:grid; grid-template-columns:1fr 1fr; gap:16px; margin-bottom:18px; padding-top:14px; border-top:1px solid var(--line); }
+.focus .two h3 { font-size:12px; font-weight:500; color:var(--mut); margin:0 0 3px; }
+.focus .two p { margin:0; font-size:13.5px; }
+.acts { display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
+.btn { min-height:34px; padding:0 14px; border-radius:8px; border:1px solid var(--line); background:var(--s2); cursor:pointer; text-decoration:none; display:inline-flex; align-items:center; }
 .btn:hover { border-color:var(--fg2); }
 .btn.pri { background:var(--fg); color:var(--bg); border-color:var(--fg); font-weight:600; }
-.btn.pri kbd { background:transparent; color:var(--bg); border-color:color-mix(in srgb,var(--bg) 35%,transparent); }
-.note { margin-top:10px; display:none; gap:8px; flex-direction:column; }
+.btn.q { border-color:transparent; background:none; color:var(--mut); }
+.queue { margin-top:16px; font-size:13px; color:var(--mut); }
+.queue button { border:0; background:none; padding:0; color:var(--fg2); cursor:pointer; text-decoration:underline; text-decoration-color:var(--line); text-underline-offset:3px; min-height:24px; }
+.note { display:none; flex-direction:column; gap:8px; margin-top:12px; }
 .note.on { display:flex; }
-.note textarea { min-height:72px; resize:vertical; background:var(--bg); color:var(--fg); border:1px solid var(--line2); border-radius:7px; padding:8px 10px; font:inherit; }
-.tech { margin-top:18px; border-top:1px solid var(--line); padding-top:12px; }
-.tech summary { cursor:pointer; color:var(--mut); }
-.tech pre { white-space:pre-wrap; overflow-wrap:anywhere; font-family:var(--mono); font-size:11.5px; background:var(--bg); border:1px solid var(--line); border-radius:6px; padding:8px 10px; color:var(--fg2); }
-.toast { position:fixed; left:50%; bottom:18px; transform:translateX(-50%) translateY(20px); background:var(--fg); color:var(--bg); padding:8px 14px; border-radius:8px; opacity:0; transition:.15s; pointer-events:none; z-index:30; font-weight:500; }
-.toast.on { opacity:1; transform:translateX(-50%); }
+.note textarea { min-height:72px; background:var(--bg); color:var(--fg); border:1px solid var(--line); border-radius:8px; padding:8px 10px; font:inherit; resize:vertical; }
+.done { color:var(--ok); margin:0; }
 
-/* Segnaposto */
-.sk { background:linear-gradient(90deg,var(--s2) 0,var(--s3) 50%,var(--s2) 100%); background-size:200% 100%; animation:sh 1.3s linear infinite; border-radius:5px; height:12px; }
-@keyframes sh { to { background-position:-200% 0; } }
-@media (prefers-reduced-motion:reduce) { .sk { animation:none; } .panel, .scrim { transition:none; } }
+/* Sezioni */
+.sec { margin-bottom:44px; }
+.sec > h2 { font-size:15px; font-weight:600; margin:0 0 2px; }
+.sec > p { color:var(--mut); font-size:13px; margin:0 0 12px; }
 
-@media (max-width:560px) {
-  .stats { grid-template-columns:repeat(2,minmax(0,1fr)); }
-  .stat:nth-child(3) { border-left:0; } .stat:nth-child(n+3) { border-top:1px solid var(--line); }
-  .row { grid-template-columns:18px minmax(0,1fr) 66px; }
-  .row .c.nx, .row .c.rt { display:none; }
-  .fresh { display:none; }
-  dl { grid-template-columns:96px minmax(0,1fr); }
+/* Aree */
+.area { border-top:1px solid var(--line); }
+.area:last-child { border-bottom:1px solid var(--line); }
+.ah { width:100%; display:grid; grid-template-columns:minmax(0,1fr) auto; gap:4px 16px; align-items:center; padding:14px 0; border:0; background:none; text-align:left; cursor:pointer; }
+.ah b { font-weight:600; font-size:15px; }
+.ah small { display:block; color:var(--mut); font-size:13px; }
+.ah .r { display:flex; align-items:center; gap:12px; }
+.ah .w { font-size:13px; color:var(--fg2); min-width:84px; text-align:right; }
+.ah .w.te { color:var(--te); } .ah .w.bad { color:var(--bad); }
+.ticks { display:flex; gap:2px; align-items:flex-end; height:16px; }
+.ticks i { width:3px; height:10px; border-radius:1px; background:var(--s3); }
+.ticks i.ok { background:color-mix(in srgb,var(--ok) 70%,var(--s3)); }
+.ticks i.error { background:var(--bad); height:16px; }
+.items { padding:0 0 12px; }
+.it { border-top:1px solid color-mix(in srgb,var(--line) 60%,transparent); }
+.it > button { width:100%; display:grid; grid-template-columns:8px minmax(0,1fr) auto; gap:12px; align-items:center; padding:10px 0; border:0; background:none; text-align:left; cursor:pointer; }
+.it .d { width:6px; height:6px; border-radius:50%; background:var(--s3); }
+.it .d.te { background:var(--te); } .it .d.rotto { background:var(--bad); }
+.it .n { min-width:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.it .wh { font-size:12.5px; color:var(--mut); white-space:nowrap; }
+.det { padding:2px 0 16px 20px; }
+.det p { margin:0 0 8px; font-size:13.5px; }
+.det .lbl { color:var(--mut); }
+.det .row { display:flex; gap:18px; flex-wrap:wrap; align-items:center; font-size:12.5px; color:var(--fg2); margin:10px 0 12px; }
+.det details { margin-top:10px; font-size:12px; color:var(--mut); }
+.det details pre { white-space:pre-wrap; overflow-wrap:anywhere; font-family:var(--mono); font-size:11.5px; background:var(--s1); padding:8px 10px; border-radius:6px; color:var(--fg2); }
+.det summary { cursor:pointer; min-height:24px; }
+
+/* Workflow */
+.wf { border-top:1px solid var(--line); }
+.wf:last-child { border-bottom:1px solid var(--line); }
+.wf > button { width:100%; display:grid; grid-template-columns:minmax(0,1fr) auto; gap:2px 16px; padding:14px 0; border:0; background:none; text-align:left; cursor:pointer; }
+.wf b { font-weight:600; }
+.wf small { display:block; color:var(--mut); font-size:13px; }
+.wf .pc { text-align:right; font-variant-numeric:tabular-nums; }
+.wf .pc strong { display:block; font-size:15px; font-weight:600; }
+.wf .pc span { font-size:12px; color:var(--mut); }
+.wfb { padding:6px 0 22px; }
+.wfb > p { margin:0 0 16px; color:var(--fg2); font-size:13.5px; }
+
+@media (max-width:520px) {
+  main { padding:26px 16px 64px; }
+  h1 { font-size:24px; }
+  .focus { padding:16px; }
+  .focus .two { grid-template-columns:1fr; }
+  .ah .ticks { display:none; }
+  .bar .t { display:none; }
 }
 </style>
 <body>
-<header class="top">
-  <span class="mark"><i></i>Hub</span>
-  <nav class="nav" aria-label="Sezioni">
-    <a href="#" aria-current="page">Automazioni</a><a href="/#sessions">Sessioni</a><a href="/#accounts">Account</a><a href="/#usage">Consumi</a><a href="/#overview">Panoramica</a><a href="/#services">Servizi</a>
-  </nav>
-  <span class="fresh" id="fresh"></span>
-</header>
+<header class="bar"><b>Hub</b><nav aria-label="Sezioni"><a href="#" aria-current="page">Automazioni</a><a href="/#sessions">Sessioni</a><a href="/#accounts">Account</a><a href="/#usage">Consumi</a><a href="/#overview">Panoramica</a></nav><span class="t" id="fresh"></span></header>
 <main id="app" aria-live="polite"></main>
-<div class="scrim" id="scrim"></div>
-<aside class="panel" id="panel" role="dialog" aria-modal="true" aria-labelledby="ptitle" hidden></aside>
 <div class="toast" id="toast" role="status"></div>
 <script src="/varianti/common.js"></script>
 <script>
-var H = HubV, model = null, ui = { f: 'all', q: '', sel: null };
+var H = HubV, model = null, ui = { focus: 0, area: null, item: null, wf: 0, done: {}, allWf: false };
 var $ = function (id) { return document.getElementById(id); };
+var NUM = ['Niente', 'Una cosa', 'Due cose', 'Tre cose', 'Quattro cose', 'Cinque cose', 'Sei cose'];
 
 function skeleton() {
-  var r = '';
-  for (var i = 0; i < 9; i++) r += '<div class="row hdr" style="cursor:default"><span class="sk" style="width:12px"></span><span class="sk" style="width:' + (40 + (i * 13) % 45) + '%"></span><span class="sk"></span><span class="sk"></span><span class="sk"></span></div>';
-  return '<span class="sr">Carico le automazioni…</span><div class="state"><span class="sq" style="background:var(--s3)"></span><span class="sk" style="width:220px;height:18px"></span></div>' +
-    '<div class="stats">' + '<div class="stat"><span class="sk" style="width:50%;height:16px;display:block;margin-bottom:6px"></span><span class="sk" style="width:70%;display:block"></span></div>'.repeat(4) + '</div>' +
-    '<div class="tbl">' + r + '</div>';
+  var row = '<div style="display:flex;justify-content:space-between;padding:16px 0;border-top:1px solid var(--line)"><div style="flex:1"><div class="sk" style="width:30%;height:15px;margin-bottom:6px"></div><div class="sk" style="width:55%;height:12px"></div></div><div class="sk" style="width:90px;height:14px"></div></div>';
+  return '<span class="sr">Carico le automazioni…</span><div class="sk" style="width:55%;height:28px"></div><div class="sk" style="width:40%;height:14px;margin:12px 0 32px"></div>' +
+    '<div class="sk" style="height:190px;border-radius:12px;margin-bottom:44px"></div>' + row.repeat(4);
 }
 
-function glyph(c) {
-  if (c.level === 'te' || c.level === 'rotto') return '<span class="g ' + c.level + '" aria-hidden="true"></span><span class="sr">' + H.level(c.level) + '</span>';
-  var bad = c.last && c.last.outcome === 'error';
-  return '<span class="g ' + (bad ? 'err' : 'ok') + '" aria-hidden="true"></span><span class="sr">' + (bad ? 'ultimo giro fallito' : 'ok') + '</span>';
+function queue() { return (model.needsYou || []).concat(model.broken || []); }
+function ticks(runs) {
+  return '<span class="ticks" aria-hidden="true">' + runs.map(function (h) { return '<i class="' + (h.outcome === 'error' ? 'error' : h.outcome === 'ok' ? 'ok' : '') + '"></i>'; }).join('') + '</span>';
 }
 
-function row(c, now) {
-  var nx = c.next ? (c.nextApprox ? '~' : '') + H.short(c.next, now) : '—';
-  return '<div class="row' + (ui.sel === c.key ? ' sel' : '') + '" tabindex="0" role="button" data-k="' + H.esc(c.key) + '">' + glyph(c) +
-    '<span class="t">' + H.esc(c.title) + ((c.level === 'te' || c.level === 'rotto') && c.reason ? '<small>' + H.esc(c.reason) + '</small>' : '') + '</span>' +
-    '<span class="c' + (c.last && c.last.at ? '' : ' dim') + '">' + H.esc(H.short(c.last && c.last.at, now)) + '</span>' +
-    '<span class="c nx dim">' + H.esc(nx) + '</span><span class="c rt dim">' + (c.runsToday || 0) + '</span></div>';
+function focusHtml(now) {
+  var q = queue();
+  if (!q.length) return '';
+  var i = Math.min(ui.focus, q.length - 1), c = q[i], done = ui.done[c.key];
+  var br = H.ifBroken(c);
+  var h = '<section class="focus ' + c.level + '" aria-labelledby="ft"><div class="k">' + (c.level === 'te' ? 'Ti aspetta' : 'Rotta, può aspettare') + '</div>' +
+    '<h2 id="ft">' + H.esc(c.title) + '</h2><p class="why">' + H.esc(c.reason || H.line(c, now)) + '</p>' +
+    '<div class="two"><div><h3>Cosa fa per te</h3><p>' + H.esc(H.forYou(c) || '—') + '</p></div><div><h3>Se resta così</h3><p>' + H.esc(br || 'Non è ancora scritto.') + '</p></div></div>' +
+    (done ? '<p class="done">' + H.esc(done) + '</p>' : '<div class="acts"><button class="btn pri" data-a="ok">Va bene così</button><button class="btn" data-a="cambia">Va cambiata</button><a class="btn q" href="/#automations">Altro</a></div>' +
+      '<div class="note" id="note"><label for="nt" class="sr">Cosa va cambiato</label><textarea id="nt" placeholder="Cosa va cambiato? Lo passo a un agente."></textarea><div><button class="btn pri" data-a="salva">Manda</button></div></div>');
+  var rest = q.filter(function (x, j) { return j !== i; });
+  if (rest.length) h += '<div class="queue">Poi: ' + rest.map(function (x) { return '<button data-q="' + q.indexOf(x) + '">' + H.esc(x.title) + '</button>'; }).join(', ') + '</div>';
+  return h + '</section>';
 }
 
-function match(c) {
-  var q = ui.q.trim().toLowerCase();
-  if (ui.f === 'pb' && c.level !== 'te' && c.level !== 'rotto') return false;
-  if (ui.f === 'ok' && (c.level === 'te' || c.level === 'rotto')) return false;
-  if (!q) return true;
-  return [c.title, c.cosa, c.who, c.means, H.sys(c.provider).name].join(' ').toLowerCase().indexOf(q) !== -1;
+function itemHtml(c, now) {
+  var open = ui.item === c.key, l = c.last || {};
+  var wh = c.level === 'te' ? 'ti aspetta' : c.level === 'rotto' ? 'rotta' : (l.at ? H.short(l.at, now) : 'mai');
+  var h = '<div class="it"><button aria-expanded="' + open + '" data-it="' + H.esc(c.key) + '"><span class="d ' + c.level + '" aria-hidden="true"></span><span class="n">' + H.esc(c.title) + '</span><span class="wh">' + H.esc(wh) + '</span></button>';
+  if (open) {
+    var br = H.ifBroken(c), t = c.tech || {};
+    h += '<div class="det">' + (H.forYou(c) ? '<p>' + H.esc(H.forYou(c)) + '</p>' : '') +
+      (br ? '<p><span class="lbl">Se si rompe: </span>' + H.esc(br) + '</p>' : '') +
+      '<div class="row"><span>Ultimo ' + H.esc(l.at ? H.when(l.at, now) + ', ' + H.outcome(l.outcome) : 'mai') + '</span>' +
+      (c.next ? '<span>Prossimo ' + H.esc((c.nextApprox ? 'verso ' : '') + H.when(c.next, now)) + '</span>' : '') + ticks(H.cardRuns(c, 14)) + '</div>' +
+      '<details><summary>Dettagli tecnici</summary><p style="margin:8px 0 4px">' + H.esc(H.sys(c.provider).name) + ' · ' + H.esc(c.key) + (t.schedule ? ' · ' + H.esc(t.schedule) : '') + '</p>' + ((t.command || t.prompt) ? '<pre>' + H.esc(t.command || t.prompt) + '</pre>' : '') + '</details></div>';
+  }
+  return h + '</div>';
+}
+
+function areasHtml(now) {
+  var h = '<section class="sec"><h2>Le tue aree</h2><p>Raggruppate per ciò che fanno per te.</p>';
+  for (const g of H.areas(model)) {
+    if (!g.cards.length) continue;
+    var open = ui.area === g.id, w = H.areaWord(g);
+    h += '<div class="area"><button class="ah" aria-expanded="' + open + '" data-area="' + g.id + '"><span><b>' + H.esc(g.title) + '</b><small>' + H.esc(g.lede) + '</small></span>' +
+      '<span class="r">' + ticks(H.areaRuns(g, 24)) + '<span class="w' + (g.te ? ' te' : g.rotto ? ' bad' : '') + '">' + H.esc(w) + '</span></span></button>';
+    if (open) h += '<div class="items">' + g.cards.map(function (c) { return itemHtml(c, now); }).join('') + '</div>';
+    h += '</div>';
+  }
+  return h + '</section>';
+}
+
+function wfHtml(now) {
+  var ws = H.workflows(model);
+  if (!ws.length) return '';
+  var wf = model.workflows || {};
+  var sum = { total: 0, saved: 0 };
+  for (const x of ws) { var tt = H.wfTokens(H.wfPhases(x.last)); sum.total += tt.total; sum.saved += tt.saved; }
+  var eff = sum.total ? (sum.saved ? Math.round(sum.saved / sum.total * 100) + '% dei token fuori da Claude' : H.tok(sum.total) + ' token, tutti su Claude') : '';
+  var h = '<section class="sec"><h2>Workflow</h2><p>' + wf.total + ' giri negli ultimi ' + wf.days + ' giorni' + (wf.failed ? ', ' + wf.failed + ' falliti' : ', nessuno fallito') + (eff ? ' · <b style="color:' + (sum.saved ? 'var(--fg)' : 'var(--x-claude)') + ';font-weight:600">' + eff + '</b>' : '') + '. Esistono per spendere meno quota Claude.</p>';
+  ws.forEach(function (w, i) {
+    if (!ui.allWf && i >= 5) return;
+    var open = ui.wf === i, t = H.wfTokens(H.wfPhases(w.last));
+    h += '<div class="wf"><button aria-expanded="' + open + '" data-wf="' + i + '"><span><b>' + H.esc(w.title) + '</b><small>' + H.esc(H.when(w.last.at, now) + ' · ' + H.outcome(w.last.outcome) + (w.last.durationMs ? ' · ' + H.dur(w.last.durationMs) : '')) + '</small></span>' +
+      '<span class="pc">' + (t.saved ? '<strong>' + t.pct + '%</strong><span>fuori da Claude</span>' : '<strong>' + H.tok(t.total) + '</strong><span>token, tutti Claude</span>') + '</span></button>';
+    if (open) h += '<div class="wfb">' + (w.last.summary ? '<p>' + H.esc(w.last.summary) + '</p>' : '') + H.flowHtml(w, now) + '</div>';
+    h += '</div>';
+  });
+  if (ws.length > 5) h += '<button class="btn q" data-allwf style="margin-top:8px">' + (ui.allWf ? 'Mostra meno' : 'Mostra tutti i ' + ws.length) + '</button>';
+  return h + '</section>';
 }
 
 function render() {
-  var m = model, now = m.checkedAt, v = H.verdict(m), V = m.verdict || {};
-  var cards = H.all(m), pb = cards.filter(function (c) { return c.level === 'te' || c.level === 'rotto'; });
-  var srcs = (m.footer || {}).sources || [];
-  var srcOk = srcs.filter(function (s) { return s.ok; }).length;
-  var h = '<div class="state ' + v.tone + '"><span class="sq" aria-hidden="true"></span><h1>' + H.esc(v.text) + '</h1></div>';
-  h += '<div class="stats">' +
-    '<div class="stat"><b>' + H.n(cards.length) + '</b><span>automazioni</span></div>' +
-    '<div class="stat"><b class="' + (V.needsYou ? 'te' : '') + '">' + (V.needsYou || 0) + '</b><span>ti aspettano</span></div>' +
-    '<div class="stat"><b class="' + (V.broken ? 'bad' : '') + '">' + (V.broken || 0) + '</b><span>rotte</span></div>' +
-    '<div class="stat"><b>' + H.n(V.runsToday) + '</b><span>giri oggi · ' + srcOk + '/' + srcs.length + ' fonti</span></div></div>';
-  var seg = [['all', 'Tutte', cards.length], ['pb', 'Problemi', pb.length], ['ok', 'Ok', cards.length - pb.length]];
-  h += '<div class="tools"><div class="seg" role="group" aria-label="Filtro">' + seg.map(function (s) {
-    return '<button data-f="' + s[0] + '" aria-pressed="' + (ui.f === s[0]) + '">' + s[1] + '<b>' + s[2] + '</b></button>';
-  }).join('') + '</div><label class="search"><span class="sr">Cerca</span><input id="q" type="search" placeholder="Cerca per nome, sistema, chi la esegue" value="' + H.esc(ui.q) + '" autocomplete="off"><kbd aria-hidden="true">/</kbd></label></div>';
-
-  var body = '<div class="row hdr" aria-hidden="true"><span></span><span>Nome</span><span class="c">Ultimo</span><span class="c nx">Prossimo</span><span class="c rt">Oggi</span></div>';
-  var shown = 0;
-  var att = pb.filter(match);
-  if (att.length) {
-    body += '<div class="gh att">Richiede attenzione<span class="cnt">' + att.length + '</span></div>';
-    for (const c of att) body += row(c, now);
-    shown += att.length;
-  }
-  for (const g of H.systems(m)) {
-    var rest = g.cards.filter(function (c) { return c.level !== 'te' && c.level !== 'rotto' && match(c); });
-    var s = g.source;
-    var down = H.down(s);
-    if (!rest.length && !(down && ui.f !== 'pb' && !ui.q)) continue;
-    body += '<div class="gh">' + H.esc(g.name) + '<span class="cnt"><span>' + g.ok + ' ok</span>' +
-      (g.te ? '<span class="te">' + g.te + ' ▲</span>' : '') + (g.rotto ? '<span class="bad">' + g.rotto + ' ✕</span>' : '') +
-      (down ? '<span class="bad">fonte muta</span>' : '') + '</span></div>';
-    for (const c of rest) body += row(c, now);
-    shown += rest.length;
-  }
-  if (!shown) body += '<div class="empty"><b>Niente da mostrare</b>' + (ui.q ? 'Nessuna automazione contiene «' + H.esc(ui.q) + '».' : ui.f === 'pb' ? 'Nessun problema: tutto gira.' : '') + '</div>';
-  h += '<div class="tbl">' + body + '</div>';
-  h += '<div class="foot">' + srcs.map(function (s) {
-    return H.esc(s.label) + ' ' + (s.at ? H.hm(s.at) : '<span class="q" title="' + (s.pending ? 'primo giro in corso' : 'non risponde') + '">?</span>');
-  }).join('<span aria-hidden="true">·</span>') + '</div>';
-
-  var a = document.activeElement, typing = a && a.id === 'q' ? a.selectionStart : null, fk = a && a.dataset ? a.dataset.k : null;
+  var m = model, now = m.checkedAt, v = m.verdict || {}, q = queue();
+  var head = !q.length ? 'Tutto regolare.' : (v.needsYou ? (NUM[v.needsYou] || v.needsYou + ' cose') + (v.needsYou === 1 ? ' ti aspetta.' : ' ti aspettano.') : (NUM[v.broken] || v.broken + ' cose') + (v.broken === 1 ? ' è rotta.' : ' sono rotte.'));
+  var cnt = H.all(m).length;
+  var h = '<h1>' + H.esc(head) + '</h1><p class="sum">' + (v.needsYou && v.broken ? v.broken + (v.broken === 1 ? ' rotta può aspettare. ' : ' rotte possono aspettare. ') : '') + cnt + ' automazioni in 6 aree · ' + H.n(v.runsToday) + ' giri oggi</p>';
+  h += focusHtml(now) + areasHtml(now) + wfHtml(now);
   $('app').innerHTML = h;
   $('fresh').textContent = 'controllato ' + H.ago(m.checkedAt, Date.now());
-  if (typing !== null) { $('q').focus(); $('q').setSelectionRange(typing, typing); }
-  else if (fk) { var r = document.querySelector('.row[data-k="' + CSS.escape(fk) + '"]'); if (r) r.focus(); }
 }
 
-function find(k) { return H.all(model).find(function (c) { return c.key === k; }); }
-
-function openPanel(k) {
-  var c = find(k); if (!c) return;
-  ui.sel = k;
-  var now = model.checkedAt, l = c.last || {}, fb = c.feedback || {}, t = c.tech || {};
-  var vote = fb.vote ? 'Hai detto «' + (fb.vote.v === 'ok' ? 'va bene' : 'da cambiare') + '»' + (fb.vote.note ? ': ' + fb.vote.note : '') : '';
-  var p = '<div class="ph"><span class="chip ' + (c.level || 'va') + '">' + H.esc(H.level(c.level)) + '</span><span style="color:var(--mut)">' + H.esc(H.sys(c.provider).name) + '</span>' +
-    '<button class="x" id="close" aria-label="Chiudi">✕</button></div><div class="pb">' +
-    '<h2 id="ptitle">' + H.esc(c.title) + '</h2>' +
-    ((c.level === 'te' || c.level === 'rotto') && c.reason ? '<p class="why ' + c.level + '">' + H.esc(c.reason) + '</p>' : '') +
-    (c.cosa ? '<p class="desc">' + H.esc(c.cosa) + '</p>' : '') +
-    '<dl><dt>Ultimo giro</dt><dd>' + H.esc(l.at ? H.when(l.at, now) + ', ' + H.outcome(l.outcome) : 'mai partito') + '</dd>' +
-    '<dt>Prossimo</dt><dd>' + H.esc(c.next ? (c.nextApprox ? 'verso ' : '') + H.when(c.next, now) : '—') + '</dd>' +
-    '<dt>Giri oggi</dt><dd class="m">' + (c.runsToday || 0) + '</dd>' +
-    (l.delivered === 'failed' ? '<dt>Consegna</dt><dd style="color:var(--bad)">non ti è arrivato</dd>' : l.delivered === 'delivered' ? '<dt>Consegna</dt><dd>ti è arrivato</dd>' : '') +
-    (c.proof ? '<dt>Prova</dt><dd' + (c.proof.ok === false ? ' style="color:var(--bad)"' : '') + '>' + H.esc(c.proof.words || '') + '</dd>' : '') +
-    (c.who ? '<dt>Esegue</dt><dd>' + H.esc(c.who) + '</dd>' : '') +
-    (c.means ? '<dt>Ti scrive</dt><dd>' + H.esc(c.means) + '</dd>' : '') + '</dl>' +
-    (vote ? '<div class="fb">' + H.esc(vote) + '</div>' : '') +
-    '<div class="acts"><button class="btn pri" data-a="ok">Va bene <kbd>V</kbd></button><button class="btn" data-a="cambia">Da cambiare <kbd>C</kbd></button>' +
-    '<a class="btn" href="/#automations">Altre azioni</a></div>' +
-    '<div class="note" id="note"><label for="nt" style="color:var(--mut)">Cosa va cambiato? Arriva a un agente.</label><textarea id="nt"></textarea><div><button class="btn pri" data-a="salva">Salva <kbd>⏎</kbd></button></div></div>' +
-    '<details class="tech"><summary>Dettagli tecnici</summary><dl style="margin-top:10px"><dt>Chiave</dt><dd class="m">' + H.esc(c.key) + '</dd>' +
-    (t.schedule ? '<dt>Quando</dt><dd class="m">' + H.esc(t.schedule) + '</dd>' : '') + (t.exit != null ? '<dt>Uscita</dt><dd class="m">' + H.esc(t.exit) + '</dd>' : '') + '</dl>' +
-    ((t.command || t.prompt) ? '<pre>' + H.esc(t.command || t.prompt) + '</pre>' : '') + '</details></div>';
-  var el = $('panel');
-  el.innerHTML = p; el.hidden = false;
-  requestAnimationFrame(function () { el.classList.add('on'); $('scrim').classList.add('on'); });
-  $('close').focus();
-  render();
-}
-function closePanel() {
-  var k = ui.sel; ui.sel = null;
-  $('panel').classList.remove('on'); $('scrim').classList.remove('on');
-  setTimeout(function () { if (!ui.sel) $('panel').hidden = true; }, 160);
-  render();
-  var r = k && document.querySelector('.row[data-k="' + CSS.escape(k) + '"]'); if (r) r.focus();
-}
 function toast(t) { var e = $('toast'); e.textContent = t; e.classList.add('on'); clearTimeout(toast.t); toast.t = setTimeout(function () { e.classList.remove('on'); }, 2400); }
 async function act(a) {
-  var c = find(ui.sel); if (!c) return;
+  var q = queue(), c = q[Math.min(ui.focus, q.length - 1)]; if (!c) return;
   if (a === 'cambia') { $('note').classList.add('on'); $('nt').focus(); return; }
-  if (a === 'salva') { var n = $('nt').value.trim(); if (!n) { $('nt').focus(); return; } var r = await H.vote(c, 'cambia', n); toast(r && r.ok !== false ? 'Salvato: passa a un agente' : 'Non salvato'); }
-  if (a === 'ok') { var r2 = await H.vote(c, 'ok'); toast(r2 && r2.ok !== false ? 'Salvato: va bene' : 'Non salvato'); }
-  closePanel(); refresh();
+  var r;
+  if (a === 'salva') { var n = $('nt').value.trim(); if (!n) return $('nt').focus(); r = await H.vote(c, 'cambia', n); if (r && r.ok !== false) ui.done[c.key] = 'Passata a un agente.'; }
+  if (a === 'ok') { r = await H.vote(c, 'ok'); if (r && r.ok !== false) ui.done[c.key] = 'Segnata come «va bene».'; }
+  toast(r && r.ok !== false ? 'Salvato' : 'Non salvato, riprova');
+  render();
 }
-
+function refocus(sel) { var f = document.querySelector(sel); if (f) f.focus(); }
 document.addEventListener('click', function (e) {
-  var f = e.target.closest('[data-f]'); if (f) { ui.f = f.dataset.f; render(); return; }
-  var r = e.target.closest('.row[data-k]'); if (r) { openPanel(r.dataset.k); return; }
-  var a = e.target.closest('[data-a]'); if (a) { act(a.dataset.a); return; }
-  if (e.target.id === 'close' || e.target.id === 'scrim') closePanel();
-  if (e.target.closest('[data-retry]')) refresh();
+  var t = e.target, b;
+  if ((b = t.closest('[data-a]'))) return act(b.dataset.a);
+  if ((b = t.closest('[data-q]'))) { ui.focus = +b.dataset.q; render(); return; }
+  if ((b = t.closest('[data-area]'))) { var a = b.dataset.area; ui.area = ui.area === a ? null : a; ui.item = null; render(); refocus('[data-area="' + a + '"]'); return; }
+  if ((b = t.closest('[data-it]'))) { var k = b.dataset.it; ui.item = ui.item === k ? null : k; render(); refocus('[data-it="' + CSS.escape(k) + '"]'); return; }
+  if ((b = t.closest('[data-wf]'))) { var i = +b.dataset.wf; ui.wf = ui.wf === i ? -1 : i; render(); refocus('[data-wf="' + i + '"]'); return; }
+  if (t.closest('[data-allwf]')) { ui.allWf = !ui.allWf; render(); return; }
+  if (t.closest('[data-retry]')) refresh();
 });
-document.addEventListener('input', function (e) { if (e.target.id === 'q') { ui.q = e.target.value; render(); } });
-document.addEventListener('keydown', function (e) {
-  var t = e.target, inField = t.matches('input,textarea');
-  if (e.key === 'Escape') { if (ui.sel) closePanel(); else if (t.id === 'q') { ui.q = ''; render(); } return; }
-  if (t.id === 'nt' && e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); act('salva'); return; }
-  if (inField) return;
-  if (e.key === '/') { e.preventDefault(); $('q').focus(); return; }
-  if (ui.sel && (e.key === 'v' || e.key === 'c')) { e.preventDefault(); act(e.key === 'v' ? 'ok' : 'cambia'); return; }
-  var rows = Array.prototype.slice.call(document.querySelectorAll('.row[data-k]'));
-  var i = rows.indexOf(t);
-  if (e.key === 'j' || e.key === 'ArrowDown') { e.preventDefault(); (rows[i + 1] || rows[0]).focus(); }
-  if (e.key === 'k' || e.key === 'ArrowUp') { e.preventDefault(); (rows[i - 1] || rows[0]).focus(); }
-  if (e.key === 'Enter' && t.dataset.k) openPanel(t.dataset.k);
-});
+document.addEventListener('keydown', function (e) { if (e.target.id === 'nt' && e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); act('salva'); } });
 
 async function refresh() {
   var m = await H.load();
-  if (!m) {
-    if (!model) $('app').innerHTML = '<div class="tbl"><div class="empty"><b>Non riesco a leggere le automazioni</b>L’hub non risponde. Se il Mac è sotto carico può metterci un minuto.<div style="margin-top:12px"><button class="btn" data-retry>Riprova</button></div></div></div>';
-    else $('fresh').textContent = 'hub muto · dati di ' + H.ago(model.checkedAt, Date.now());
-    return;
-  }
+  if (!m) { if (!model) $('app').innerHTML = '<h1>Non riesco a leggere le automazioni.</h1><p class="sum">L’hub non risponde. Se il Mac è sotto carico può metterci un minuto.</p><button class="btn pri" data-retry>Riprova</button>'; return; }
   model = m;
-  if (!document.activeElement || document.activeElement.id !== 'nt') render();
+  if (!document.activeElement || document.activeElement.tagName !== 'TEXTAREA') render();
 }
 $('app').innerHTML = skeleton();
 refresh();
