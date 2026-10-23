@@ -358,7 +358,7 @@ export function createServer(config, deps = {}) {
       if (pathname === '/' || pathname === '/index.html') {
         return send(200, 'text/html; charset=utf-8', fs.readFileSync(path.join(ROOT, 'public', 'index.html')));
       }
-      const STATIC = { '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.svg': 'image/svg+xml', '.png': 'image/png' };
+      const STATIC = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.svg': 'image/svg+xml', '.png': 'image/png' };
       const ext = path.extname(pathname);
       if (STATIC[ext] && /^\/[\w.-]+(\/[\w.-]+)?$/.test(pathname) && !pathname.includes('..')) {
         const file = path.join(ROOT, 'public', pathname);

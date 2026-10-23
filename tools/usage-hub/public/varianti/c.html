@@ -1,0 +1,251 @@
+<!doctype html>
+<html lang="it">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Automazioni · Mappa</title>
+<style>
+/* C · Mappa: un tile per sistema, la salute a colpo d'occhio, si entra per vedere. */
+:root {
+  --bg:#0a0f14; --s1:#0f161d; --s2:#141d26; --s3:#1a2530; --line:#1e2a35; --line2:#2a3a48;
+  --fg:#e3ecf3; --fg2:#a9b8c6; --mut:#7f91a2;
+  --ok:#34d399; --te:#a78bfa; --bad:#fb7185; --warn:#fbbf24;
+  --mono:ui-monospace,"SF Mono",Menlo,monospace;
+  --r:12px;
+}
+* { box-sizing:border-box; }
+html { color-scheme:dark; }
+body { margin:0; background:radial-gradient(1200px 500px at 20% -10%,#11202c 0,transparent 60%),var(--bg); background-attachment:fixed; color:var(--fg); font:14px/1.45 -apple-system,"SF Pro Text",system-ui,sans-serif; -webkit-font-smoothing:antialiased; min-height:100vh; }
+button { font:inherit; color:inherit; }
+a { color:inherit; }
+.sr { position:absolute; width:1px; height:1px; overflow:hidden; clip:rect(0 0 0 0); white-space:nowrap; }
+
+.top { display:flex; align-items:center; gap:16px; padding:0 18px; height:50px; border-bottom:1px solid var(--line); }
+.brand { font-family:var(--mono); font-size:12px; letter-spacing:.12em; text-transform:uppercase; color:var(--fg2); white-space:nowrap; }
+.nav { display:flex; gap:16px; overflow-x:auto; scrollbar-width:none; flex:1; min-width:0; height:100%; }
+.nav::-webkit-scrollbar { display:none; }
+.nav a { display:flex; align-items:center; color:var(--mut); text-decoration:none; white-space:nowrap; border-bottom:2px solid transparent; }
+.nav a:hover { color:var(--fg); }
+.nav a[aria-current] { color:var(--fg); border-bottom-color:var(--fg); }
+
+main { max-width:1000px; margin:0 auto; padding:22px 18px 64px; }
+
+/* Riga di salute */
+.health { display:flex; align-items:flex-end; justify-content:space-between; gap:12px 20px; flex-wrap:wrap; margin-bottom:18px; }
+.health h1 { margin:0; font-size:22px; font-weight:600; letter-spacing:-.02em; display:flex; align-items:center; gap:10px; }
+.pulse { width:10px; height:10px; border-radius:50%; background:var(--ok); box-shadow:0 0 0 4px color-mix(in srgb,var(--ok) 18%,transparent); }
+.pulse.te { background:var(--te); box-shadow:0 0 0 4px color-mix(in srgb,var(--te) 20%,transparent); }
+.pulse.bad { background:var(--bad); box-shadow:0 0 0 4px color-mix(in srgb,var(--bad) 20%,transparent); }
+.health p { margin:4px 0 0; color:var(--mut); }
+.legend { display:flex; gap:14px; color:var(--mut); font-size:12.5px; }
+.legend i { display:inline-block; width:10px; height:10px; border-radius:2px; margin-right:5px; vertical-align:-1px; }
+
+/* Griglia */
+.grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(280px,1fr)); gap:12px; }
+.tile { text-align:left; background:var(--s1); border:1px solid var(--line); border-radius:var(--r); padding:16px; cursor:pointer; display:flex; flex-direction:column; gap:12px; min-height:168px; transition:border-color .12s, transform .12s; }
+.tile:hover { border-color:var(--line2); transform:translateY(-1px); }
+.tile:focus-visible { outline:2px solid var(--fg2); outline-offset:2px; }
+.tile.te { border-color:color-mix(in srgb,var(--te) 45%,var(--line)); }
+.tile.bad { border-color:color-mix(in srgb,var(--bad) 45%,var(--line)); }
+.th { display:flex; justify-content:space-between; gap:10px; align-items:flex-start; }
+.th b { font-size:15.5px; font-weight:600; display:block; }
+.th small { color:var(--mut); font-size:12.5px; }
+.badge { font-size:11.5px; font-weight:600; padding:2px 8px; border-radius:99px; white-space:nowrap; background:color-mix(in srgb,var(--ok) 14%,transparent); color:var(--ok); }
+.badge.te { background:color-mix(in srgb,var(--te) 16%,transparent); color:var(--te); }
+.badge.bad { background:color-mix(in srgb,var(--bad) 16%,transparent); color:var(--bad); }
+.badge.q { background:color-mix(in srgb,var(--warn) 14%,transparent); color:var(--warn); }
+.big { display:flex; align-items:baseline; gap:8px; }
+.big b { font-family:var(--mono); font-size:30px; font-weight:500; letter-spacing:-.04em; line-height:1; }
+.big span { color:var(--mut); }
+.bar { display:flex; gap:2px; height:6px; border-radius:3px; overflow:hidden; background:var(--s3); }
+.bar i { display:block; height:100%; }
+.bar .o { background:var(--ok); } .bar .t { background:var(--te); } .bar .x { background:var(--bad); }
+.pbs { display:flex; flex-direction:column; gap:4px; font-size:13px; }
+.pbs div { display:flex; gap:7px; align-items:baseline; min-width:0; }
+.pbs div span:last-child { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.pbs .g { flex:none; font-size:10px; }
+.g.te { color:var(--te); } .g.x { color:var(--bad); }
+.tf { margin-top:auto; display:flex; justify-content:space-between; color:var(--mut); font-size:12px; font-family:var(--mono); }
+
+/* Drill-down */
+.crumb { display:flex; align-items:center; gap:8px; margin-bottom:14px; color:var(--mut); }
+.crumb button { border:0; background:none; color:var(--fg2); cursor:pointer; padding:6px 8px 6px 0; min-height:32px; }
+.crumb button:hover { color:var(--fg); }
+.dh { display:flex; align-items:flex-end; justify-content:space-between; gap:10px 16px; flex-wrap:wrap; margin-bottom:14px; }
+.dh h1 { margin:0; font-size:24px; letter-spacing:-.02em; }
+.dh p { margin:2px 0 0; color:var(--mut); }
+.items { background:var(--s1); border:1px solid var(--line); border-radius:var(--r); overflow:hidden; }
+.item { border-top:1px solid var(--line); }
+.item:first-child { border-top:0; }
+.item > summary { list-style:none; cursor:pointer; display:grid; grid-template-columns:16px minmax(0,1fr) auto; gap:10px; align-items:center; padding:11px 14px; min-height:44px; }
+.item > summary::-webkit-details-marker { display:none; }
+.item > summary:hover { background:var(--s2); }
+.item[open] > summary { background:var(--s2); }
+.dot { width:8px; height:8px; border-radius:50%; background:var(--ok); justify-self:center; }
+.dot.te { background:var(--te); border-radius:1px; transform:rotate(45deg); }
+.dot.rotto { background:var(--bad); border-radius:1px; }
+.item .nm { min-width:0; }
+.item .nm b { font-weight:500; display:block; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.item .nm small { color:var(--mut); display:block; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.item .nm small.te { color:var(--te); } .item .nm small.rotto { color:var(--bad); }
+.item .tm { font-family:var(--mono); font-size:12px; color:var(--mut); text-align:right; white-space:nowrap; }
+.det { padding:4px 14px 16px 40px; color:var(--fg2); }
+.det p { margin:0 0 10px; }
+.kv { display:grid; grid-template-columns:100px minmax(0,1fr); gap:5px 12px; margin:0 0 12px; font-size:13px; }
+.kv dt { color:var(--mut); } .kv dd { margin:0; overflow-wrap:anywhere; }
+.acts { display:flex; gap:8px; flex-wrap:wrap; }
+.btn { min-height:34px; padding:0 14px; border-radius:8px; border:1px solid var(--line2); background:var(--s2); cursor:pointer; display:inline-flex; align-items:center; text-decoration:none; color:var(--fg); }
+.btn:hover { border-color:var(--fg2); }
+.btn.pri { background:var(--fg); color:var(--bg); border-color:var(--fg); font-weight:600; }
+.note { display:none; flex-direction:column; gap:8px; margin-top:10px; }
+.note.on { display:flex; }
+.note textarea { min-height:70px; background:var(--bg); color:var(--fg); border:1px solid var(--line2); border-radius:8px; padding:8px 10px; font:inherit; resize:vertical; }
+.ok-msg { color:var(--ok); font-size:13px; }
+.empty { padding:26px; text-align:center; color:var(--mut); }
+.src { margin-top:16px; color:var(--mut); font-size:12px; font-family:var(--mono); display:flex; flex-wrap:wrap; gap:4px 14px; }
+.src .q { color:var(--warn); }
+
+.sk { background:var(--s2); border-radius:6px; animation:p 1.5s ease-in-out infinite; }
+@keyframes p { 50% { opacity:.4; } }
+@media (prefers-reduced-motion:reduce) { .sk { animation:none; } .tile { transition:none; } .tile:hover { transform:none; } }
+.toast { position:fixed; left:50%; bottom:18px; transform:translateX(-50%); background:var(--fg); color:var(--bg); padding:8px 16px; border-radius:8px; opacity:0; transition:.15s; pointer-events:none; font-weight:500; }
+.toast.on { opacity:1; }
+
+@media (max-width:620px) { .grid { grid-template-columns:repeat(2,minmax(0,1fr)); } .tile { min-height:150px; padding:14px; } .big b { font-size:26px; } .legend { display:none; } }
+@media (max-width:420px) { .grid { grid-template-columns:1fr; } .det { padding-left:14px; } .kv { grid-template-columns:88px minmax(0,1fr); } }
+</style>
+<body>
+<header class="top">
+  <span class="brand">Hub</span>
+  <nav class="nav" aria-label="Sezioni">
+    <a href="#" aria-current="page">Automazioni</a><a href="/#sessions">Sessioni</a><a href="/#accounts">Account</a><a href="/#usage">Consumi</a><a href="/#overview">Panoramica</a><a href="/#services">Servizi</a>
+  </nav>
+</header>
+<main id="app" aria-live="polite"></main>
+<div class="toast" id="toast" role="status"></div>
+<script src="/varianti/common.js"></script>
+<script>
+var H = HubV, model = null, saved = {};
+var $ = function (id) { return document.getElementById(id); };
+function drill() { var m = location.hash.match(/^#s=(.+)$/); return m ? decodeURIComponent(m[1]) : null; }
+
+function skeleton() {
+  var t = '<div class="tile" aria-hidden="true"><div class="sk" style="width:50%;height:15px"></div><div class="sk" style="width:35%;height:28px"></div><div class="sk" style="height:6px"></div><div class="sk" style="width:70%;height:12px;margin-top:auto"></div></div>';
+  return '<span class="sr">Carico le automazioni…</span><div class="health"><div><div class="sk" style="width:240px;height:22px;margin-bottom:8px"></div><div class="sk" style="width:300px;height:13px"></div></div></div><div class="grid">' + t.repeat(6) + '</div>';
+}
+
+function tone(g) { return g.te ? 'te' : g.rotto ? 'bad' : H.down(g.source) ? 'q' : ''; }
+
+function tile(g, now) {
+  var tot = g.cards.length, t = tone(g);
+  var badge = g.te ? '<span class="badge te">' + g.te + ' ti aspetta</span>' : g.rotto ? '<span class="badge bad">' + g.rotto + (g.rotto === 1 ? ' rotta' : ' rotte') + '</span>' :
+    t === 'q' ? '<span class="badge q">' + (g.source.pending ? 'in lettura' : 'non risponde') + '</span>' : tot ? '<span class="badge">a posto</span>' : '<span class="badge q">vuoto</span>';
+  var w = function (n) { return tot ? (n / tot * 100) + '%' : '0'; };
+  var pbs = g.cards.filter(function (c) { return c.level === 'te' || c.level === 'rotto'; }).slice(0, 3).map(function (c) {
+    return '<div><span class="g ' + (c.level === 'te' ? 'te' : 'x') + '" aria-hidden="true">' + (c.level === 'te' ? '◆' : '■') + '</span><span>' + H.esc(c.title) + '</span></div>';
+  }).join('');
+  return '<button class="tile ' + (t === 'q' ? '' : t) + '" data-s="' + H.esc(g.name) + '" aria-label="' + H.esc(g.name + ': ' + g.ok + ' su ' + tot + ' a posto' + (g.te ? ', ' + g.te + ' ti aspetta' : '') + (g.rotto ? ', ' + g.rotto + ' rotte' : '')) + '">' +
+    '<div class="th"><div><b>' + H.esc(g.name) + '</b><small>' + H.esc(g.what) + '</small></div>' + badge + '</div>' +
+    '<div class="big"><b>' + g.ok + '<span style="font-size:18px;color:var(--mut)">/' + tot + '</span></b><span>a posto</span></div>' +
+    '<div class="bar" aria-hidden="true">' + (g.ok ? '<i class="o" style="width:' + w(g.ok) + '"></i>' : '') + (g.te ? '<i class="t" style="width:' + w(g.te) + '"></i>' : '') + (g.rotto ? '<i class="x" style="width:' + w(g.rotto) + '"></i>' : '') + '</div>' +
+    (pbs ? '<div class="pbs">' + pbs + '</div>' : '') +
+    '<div class="tf"><span>' + (g.last ? 'ultimo ' + H.esc(H.short(g.last, now)) : 'nessun giro') + '</span><span>' + H.n(g.runsToday) + ' oggi</span></div></button>';
+}
+
+function wfTile(m, now) {
+  var wf = m.workflows || {};
+  if (!wf.total) return '';
+  var last = 0; for (const w of wf.byName || []) for (const r of w.runs || []) if (r.at > last) last = r.at;
+  var okN = wf.total - (wf.failed || 0);
+  return '<a class="tile ' + (wf.failed ? 'bad' : '') + '" href="/#automations" style="text-decoration:none">' +
+    '<div class="th"><div><b>Giri dei workflow</b><small>ultimi ' + wf.days + ' giorni</small></div>' + (wf.failed ? '<span class="badge bad">' + wf.failed + (wf.failed === 1 ? ' fallito' : ' falliti') + '</span>' : '<span class="badge">nessuno fallito</span>') + '</div>' +
+    '<div class="big"><b>' + okN + '<span style="font-size:18px;color:var(--mut)">/' + wf.total + '</span></b><span>riusciti</span></div>' +
+    '<div class="bar" aria-hidden="true"><i class="o" style="width:' + (okN / wf.total * 100) + '%"></i>' + (wf.failed ? '<i class="x" style="width:' + (wf.failed / wf.total * 100) + '%"></i>' : '') + '</div>' +
+    '<div class="tf"><span>' + (last ? 'ultimo ' + H.esc(H.short(last, now)) : '') + '</span><span>' + (wf.byName || []).length + ' flussi</span></div></a>';
+}
+
+function overview(m) {
+  var now = m.checkedAt, v = H.verdict(m), V = m.verdict || {};
+  var h = '<div class="health"><div><h1><span class="pulse ' + (v.tone === 'ok' ? '' : v.tone) + '" aria-hidden="true"></span>' + H.esc(v.text) + '</h1>' +
+    '<p>' + H.n(V.ok) + ' a posto · ' + H.n(V.runsToday) + ' giri oggi · controllato ' + H.ago(m.checkedAt, Date.now()) + '</p></div>' +
+    '<div class="legend" aria-hidden="true"><span><i style="background:var(--ok)"></i>a posto</span><span><i style="background:var(--te)"></i>ti aspetta</span><span><i style="background:var(--bad)"></i>rotta</span></div></div>';
+  var gs = H.systems(m).sort(function (a, b) { return (b.te * 2 + b.rotto) - (a.te * 2 + a.rotto); });
+  h += '<div class="grid">' + gs.map(function (g) { return tile(g, now); }).join('') + wfTile(m, now) + '</div>';
+  h += '<div class="src">' + ((m.footer || {}).sources || []).map(function (s) {
+    return '<span>' + H.esc(s.label) + ' ' + (s.at ? H.hm(s.at) : '<span class="q">?</span>') + '</span>';
+  }).join('') + '</div>';
+  return h;
+}
+
+function item(c, now) {
+  var l = c.last || {}, pb = c.level === 'te' || c.level === 'rotto';
+  var sub = pb && c.reason ? '<small class="' + c.level + '">' + H.esc(c.reason) + '</small>' : c.cosa ? '<small>' + H.esc(c.cosa) + '</small>' : '';
+  var tm = (l.at ? H.short(l.at, now) : '—') + (c.next ? ' → ' + (c.nextApprox ? '~' : '') + H.short(c.next, now) : '');
+  var s = saved[c.key];
+  return '<details class="item" data-k="' + H.esc(c.key) + '"' + (pb ? ' open' : '') + '><summary><span class="dot ' + (c.level || '') + '" aria-hidden="true"></span>' +
+    '<span class="nm"><b>' + H.esc(c.title) + '</b>' + sub + '<span class="sr">, ' + H.level(c.level) + '</span></span><span class="tm">' + H.esc(tm) + '</span></summary>' +
+    '<div class="det">' + (c.cosa && pb ? '<p>' + H.esc(c.cosa) + '</p>' : '') +
+    '<dl class="kv"><dt>Ultimo giro</dt><dd>' + H.esc(l.at ? H.when(l.at, now) + ', ' + H.outcome(l.outcome) : 'mai partito') + '</dd>' +
+    '<dt>Prossimo</dt><dd>' + H.esc(c.next ? (c.nextApprox ? 'verso ' : '') + H.when(c.next, now) : '—') + '</dd>' +
+    (l.delivered === 'failed' ? '<dt>Consegna</dt><dd style="color:var(--bad)">non ti è arrivato</dd>' : '') +
+    (c.proof ? '<dt>Prova</dt><dd>' + H.esc(c.proof.words || '') + '</dd>' : '') +
+    (c.who ? '<dt>Esegue</dt><dd>' + H.esc(c.who) + '</dd>' : '') + (c.means ? '<dt>Ti scrive</dt><dd>' + H.esc(c.means) + '</dd>' : '') + '</dl>' +
+    (s ? '<div class="ok-msg">' + H.esc(s) + '</div>' : '<div class="acts"><button class="btn pri" data-a="ok">Va bene</button><button class="btn" data-a="cambia">Da cambiare</button><a class="btn" href="/#automations">Altro</a></div>' +
+      '<div class="note"><label class="sr" for="n-' + H.esc(c.key) + '">Cosa va cambiato</label><textarea id="n-' + H.esc(c.key) + '" placeholder="Cosa va cambiato? Lo passo a un agente."></textarea><div><button class="btn pri" data-a="salva">Salva</button></div></div>') +
+    '</div></details>';
+}
+
+function detail(m, name) {
+  var g = H.systems(m).find(function (x) { return x.name === name; });
+  var now = m.checkedAt;
+  var h = '<div class="crumb"><button data-back>← Mappa</button><span aria-hidden="true">/</span><span>' + H.esc(name) + '</span></div>';
+  if (!g) return h + '<div class="items"><div class="empty">Questo sistema non c’è più.</div></div>';
+  h += '<div class="dh"><div><h1>' + H.esc(g.name) + '</h1><p>' + H.esc(g.what) + ' · ' + g.ok + ' su ' + g.cards.length + ' a posto · ' + H.n(g.runsToday) + ' giri oggi</p></div>' +
+    '<span class="tm" style="color:var(--mut);font-family:var(--mono);font-size:12px">ultimo → prossimo</span></div>';
+  h += '<div class="items">' + (g.cards.length ? g.cards.map(function (c) { return item(c, now); }).join('') : '<div class="empty">Nessuna automazione da questo sistema' + (H.down(g.source) ? ': la fonte non risponde.' : '.') + '</div>') + '</div>';
+  return h;
+}
+
+function render() {
+  var d = drill();
+  var openKeys = Array.prototype.map.call(document.querySelectorAll('.item[open]'), function (e) { return e.dataset.k; });
+  $('app').innerHTML = d ? detail(model, d) : overview(model);
+  for (const k of openKeys) { var e = document.querySelector('.item[data-k="' + CSS.escape(k) + '"]'); if (e) e.open = true; }
+}
+
+function toast(t) { var e = $('toast'); e.textContent = t; e.classList.add('on'); clearTimeout(toast.t); toast.t = setTimeout(function () { e.classList.remove('on'); }, 2400); }
+function find(k) { return H.all(model).find(function (c) { return c.key === k; }); }
+
+async function act(el, a) {
+  var it = el.closest('.item'), c = find(it.dataset.k); if (!c) return;
+  if (a === 'cambia') { it.querySelector('.note').classList.add('on'); it.querySelector('textarea').focus(); return; }
+  var r;
+  if (a === 'salva') { var n = it.querySelector('textarea').value.trim(); if (!n) return it.querySelector('textarea').focus(); r = await H.vote(c, 'cambia', n); if (r && r.ok !== false) saved[c.key] = 'Passata a un agente.'; }
+  if (a === 'ok') { r = await H.vote(c, 'ok'); if (r && r.ok !== false) saved[c.key] = 'Segnata come «va bene».'; }
+  toast(r && r.ok !== false ? 'Salvato' : 'Non salvato, riprova');
+  render();
+}
+
+document.addEventListener('click', function (e) {
+  var t = e.target.closest('[data-s]'); if (t) { location.hash = 's=' + encodeURIComponent(t.dataset.s); return; }
+  if (e.target.closest('[data-back]')) { history.length > 1 && drill() ? history.back() : (location.hash = ''); return; }
+  var a = e.target.closest('[data-a]'); if (a) { act(a, a.dataset.a); return; }
+  if (e.target.closest('[data-retry]')) refresh();
+});
+document.addEventListener('keydown', function (e) {
+  if (e.key === 'Escape' && drill() && !e.target.matches('textarea')) location.hash = '';
+});
+window.addEventListener('hashchange', function () { if (model) { render(); window.scrollTo(0, 0); var f = document.querySelector('.crumb button, .tile'); if (f) f.focus(); } });
+
+async function refresh() {
+  var m = await H.load();
+  if (!m) {
+    if (!model) $('app').innerHTML = '<div class="health"><div><h1><span class="pulse bad" aria-hidden="true"></span>Non riesco a leggere le automazioni</h1><p>L’hub non risponde. Se il Mac è sotto carico può metterci un minuto.</p></div></div><button class="btn pri" data-retry>Riprova</button>';
+    return;
+  }
+  model = m;
+  if (!document.activeElement || document.activeElement.tagName !== 'TEXTAREA') render();
+}
+$('app').innerHTML = skeleton();
+refresh();
+setInterval(refresh, 60000);
+</script>
