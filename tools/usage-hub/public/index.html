@@ -5,20 +5,25 @@
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <link rel="stylesheet" href="/app.css">
 <body>
+<header class="top">
+  <div class="top-in">
+    <a class="hub-mark" href="#automations" aria-label="Hub, torna alle automazioni"><span class="hub-logo"><i data-ic="hub"></i></span><span class="hub-word">Hub</span></a>
+    <nav id="nav" aria-label="Sezioni">
+      <button data-t="automations"><i data-ic="calendar-clock"></i><span>Automazioni</span><span class="badge" id="nauto" hidden></span></button>
+      <button data-t="sessions"><i data-ic="terminal"></i><span>Sessioni</span><span class="badge" id="nsess" hidden></span></button>
+      <button data-t="accounts"><i data-ic="users-round"></i><span>Account</span></button>
+      <button data-t="usage"><i data-ic="chart-column"></i><span>Consumi</span></button>
+      <button data-t="overview"><i data-ic="layout-dashboard"></i><span>Panoramica</span></button>
+      <button data-t="projects"><i data-ic="folder-git-2"></i><span>Progetti</span></button>
+      <button data-t="activity"><i data-ic="activity"></i><span>Attività</span></button>
+      <button data-t="services"><i data-ic="server"></i><span>Servizi</span></button>
+      <button data-t="settings"><i data-ic="settings-2"></i><span>Impostazioni</span></button>
+      <button data-t="logs"><i data-ic="scroll-text"></i><span>Log</span></button>
+    </nav>
+  </div>
+</header>
 <main>
-  <header class="top"><h1 class="hub-mark"><i aria-hidden="true"></i>Hub</h1>
-  <nav id="nav" aria-label="Sezioni">
-    <button data-t="automations">Automazioni<span class="badge" id="nauto" hidden></span></button>
-    <button data-t="sessions">Sessioni<span class="badge" id="nsess" hidden></span></button>
-    <button data-t="accounts">Account</button>
-    <button data-t="usage">Consumi</button>
-    <button data-t="overview">Panoramica</button>
-    <button data-t="projects">Progetti</button>
-    <button data-t="activity">Attività</button>
-    <button data-t="services">Servizi</button>
-    <button data-t="settings">Impostazioni</button>
-    <button data-t="logs">Log</button>
-  </nav><span class="sub" id="sub"></span></header>
+  <p class="sub" id="sub"></p>
   <div class="tab" id="t-overview"><p class="mut small">Carico quote, agenti e Mac…</p></div>
   <div class="tab" id="t-projects"></div>
   <div class="tab" id="t-accounts"></div>
@@ -32,6 +37,7 @@
   <footer><a href="http://127.0.0.1:18789" target="_blank" rel="noopener">OpenClaw: canali, cron, agenti</a></footer>
 </main>
 <div class="toast" id="toast"></div>
+<script src="/icons.js"></script>
 <script src="/actions.js"></script>
 <script src="/automations-view.js"></script>
 <script src="/automations.js"></script>

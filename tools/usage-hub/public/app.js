@@ -280,8 +280,10 @@ let cur;
 function show(t) {
   if (!TABS[t]) t = 'overview';
   cur = t; location.hash = t;
-  $('nav').querySelector(`[data-t="${t}"]`)?.scrollIntoView({ inline: 'nearest', block: 'nearest' });
-  document.querySelectorAll('#nav button').forEach((b) => b.classList.toggle('on', b.dataset.t === t));
+  // Il sottotitolo è della tab: cambiando tab si azzera, e sta fuori dall'header, così non può schiacciare la nav.
+  if (document.body.dataset.tab !== t) $('sub').textContent = '';
+  document.body.dataset.tab = t;
+  document.querySelectorAll('#nav button').forEach((b) => { b.classList.toggle('on', b.dataset.t === t); if (b.dataset.t === t) b.setAttribute('aria-current', 'page'); else b.removeAttribute('aria-current'); });
   document.querySelectorAll('.tab').forEach((d) => d.classList.toggle('on', d.id === 't-' + t));
   TABS[t]();
 }
@@ -289,6 +291,5 @@ $('nav').addEventListener('click', (e) => { const b = e.target.closest('button')
 window.addEventListener('hashchange', () => { const t = location.hash.slice(1); if (t !== cur) show(t); });
 if (EMBED) { const post_ = () => parent.postMessage({ hubHeight: document.documentElement.scrollHeight + 8 }, '*'); new ResizeObserver(post_).observe(document.body); }
 show(location.hash.slice(1) || 'automations');
-$('nav').querySelector('.on')?.scrollIntoView({ inline: 'center', block: 'nearest' });
 setInterval(() => { if (['overview', 'projects', 'accounts', 'sessions', 'activity', 'automations'].includes(cur) && !document.activeElement.matches('input,select')) TABS[cur](); }, 60000);
 vdm('/api/sessions').then((s) => { if (s) { $('nsess').hidden = !(s.active || []).length; $('nsess').textContent = (s.active || []).length; } });

@@ -29,4 +29,6 @@ agents-doctor >/dev/null || { echo 'ROSSO agents-doctor'; exit 1; }
 # 5. misure su un serve a parte (il :3360 vivo non si tocca)
 node scripts/measure-automations.mjs --demo
 node scripts/measure-automations.mjs --live
+# 6. UI: nav intera cambiando tab, niente tagli, ui-audit e axe a 0 a 1440, 700 e 375 (serve --demo a parte)
+python3 scripts/ui-bar.py
 echo 'BARRA VERDE'

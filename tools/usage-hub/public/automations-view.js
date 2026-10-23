@@ -74,15 +74,24 @@
     return OUTCOME[o] || 'stato ignoto';
   }
 
+  // Icone da un solo set (public/icons.js, Lucide). Senza il modulo (test in node) niente icona, mai un'emoji al posto.
+  function ic(name, cls) {
+    return root.Icons ? root.Icons.svg(name, cls) : '';
+  }
+
   // ---- Scopo: ciò che le automazioni fanno per Attilio ----
   var AREAS = [
-    { id: 'posta-avvisi', title: 'Posta e avvisi' },
-    { id: 'clienti', title: 'Clienti' },
-    { id: 'sviluppo-topics', title: 'Sviluppo' },
-    { id: 'jarvis-agenti', title: 'Jarvis e agenti' },
-    { id: 'manutenzione', title: 'Manutenzione' },
-    { id: 'backup-sicurezza', title: 'Backup e sicurezza' },
+    { id: 'posta-avvisi', title: 'Posta e avvisi', icon: 'inbox' },
+    { id: 'clienti', title: 'Clienti', icon: 'briefcase-business' },
+    { id: 'sviluppo-topics', title: 'Sviluppo', icon: 'code-xml' },
+    { id: 'jarvis-agenti', title: 'Jarvis e agenti', icon: 'bot' },
+    { id: 'manutenzione', title: 'Manutenzione', icon: 'wrench' },
+    { id: 'backup-sicurezza', title: 'Backup e sicurezza', icon: 'shield-check' },
   ];
+  function areaIcon(id) {
+    var a = AREAS.find(function (x) { return x.id === id; });
+    return a ? a.icon : 'calendar-clock';
+  }
   // Senza purpose (modello vecchio o fixture) l'area si stima dal gruppo, come fa purpose.mjs.
   var FROM_GROUP = { arriva: 'posta-avvisi', dati: 'backup-sicurezza', quote: 'jarvis-agenti', macchine: 'manutenzione', prodotti: 'sviluppo-topics' };
   function areaOf(c) {
@@ -196,10 +205,54 @@
 
   // ---- Righe della tabella ----
   function glyph(c) {
-    if (c.level === 'te') return '<span class="cx-g te" aria-hidden="true"></span><span class="sr">Ti aspetta</span>';
-    if (c.level === 'rotto') return '<span class="cx-g rotto" aria-hidden="true"></span><span class="sr">Rotta</span>';
+    if (c.level === 'te') return '<span class="cx-g te">' + ic('hand') + '</span><span class="sr">Ti aspetta</span>';
+    if (c.level === 'rotto') return '<span class="cx-g rotto">' + ic('circle-x') + '</span><span class="sr">Rotta</span>';
     var bad = c.last && c.last.outcome === 'error';
     return '<span class="cx-g ' + (bad ? 'err' : 'ok') + '" aria-hidden="true"></span><span class="sr">' + (bad ? 'ultimo giro fallito' : 'regolare') + '</span>';
+  }
+
+  // ---- Da fare: solo ciò che aspetta una mossa di Attilio, come card evento ----
+  // Cosa fare, in una frase: dipende da chi la esegue e da com'è ferma.
+  function todoAction(c) {
+    if (c.level === 'te') {
+      var m = /passo «([^»]+)»/.exec(c.reason || '');
+      // Un cancello di workflow si sblocca dove gira; il resto si decide coi pulsanti del pannello.
+      return m ? 'Dai l\'ok al passo «' + m[1] + '» in ' + (SYS[c.provider] || 'OpenClaw') + ', oppure fermalo.' : 'Apri i dettagli e decidi: va bene così, da cambiare, o non avvisarmi più.';
+    }
+    if (c.provider === 'github') return 'Apri il giro su GitHub e guarda il primo passo rosso.';
+    if (c.last && c.last.delivered === 'failed') return 'Il giro è riuscito ma il messaggio non ti è arrivato: controlla il canale.';
+    return 'Apri i dettagli: lo schema dice quale passo si è fermato.';
+  }
+  // Fallimenti di fila dalla storia: una lista solo se sono più di uno.
+  function failStreak(c) {
+    var h = (c.history || []).slice().sort(function (a, b) { return b.at - a.at; });
+    var out = [];
+    for (const x of h) { if (x.outcome !== 'error') break; out.push(x.at); }
+    return out;
+  }
+  var LINK_WORD = { github: 'Apri su GitHub', openclaw: 'Apri in OpenClaw', lobster: 'Apri in OpenClaw' };
+  function todoCard(c, now) {
+    var te = c.level === 'te';
+    var streak = te ? [] : failStreak(c);
+    var url = c.tech && c.tech.url;
+    var list = streak.length > 1
+      ? '<p class="td-streak">Fallita le ultime ' + streak.length + ' volte: ' + streak.slice(0, 5).map(function (t) { return dm(t); }).join(', ') + (streak.length > 5 ? '…' : '') + '</p>'
+      : '';
+    return '<article class="td ' + (te ? 'te' : 'rotto') + '">' +
+      '<div class="td-h"><span class="td-ic">' + ic(te ? 'hand' : 'circle-x') + '</span><span class="td-k">' + (te ? 'Ti aspetta' : 'Si è rotta') + '</span>' +
+      (c.since && !/alle \d/.test(c.reason || '') ? '<span class="td-when">' + esc(lastWords({ at: c.since }, now)) + '</span>' : '') + '</div>' +
+      '<h3>' + esc(c.title) + '</h3>' +
+      '<p class="td-what">' + esc(c.reason || '') + (ifBroken(c) ? '. ' + esc(ifBroken(c).replace(/^Attilio potrebbe/, 'Finché resta così potresti')) : '') + '</p>' +
+      list +
+      '<p class="td-do">' + esc(todoAction(c)) + '</p>' +
+      '<div class="td-act"><button class="cx-btn" data-cx="' + esc(c.key) + '">Vedi dettagli</button>' +
+      (url ? '<a class="cx-btn ghost" href="' + esc(url) + '" target="_blank" rel="noopener">' + esc(LINK_WORD[c.provider] || 'Apri') + ic('external-link') + '</a>' : '') + '</div></article>';
+  }
+  function todoHtml(model, now) {
+    var items = allCards(model).filter(isProblem).sort(function (a, b) { return (a.level === 'te' ? 0 : 1) - (b.level === 'te' ? 0 : 1) || (b.since || 0) - (a.since || 0); });
+    if (!items.length) return '<section class="cx-sec" data-sec="todo"><div class="cx-sh"><h2>Da fare</h2></div><p class="td-none">' + ic('check') + 'Niente da fare: nessuna automazione aspetta te e nessuna è rotta.</p></section>';
+    return '<section class="cx-sec" data-sec="todo"><div class="cx-sh"><h2>Da fare</h2><span class="cx-shn">' + items.length + '</span></div>' +
+      '<div class="td-grid">' + items.map(function (c) { return todoCard(c, now); }).join('') + '</div></section>';
   }
   // Striscia delle 24 ore (stile Cronitor): finestra da 22 h fa a 2 h avanti, un segno per quarto d'ora
   // con giri, colorato per l'esito peggiore; linea dell'ora attuale; il prossimo giro come segno vuoto.
@@ -222,27 +275,32 @@
     }).join('');
     var nx = next && next > now && next < now + AHEAD ? '<rect class="s-next" x="' + (x(next) - 1.25) + '" y="4" width="2.5" height="' + (STRIP_H - 8) + '" rx=".8"/>' : '';
     var label = n ? n + (n === 1 ? ' giro' : ' giri') + ' nelle ultime 22 ore' + (bad ? ', ' + bad + (bad === 1 ? ' fallito' : ' falliti') : '') : 'nessun giro nelle ultime 22 ore';
-    return '<span class="cx-strip" title="' + esc(label) + '"><svg viewBox="0 0 ' + STRIP_W + ' ' + STRIP_H + '" width="' + STRIP_W + '" height="' + STRIP_H + '" aria-hidden="true">' +
+    return '<span class="cx-strip" title="' + esc(label) + '"><svg viewBox="0 0 ' + STRIP_W + ' ' + STRIP_H + '" width="' + STRIP_W + '" height="' + STRIP_H + '" preserveAspectRatio="none" aria-hidden="true">' +
       '<line class="s-base" x1="0" y1="' + (STRIP_H / 2) + '" x2="' + STRIP_W + '" y2="' + (STRIP_H / 2) + '"/>' + marks + nx +
       '<line class="s-now" x1="' + x(now) + '" y1="0" x2="' + x(now) + '" y2="' + STRIP_H + '"/></svg><span class="sr">' + esc(label) + '</span></span>';
   }
 
+  // Riga di automazione: il titolo va a capo invece di troncarsi, il motivo sta sotto.
   function rowHtml(c, ui, now) {
     var nx = c.next ? (c.nextApprox ? '~' : '') + short(c.next, now) : '—';
     return '<div class="cx-row' + (ui.sel === c.key ? ' sel' : '') + '" role="button" tabindex="0" data-cx="' + esc(c.key) + '">' + glyph(c) +
-      '<span class="cx-t">' + esc(c.title) + (isProblem(c) && c.reason ? '<small>' + esc(c.reason) + '</small>' : '') + '</span>' +
+      '<span class="cx-t"><span class="cx-tt">' + esc(c.title) + '</span>' + (isProblem(c) && c.reason ? '<small class="' + esc(c.level) + '">' + esc(c.reason) + '</small>' : '') + '</span>' +
       stripHtml(c.day || (c.history || []).map(function (h) { return [h.at, h.outcome]; }), c.next, now) +
       '<span class="cx-c' + (c.last && c.last.at ? '' : ' dim') + '">' + esc(short(c.last && c.last.at, now)) + '</span>' +
       '<span class="cx-c nx dim">' + esc(nx) + '</span><span class="cx-c rt dim">' + (c.runsToday || 0) + '</span></div>';
   }
+  // Riga di un lavoro lanciato da una sessione: niente orario né «prossimo», ma quando, quanto, quanti agenti e token.
   function wfRowHtml(w, ui, now) {
     var run = (w.runs || [])[0] || {};
     var t = runTokens(run);
     var bad = run.outcome === 'error';
-    return '<div class="cx-row' + (ui.sel === 'wf:' + w.name ? ' sel' : '') + '" role="button" tabindex="0" data-cx="wf:' + esc(w.name) + '">' +
-      '<span class="cx-g ' + (bad ? 'rotto' : 'ok') + '" aria-hidden="true"></span><span class="sr">' + (bad ? 'fallito' : 'riuscito') + '</span>' +
-      '<span class="cx-t">' + esc(wfTitle(w.name)) + '</span>' + stripHtml((w.runs || []).map(function (r) { return [r.at, r.outcome]; }), null, now) + '<span class="cx-c">' + esc(short(run.at, now)) + '</span>' +
-      '<span class="cx-c nx dim">' + esc(durWords(run.durationMs) || '—') + '</span><span class="cx-c rt' + (t && !t.saved ? ' claude' : ' dim') + '">' + esc(t ? tok(t.total) : '—') + '</span></div>';
+    return '<div class="cx-row wr' + (ui.sel === 'wf:' + w.name ? ' sel' : '') + '" role="button" tabindex="0" data-cx="wf:' + esc(w.name) + '">' +
+      (bad ? '<span class="cx-g rotto">' + ic('circle-x') + '</span>' : '<span class="cx-g ok" aria-hidden="true"></span>') + '<span class="sr">' + (bad ? 'fallito' : 'riuscito') + '</span>' +
+      '<span class="cx-t"><span class="cx-tt">' + esc(wfTitle(w.name)) + '</span>' + (run.summary ? '<small>' + esc(run.summary) + '</small>' : '') + '</span>' +
+      '<span class="cx-c">' + esc(short(run.at, now)) + '</span>' +
+      '<span class="cx-c du dim">' + esc(durWords(run.durationMs) || '—') + '</span>' +
+      '<span class="cx-c ag dim">' + (run.agents != null ? run.agents : '—') + '</span>' +
+      '<span class="cx-c rt' + (t && !t.saved ? ' claude' : ' dim') + '">' + esc(t ? tok(t.total) : '—') + '</span></div>';
   }
 
   // Una ricerca o un filtro decidono quali righe restano.
@@ -269,21 +327,22 @@
       title = p.join(' · ');
     }
     var fresh = 'controllato alle ' + hm(model.checkedAt);
-    if (model.stale) fresh = "ultima lettura fallita · dati delle " + hm(model.checkedAt);
-    if (ui.offline) fresh = 'hub muto · dati delle ' + hm(model.checkedAt) + ' <button class="cx-btn" data-au-retry="1">Riprova</button>';
+    if (model.stale) fresh = 'ultima lettura fallita, dati delle ' + hm(model.checkedAt);
+    if (ui.offline) fresh = 'hub muto, dati delle ' + hm(model.checkedAt) + ' <button class="cx-btn" data-au-retry="1">Riprova</button>';
     var srcs = (model.footer || {}).sources || [];
     var srcOk = srcs.filter(function (s) { return s.ok; }).length;
+    var line = num(cards.length) + ' automazioni, ' + num(v.runsToday || 0) + ' giri oggi. ' + (srcOk === srcs.length ? 'Tutte le ' + srcs.length + ' fonti rispondono' : srcOk + ' fonti su ' + srcs.length + ' rispondono') + ', ' + fresh + '.';
+    return '<section class="cx-head" data-sec="verdict"><div class="cx-state ' + tone + '"><span class="cx-mk">' + ic('hub') + '</span><div><h2>' + esc(title) + '</h2><p class="cx-line">' + line + '</p></div></div></section>';
+  }
+  // Filtro e ricerca: stanno con la tabella che filtrano, non in cima alla pagina.
+  function toolsHtml(model, ui) {
+    var cards = allCards(model);
     var pb = cards.filter(isProblem).length;
     var seg = [['all', 'Tutte', cards.length], ['pb', 'Problemi', pb], ['ok', 'Ok', cards.length - pb]];
     var f = ui.filter || 'all';
-    return '<section class="cx-head" data-sec="verdict"><div class="cx-state ' + tone + '"><span class="cx-sq" aria-hidden="true"></span><h2>' + esc(title) + '</h2><span class="cx-fresh">' + fresh + '</span></div>' +
-      '<div class="cx-stats"><div><b>' + num(cards.length) + '</b><span>automazioni</span></div>' +
-      '<div><b class="' + (v.needsYou ? 'te' : '') + '">' + (v.needsYou || 0) + '</b><span>ti aspettano</span></div>' +
-      '<div><b class="' + (v.broken ? 'bad' : '') + '">' + (v.broken || 0) + '</b><span>rotte</span></div>' +
-      '<div><b>' + num(v.runsToday || 0) + '</b><span>giri oggi · ' + srcOk + '/' + srcs.length + ' fonti</span></div></div>' +
-      '<div class="cx-tools"><div class="cx-seg" role="group" aria-label="Filtro">' + seg.map(function (s) {
-        return '<button data-au-filter="' + s[0] + '" aria-pressed="' + (f === s[0]) + '">' + s[1] + '<b>' + s[2] + '</b></button>';
-      }).join('') + '</div><label class="cx-q"><span class="sr">Cerca</span><input type="search" data-au-q placeholder="Cerca per nome, scopo, chi la esegue" value="' + esc(ui.q || '') + '" autocomplete="off"><kbd aria-hidden="true">/</kbd></label></div></section>';
+    return '<div class="cx-tools"><div class="cx-seg" role="group" aria-label="Filtro">' + seg.map(function (s) {
+      return '<button data-au-filter="' + s[0] + '" aria-pressed="' + (f === s[0]) + '">' + s[1] + '<b>' + s[2] + '</b></button>';
+    }).join('') + '</div><label class="cx-q">' + ic('search', 'cx-qi') + '<span class="sr">Cerca</span><input type="search" data-au-q placeholder="Cerca per nome, scopo, chi la esegue" value="' + esc(ui.q || '') + '" autocomplete="off"><kbd aria-hidden="true">/</kbd></label></div>';
   }
 
   function sinceHtml(model, ui) {
@@ -298,45 +357,51 @@
     return '<section class="cx-since" data-sec="since"><b>Da ieri: ' + esc(p.join(', ')) + '</b> <span>' + titles.map(esc).join(' · ') + '</span></section>';
   }
 
+  // Le automazioni: tutto ciò che parte da solo (orario, evento), raggruppato per scopo. Le rotte restano nel loro
+  // gruppo col segno rosso: la card in «Da fare» dice cosa fare, la riga dice dove sta.
   function tableHtml(model, ui, now) {
     var cards = allCards(model).filter(function (c) { return matches(c, ui); });
     var searching = !!(ui.q || '').trim() || (ui.filter && ui.filter !== 'all');
-    var h = '<div class="cx-row cx-hdr" aria-hidden="true"><span></span><span>Nome</span><span class="cx-strip">ultime 24 h</span><span class="cx-c">Ultimo</span><span class="cx-c nx">Prossimo</span><span class="cx-c rt">Oggi</span></div>';
+    var h = '<div class="cx-row cx-hdr" aria-hidden="true"><span></span><span>Nome</span><span class="cx-strip">ultime 24 ore</span><span class="cx-c">Ultimo</span><span class="cx-c nx">Prossimo</span><span class="cx-c rt">Oggi</span></div>';
     var shown = 0;
-    var pbs = cards.filter(isProblem);
-    if (pbs.length) {
-      h += '<div class="cx-gh att">Richiede attenzione<span class="cx-cnt">' + pbs.length + '</span></div>';
-      for (const c of pbs) h += rowHtml(c, ui, now);
-      shown += pbs.length;
-    }
     var areas = (model.areas && model.areas.length ? model.areas : AREAS);
     for (const a of areas) {
       var all = allCards(model).filter(function (c) { return areaOf(c) === a.id; });
-      var rest = cards.filter(function (c) { return !isProblem(c) && areaOf(c) === a.id; });
+      var rest = cards.filter(function (c) { return areaOf(c) === a.id; })
+        .sort(function (x, y) { return (isProblem(y) ? 1 : 0) - (isProblem(x) ? 1 : 0); });
       if (!rest.length) continue;
       var te = all.filter(function (c) { return c.level === 'te'; }).length;
       var ro = all.filter(function (c) { return c.level === 'rotto'; }).length;
-      h += '<div class="cx-gh">' + esc(a.title) + '<span class="cx-cnt"><span>' + (all.length - te - ro) + ' ok</span>' +
-        (te ? '<span class="te">' + te + ' ▲</span>' : '') + (ro ? '<span class="bad">' + ro + ' ✕</span>' : '') + '</span></div>';
+      h += '<div class="cx-gh"><span class="cx-ghi">' + ic(a.icon || areaIcon(a.id)) + '</span><span>' + esc(a.title) + '</span><span class="cx-cnt"><span>' + (all.length - te - ro) + ' ok</span>' +
+        (te ? '<span class="te">' + te + ' ti ' + (te === 1 ? 'aspetta' : 'aspettano') + '</span>' : '') + (ro ? '<span class="bad">' + ro + (ro === 1 ? ' rotta' : ' rotte') + '</span>' : '') + '</span></div>';
       for (const c of rest) h += rowHtml(c, ui, now);
       shown += rest.length;
     }
-    var ws = ((model.workflows || {}).byName || []).filter(function (w) {
-      var q = (ui.q || '').trim().toLowerCase();
-      if (ui.filter === 'pb') return w.runs && w.runs[0] && w.runs[0].outcome === 'error';
-      return !q || (wfTitle(w.name) + ' ' + ((w.runs[0] || {}).summary || '')).toLowerCase().indexOf(q) !== -1;
-    });
-    if (ws.length) {
-      var wf = model.workflows || {};
-      h += '<div class="cx-gh">Workflow · ' + wf.days + ' giorni<span class="cx-cnt"><span>' + wf.total + ' giri</span>' +
-        (wf.failed ? '<span class="bad">' + wf.failed + ' ✕</span>' : '') + '</span></div>';
-      for (const w of ws) h += wfRowHtml(w, ui, now);
-    }
-    if (!shown && searching && !ws.length) {
-      h += '<div class="cx-empty"><b>Niente da mostrare</b>' + ((ui.q || '').trim() ? 'Nessuna automazione contiene «' + esc(ui.q.trim()) + '».' : 'Nessuna voce con questo filtro.') + ' <button class="b" data-au-clear="1">Togli il filtro</button></div>';
+    if (!shown && searching) {
+      h += '<div class="cx-empty"><b>Niente da mostrare</b>' + ((ui.q || '').trim() ? 'Nessuna automazione contiene «' + esc(ui.q.trim()) + '».' : 'Nessuna voce con questo filtro.') + ' <button class="cx-btn" data-au-clear="1">Togli il filtro</button></div>';
     }
     if (!allCards(model).length) h += '<div class="cx-empty"><b>Nessuna automazione letta</b>Le fonti non hanno ancora risposto.</div>';
-    return '<section class="cx-tbl" data-sec="table">' + h + '</section>';
+    return '<section class="cx-sec" data-sec="auto"><div class="cx-sh"><h2>Automazioni</h2><span class="cx-shn">' + allCards(model).length + '</span>' +
+      '<p class="cx-shd">Partono da sole, a orario o a evento.</p></div>' + toolsHtml(model, ui) +
+      '<div class="cx-tbl" data-sec="table">' + h + '</div></section>';
+  }
+
+  // I lavori lanciati a mano da una sessione (workflow di Claude Code): una volta sola, niente orario.
+  function jobsHtml(model, ui, now) {
+    var wf = model.workflows || {};
+    var q = (ui.q || '').trim().toLowerCase();
+    var ws = (wf.byName || []).filter(function (w) {
+      if (ui.filter === 'pb') return w.runs && w.runs[0] && w.runs[0].outcome === 'error';
+      if (ui.filter === 'ok') return !(w.runs && w.runs[0] && w.runs[0].outcome === 'error');
+      return !q || (wfTitle(w.name) + ' ' + ((w.runs[0] || {}).summary || '')).toLowerCase().indexOf(q) !== -1;
+    });
+    if (!ws.length) return '';
+    var h = '<div class="cx-row wr cx-hdr" aria-hidden="true"><span></span><span>Lavoro</span><span class="cx-c">Quando</span><span class="cx-c du">Durata</span><span class="cx-c ag">Agenti</span><span class="cx-c rt">Token</span></div>';
+    for (const w of ws) h += wfRowHtml(w, ui, now);
+    return '<section class="cx-sec" data-sec="jobs"><div class="cx-sh"><h2>Lavori lanciati dalle sessioni</h2><span class="cx-shn">' + ws.length + '</span>' +
+      '<p class="cx-shd">Workflow a più agenti partiti a mano da una sessione di Claude Code, negli ultimi ' + (wf.days || 7) + ' giorni: ' + (wf.total || 0) + (wf.total === 1 ? ' giro' : ' giri') +
+      (wf.failed ? ', ' + wf.failed + (wf.failed === 1 ? ' fallito' : ' falliti') : '') + '. Non hanno un orario e non ripartono.</p></div>' +
+      '<div class="cx-tbl">' + h + '</div></section>';
   }
 
   var VOTE_WORD = { ok: 'va bene', cambia: 'da cambiare' };
@@ -372,8 +437,67 @@
       (cmd ? '<pre>' + esc(cmd) + '</pre>' : '') + (t.url ? '<a href="' + esc(t.url) + '">Apri in OpenClaw</a>' : '') + '</details>';
   }
 
+  // ---- Chi risponde: il nodo modello raccontato in parole ----
+  // «muse-spark-1.3» → «Muse Spark 1.3», «claude-sonnet-5-5» → «Sonnet 5.5», «gpt-5.6-sol» → «GPT-5.6 Sol».
+  function prettyModel(name, model) {
+    var m = String(model || '').replace(/^[a-z-]+\//, '');
+    var p = m.replace(/^claude-/, '').replace(/-(\d+)-(\d+)$/, ' $1.$2').replace(/^gpt-/, 'GPT-')
+      .split('-').map(function (w, i) { return i === 0 && /^GPT/.test(w) ? w : w.charAt(0).toUpperCase() + w.slice(1); }).join(' ')
+      .replace(/^GPT (\d)/, 'GPT-$1');
+    if (!p) return name || 'modello';
+    if (!name || p.toLowerCase().indexOf(String(name).toLowerCase()) === 0) return p;
+    return name + ' ' + p;
+  }
+  // L'account conta solo quando la fila ripete lo stesso modello su account diversi.
+  function accountWord(o, opts) {
+    if (!o.account) return '';
+    var same = opts.filter(function (x) { return x.model === o.model; }).length > 1;
+    if (!same) return '';
+    var a = String(o.account).replace(/^anthropic-?/, '');
+    return a ? ' sull\'account ' + a : ' sull\'account principale';
+  }
+  var DID = { ok: 'ha risposto', error: 'è fallito', skipped: 'è stato saltato', unused: 'non è servito' };
+  function modelStory(n) {
+    var opts = n.options || [];
+    var nm = function (o) { return prettyModel(o.name, o.model) + accountWord(o, opts); };
+    var won = -1;
+    for (var i = 0; i < opts.length; i++) if (opts[i].outcome === 'ok') { won = i; break; }
+    var unknownWho = !!(n.note && /non registra/.test(n.note));
+    var head, why = '', next = '';
+    if (won === -1) {
+      var tried = opts.filter(function (o) { return o.outcome === 'error' || o.outcome === 'skipped'; });
+      head = tried.length ? 'Nessun modello ha risposto.' : opts.length ? 'Il giro non dice quale modello ha lavorato.' : 'Nessun modello registrato.';
+      if (tried.length) why = tried.map(function (o) { return nm(o) + ' ' + DID[o.outcome] + (o.note ? ' (' + o.note + ')' : ''); }).join(', ') + '.';
+    } else if (unknownWho) {
+      head = 'Ha risposto quasi certamente ' + nm(opts[won]) + '.';
+      why = 'Il giro è riuscito e OpenClaw prova sempre per primo il primo della fila, ma non registra chi ha risposto davvero.';
+    } else {
+      head = 'Ha risposto ' + nm(opts[won]) + (opts[won].ms != null ? ', in ' + durWords(opts[won].ms) : '') + '.';
+      var before = opts.slice(0, won);
+      why = won === 0 ? (opts.length > 1 ? 'È il primo della fila e ha funzionato, quindi gli altri non sono serviti.' : 'È l\'unico modello previsto.')
+        : 'Prima ' + before.map(function (o) { return nm(o) + ' ' + (DID[o.outcome] || 'non ha risposto') + (o.note ? ' (' + o.note + ')' : ''); }).join(', poi ') + '.';
+    }
+    var w = won === -1 ? 0 : won;
+    var after = opts.slice(w + 1);
+    if (won !== -1) next = after.length ? 'Se ' + nm(opts[w]) + ' non avesse risposto, il lavoro sarebbe passato a ' + after.map(nm).join(', poi a ') + '.'
+      : opts.length > 1 ? 'Era l\'ultimo della fila: se falliva anche lui, falliva il giro.' : 'Non c\'è un ripiego: se fallisce, fallisce il giro.';
+    return { head: head, why: why, next: next };
+  }
+  var QWORD = { ok: 'ha risposto', error: 'fallito', skipped: 'saltato', unused: 'non serviva' };
+  function modelBody(n) {
+    var opts = n.options || [];
+    var s = modelStory(n);
+    var unknownWho = !!(n.note && /non registra/.test(n.note));
+    return '<div class="gstory"><p class="gwhy">' + esc(s.why) + '</p>' + (s.next ? '<p class="gnext">' + esc(s.next) + '</p>' : '') + '</div>' +
+      (opts.length > 1 ? '<ol class="gqueue" aria-label="Fila dei modelli">' + opts.map(function (o) {
+        var st = unknownWho && o.outcome === 'ok' ? 'probabile' : (QWORD[o.outcome] || (unknownWho ? 'non registrato' : 'non provato'));
+        return '<li class="' + esc(o.outcome || 'none') + (o.exec ? ' x-' + esc(o.exec) : '') + '"><span class="gqn">' + esc(prettyModel(o.name, o.model) + accountWord(o, opts)) + '</span>' +
+          '<span class="gqs">' + esc(st) + (o.ms != null ? ', ' + esc(durWords(o.ms)) : '') + (o.tokens != null ? ', ' + esc(tok(o.tokens)) + ' token' : '') + '</span></li>';
+      }).join('') + '</ol>' : '');
+  }
+
   // ---- Schema a passi (grafo) di una voce, ricavato dall'hub da definizione, script e log ----
-  var KIND = { trigger: 'Quando', sources: 'Fonti', step: 'Passo', model: 'Modello', deliver: 'Canale' };
+  var KIND = { trigger: 'Quando', sources: 'Legge', step: 'Passo', model: 'Risponde', deliver: 'Consegna' };
   var GOUT = { ok: 'ok', error: 'fallito', skipped: 'saltato', unused: 'non usato' };
   function gStatus(o, inferred, ms) {
     var w = o == null ? '—' : GOUT[o] || o;
@@ -385,28 +509,22 @@
     if (n.kind === 'sources') {
       body = '<div class="gsrc">' + (n.items || []).map(function (x) { return '<span title="' + esc(x.detail || '') + '">' + esc(x.label) + '</span>'; }).join('') + '</div>';
     } else if (n.kind === 'model') {
-      var opts = n.options || [];
-      body = '<div class="gopts">' + opts.map(function (o, i) {
-        return (i ? '<span class="garr" aria-label="se fallisce">se fallisce →</span>' : '') +
-          '<div class="gopt ' + (o.outcome || 'none') + (o.exec ? ' x-' + o.exec : '') + '"><b>' + esc(o.name || '—') + '</b><span class="gm">' + esc(o.model || '') + '</span>' +
-          '<span class="grow">' + gStatus(o.outcome, false, o.ms) + '<span class="gt">' + (o.tokens != null ? esc(tok(o.tokens)) + ' tok' : 'token —') + '</span></span>' +
-          (o.note ? '<span class="gnote">' + esc(o.note) + '</span>' : '') + '</div>';
-      }).join('') + '</div>' + (n.note ? '<div class="gnote">' + esc(n.note) + '</div>' : '');
+      body = modelBody(n);
     }
-    var head = '<span class="gk">' + esc(KIND[n.kind] || n.kind) + '</span><span class="gl">' + esc(n.label) + '</span>' +
-      (n.kind === 'model' ? (n.ms != null ? '<span class="gt">' + esc(durWords(n.ms)) + '</span>' : '')
-        : n.kind === 'deliver' ? gStatus(n.outcome, false, null) + (n.at ? '<span class="gt">alle ' + esc(hm(n.at)) + '</span>' : '')
-        : n.kind !== 'sources' && n.kind !== 'trigger' ? gStatus(n.outcome, n.inferred, n.ms) + '<span class="gt">' + (n.ms != null ? '' : 'tempo —') + '</span>' : '');
+    var label = n.kind === 'model' ? modelStory(n).head : n.label;
+    var head = '<span class="gk">' + esc(KIND[n.kind] || n.kind) + '</span><span class="gl">' + esc(label) + '</span>' +
+      (n.kind === 'model' ? ''
+        : n.kind === 'deliver' ? '<span class="gmeta">' + gStatus(n.outcome, false, null) + (n.at ? '<span class="gt">alle ' + esc(hm(n.at)) + '</span>' : '') + '</span>'
+        : n.kind !== 'sources' && n.kind !== 'trigger' ? '<span class="gmeta">' + gStatus(n.outcome, n.inferred, n.ms) + '</span>' : '');
     var io = n.io || {};
-    var more = (n.detail ? '<div class="gd">' + esc(n.detail) + '</div>' : '') +
-      (io.in ? '<div class="gio"><span>Ingresso</span><pre tabindex="0">' + esc(io.in) + '</pre></div>' : '') +
-      (io.out ? '<div class="gio"><span>Uscita <i>' + esc(io.outFrom || '') + '</i></span><pre tabindex="0">' + esc(io.out) + '</pre></div>'
-        : n.kind === 'model' ? '<div class="gio"><span>Uscita</span><p>non registrata per questo giro</p></div>' : '') +
-      (n.error ? '<div class="gio bad"><span>Errore</span><pre tabindex="0">' + esc(n.error) + '</pre></div>' : '') +
-      (n.kind === 'step' && !n.detail ? '' : n.kind === 'step' ? '<div class="gio"><span>Testo</span><p>il log dello script non registra ingresso e uscita di questo passo</p></div>' : '');
-    return '<li class="gn ' + esc(n.kind) + '">' + (more
-      ? '<details><summary class="gh2">' + head + '</summary>' + more + '</details>'
-      : '<div class="gh2">' + head + '</div>') + body + '</li>';
+    // Il dettaglio tecnico è una riga: sempre visibile. Si apre solo ciò che è lungo (domanda, risposta, errore).
+    var more = (io.in ? '<div class="gio"><span>Cosa gli è stato chiesto</span><pre tabindex="0">' + esc(io.in) + '</pre></div>' : '') +
+      (io.out ? '<div class="gio"><span>Cosa ha risposto <i>' + esc(io.outFrom || '') + '</i></span><pre tabindex="0">' + esc(io.out) + '</pre></div>'
+        : n.kind === 'model' ? '<div class="gio"><span>Cosa ha risposto</span><p>Il testo di questo giro non è stato registrato.</p></div>' : '') +
+      (n.error ? '<div class="gio bad"><span>Errore</span><pre tabindex="0">' + esc(n.error) + '</pre></div>' : '');
+    var openLbl = n.kind === 'model' ? 'Mostra domanda e risposta' : 'Mostra l\'errore';
+    return '<li class="gn ' + esc(n.kind) + '"><div class="gh2">' + head + '</div>' + (n.detail && n.kind !== 'sources' ? '<div class="gd">' + esc(n.detail) + '</div>' : '') + body + (more
+      ? '<details class="gmore"><summary>' + ic('chevron-right', 'gchev') + openLbl + '</summary>' + more + '</details>' : '') + '</li>';
   }
   function graphHtml(g, now) {
     if (g === 'loading') return '<div class="cx-graph"><div class="cx-h4">Schema</div><div class="au-skl" style="height:120px;border-radius:8px"></div></div>';
@@ -417,6 +535,7 @@
     if (r.outcome) bits.push(outcomeWord(r.outcome));
     return '<div class="cx-graph"><div class="cx-h4">Schema <span>' + esc(bits.join(' · ')) + '</span></div>' +
       '<ol class="gflow">' + g.nodes.map(gNode).join('') + '</ol>' +
+      (g.nodes.some(function (n) { return n.kind === 'step' && n.inferred; }) ? '<p class="gfrom">Dei passi dello script il log non registra testo né tempi: il loro «ok» viene dall\'esito del giro.</p>' : '') +
       '<div class="gfrom">ricavato da ' + (g.from || []).map(esc).join(' · ') + '</div></div>';
   }
 
@@ -424,7 +543,7 @@
   // Barra in cima al pannello, come in A: stato, sistema, chiudi.
   function panelHead(chipCls, chip, sys) {
     return '<div class="cx-ph"><span class="cx-chip ' + chipCls + '">' + esc(chip) + '</span><span class="cx-sys">' + esc(sys) + '</span>' +
-      '<button class="cx-x" data-cx-close="1" aria-label="Chiudi">✕</button></div>';
+      '<button class="cx-x" data-cx-close="1" aria-label="Chiudi">' + ic('x') + '</button></div>';
   }
 
   // La card del pannello: qui stanno i pulsanti di feedback (automations.js li gestisce su article.au-card).
@@ -531,7 +650,7 @@
     var r = '';
     for (var i = 0; i < 8; i++) r += '<div class="cx-row cx-hdr"><span class="au-skl" style="width:10px;height:10px"></span><span class="au-skl" style="width:' + (35 + (i * 13) % 40) + '%"></span><span class="au-skl cx-strip"></span><span class="au-skl"></span><span class="au-skl nx"></span><span class="au-skl rt"></span></div>';
     return '<div role="status"><span class="sr">Carico le automazioni…</span><section class="cx-head" data-sec="verdict" aria-busy="true"><div class="au-skl" style="width:220px;height:20px"></div>' +
-      '<div class="au-skl" style="width:160px;height:11px;margin:10px 0 14px"></div><div class="au-skl" style="height:58px;border-radius:10px"></div></section><section class="cx-tbl">' + r + '</section></div>';
+      '<div class="au-skl" style="width:260px;height:11px;margin:10px 0 24px"></div></section><section class="cx-sec"><div class="cx-tbl">' + r + '</div></section></div>';
   }
 
   function errorHtml(msg) {
@@ -542,10 +661,10 @@
   function render(model, ui) {
     ui = ui || {};
     var now = (ui.now != null) ? ui.now : model.checkedAt;
-    return verdictHtml(model, ui) + tableHtml(model, ui, now) + footerHtml(model) + panelHtml(model, ui, now);
+    return verdictHtml(model, ui) + todoHtml(model, now) + tableHtml(model, ui, now) + jobsHtml(model, ui, now) + footerHtml(model) + panelHtml(model, ui, now);
   }
 
-  var api = { render: render, skeleton: skeleton, errorHtml: errorHtml, lastWords: lastWords, deliveredWords: deliveredWords, esc: esc, card: card, graphHtml: graphHtml, stripHtml: stripHtml, areaOf: areaOf, runTokens: runTokens, flowHtml: flowHtml };
+  var api = { modelStory: modelStory, prettyModel: prettyModel, todoHtml: todoHtml, render: render, skeleton: skeleton, errorHtml: errorHtml, lastWords: lastWords, deliveredWords: deliveredWords, esc: esc, card: card, graphHtml: graphHtml, stripHtml: stripHtml, areaOf: areaOf, runTokens: runTokens, flowHtml: flowHtml };
   // Sempre sul globale: così il test con createRequire trova tutto anche se `module.exports` non esce.
   root.AutomationsView = api;
   if (typeof module !== 'undefined' && module.exports) module.exports = api;

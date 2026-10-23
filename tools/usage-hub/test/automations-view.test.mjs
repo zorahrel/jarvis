@@ -69,7 +69,7 @@ test('(b) a sistema sano nessuna card aperta: il pannello si apre solo scegliend
 test('(c) le sezioni sono sempre nello stesso ordine', () => {
   const order = (h) => secs(h).filter((s) => s !== 'since' && s !== 'review');
   assert.deepEqual(order(htmlOk), order(htmlPb));
-  assert.deepEqual(order(htmlOk), ['verdict', 'table', 'footer']);
+  assert.deepEqual(order(htmlOk), ['verdict', 'todo', 'auto', 'table', 'jobs', 'footer']);
 });
 
 test('(d) consegna mancata e prova esterna sono in parole', () => {
@@ -106,7 +106,7 @@ test('(f) il verdetto conta chi ti aspetta', () => {
 test('(g) gruppi per scopo, il sistema solo nel pannello', () => {
   const table = htmlPb.slice(htmlPb.indexOf('data-sec="table"'), htmlPb.indexOf('data-sec="footer"'));
   assert.doesNotMatch(visible(table), /OpenClaw|\bMac\b|launchd/);
-  assert.match(table, /<div class="cx-gh">(Posta e avvisi|Backup e sicurezza)/);
+  assert.match(table, /<div class="cx-gh"><span class="cx-ghi">[^<]*<\/span><span>(Posta e avvisi|Backup e sicurezza)</);
   // Senza purpose l'area è stimata e lo dice.
   const c = structuredClone(pb.broken[0]);
   c.purpose = null;
@@ -142,4 +142,41 @@ test('(i) striscia delle 24 ore: un segno per quarto d\'ora, esito peggiore, ora
   assert.match(h, /class="s-next"/);
   assert.match(h, /3 giri nelle ultime 22 ore, 1 fallito/);
   assert.match(V.stripHtml([], null, now), /nessun giro/);
+});
+
+test('(j) Da fare: solo chi aspetta o è rotto, come card con la mossa da fare; a sistema sano una riga calma', () => {
+  const h = V.todoHtml(pb, pb.checkedAt);
+  const n = [...pb.needsYou, ...pb.broken].filter((c) => c.level !== 'nascosto').length;
+  assert.equal((h.match(/<article class="td /g) || []).length, n);
+  assert.equal((h.match(/class="td-do"/g) || []).length, n);
+  // Chi aspetta un ok sul passo dice quale passo.
+  assert.match(h, /Dai l'ok al passo «approva-invio»/);
+  // La card apre il pannello: stesso data-cx della riga.
+  assert.match(h, /<button class="cx-btn" data-cx="/);
+  assert.match(V.todoHtml(ok, ok.checkedAt), /Niente da fare/);
+});
+
+test('(k) chi risponde: il nodo modello in parole, con il perché e il ripiego', () => {
+  const s1 = V.modelStory({ options: [{ name: 'Muse', model: 'muse-spark-1.3', outcome: 'ok', ms: 337691 }, { name: 'Claude', model: 'sonnet', outcome: 'unused' }, { name: 'Codex', model: 'gpt-5.6-sol', outcome: 'unused' }] });
+  assert.equal(s1.head, 'Ha risposto Muse Spark 1.3, in 6 min.');
+  assert.match(s1.why, /primo della fila/);
+  assert.equal(s1.next, 'Se Muse Spark 1.3 non avesse risposto, il lavoro sarebbe passato a Claude Sonnet, poi a Codex GPT-5.6 Sol.');
+  const s2 = V.modelStory({ options: [{ name: 'Muse', model: 'muse-spark-1.3', outcome: 'error', note: 'uscito con errore 1' }, { name: 'Claude', model: 'sonnet', outcome: 'skipped', note: 'quota finita' }, { name: 'Codex', model: 'gpt-5.6-sol', outcome: 'ok', ms: 67000 }] });
+  assert.equal(s2.head, 'Ha risposto Codex GPT-5.6 Sol, in 1 min.');
+  assert.equal(s2.why, 'Prima Muse Spark 1.3 è fallito (uscito con errore 1), poi Claude Sonnet è stato saltato (quota finita).');
+  assert.match(s2.next, /ultimo della fila/);
+  // OpenClaw non registra chi ha risposto: lo dice, non lo inventa.
+  const s3 = V.modelStory({ note: 'OpenClaw non registra quale ha risposto', options: [{ name: 'Claude', model: 'claude-sonnet-5-5', account: 'anthropic', outcome: 'ok' }, { name: 'Claude', model: 'claude-sonnet-5-5', account: 'anthropic-zorahrel' }] });
+  assert.match(s3.head, /^Ha risposto quasi certamente Claude Sonnet 5\.5 sull'account principale/);
+  assert.match(s3.why, /non registra/);
+  assert.match(s3.next, /sull'account zorahrel/);
+  assert.equal(V.modelStory({ options: [{ name: 'Muse', model: 'muse-spark-1.3', outcome: 'error' }] }).head, 'Nessun modello ha risposto.');
+});
+
+test('(l) icone da un solo set: niente emoji né simboli disegnati a mano nella scheda', () => {
+  require('../public/icons.js');
+  const html = render(pb, { now: pb.checkedAt, sel: pb.broken[0].key });
+  assert.match(html, /<svg class="ic/);
+  assert.doesNotMatch(html.replace(/<pre[\s\S]*?<\/pre>/g, ''), /[▲✕✓⚠\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}]/u);
+  delete globalThis.Icons;
 });

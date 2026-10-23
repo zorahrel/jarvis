@@ -35,13 +35,14 @@ function homeBins() {
   return binCache;
 }
 
-// Il commento sopra un comando dice a cosa serve: prima frase, corta.
+// Il commento sopra un comando dice a cosa serve: la prima frase.
 function commentAbove(lines, i) {
   for (let k = i - 1; k >= 0 && k >= i - 3; k--) {
     const t = lines[k].trim();
     if (!t.startsWith('#')) { if (t) break; continue; }
     const s = t.replace(/^#+\s*/, '').split(/[;(.]|—| - /)[0].trim();
-    if (s && !/^!/.test(s)) return s.length > 60 ? s.slice(0, 58) + '…' : s;
+    // Intero: la vista va a capo, un commento troncato non si legge più.
+    if (s && !/^!/.test(s)) return s;
   }
   const v = /^(\w+)=\$\(/.exec(lines[i].trim());
   return v ? v[1] : null;
