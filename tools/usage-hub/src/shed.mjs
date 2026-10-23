@@ -119,16 +119,34 @@ const hhmm = (ms) => new Date(ms).toLocaleTimeString('it-IT', { hour: '2-digit',
 const gb = (mb) => `${(mb / 1024).toFixed(1).replace('.', ',')} GB`;
 const MIN = 60000, HOUR = 60 * MIN, DAY = 24 * HOUR;
 const span = (ms) => (ms >= 2 * DAY ? `${Math.round(ms / DAY)} giorni` : ms >= 2 * HOUR ? `${Math.round(ms / HOUR)} h` : `${Math.max(1, Math.round(ms / MIN))} min`);
-export const DIGEST = { quietMs: 10 * MIN, minStrainMs: 10 * MIN, sampleMs: 2 * MIN, calmSampleMs: 10 * MIN, gatewayMaxMB: 4096, gatewayAfterMs: 5 * MIN, restartEveryMs: 6 * HOUR, adviceMinMB: 2048, adviceEveryMs: DAY, growMB: 1024 };
-// Cosa può fare lui, per tipo di processo; il gateway OpenClaw non è qui perché lo riavvio io.
-const ADVICE = { tsserver: 'riavvia quella sessione, se non ti serve più', mcp: 'va riavviato dal gateway MCP (chiedimelo)', app: 'chiudila se non ti serve', sessione: 'chiudi la sessione se non ti serve', altro: 'chiudilo se non ti serve' };
+export const DIGEST = { quietMs: 10 * MIN, minStrainMs: 10 * MIN, sampleMs: 2 * MIN, calmSampleMs: 10 * MIN, gatewayMaxMB: 4096, gatewayAfterMs: 5 * MIN, restartEveryMs: 6 * HOUR, adviceMinMB: 2048, adviceEveryMs: DAY, growMB: 1024, mcpMaxMB: 1536, mcpEveryMs: HOUR };
+// Cosa può fare lui, per tipo di processo; il gateway OpenClaw e i server MCP non sono qui perché li riavvio io.
+// Un server TypeScript sta dentro una sessione Claude: si nomina, non si tocca.
+const ADVICE = { tsserver: 'riavvia quella sessione, se non ti serve più', app: 'chiudila se non ti serve', sessione: 'chiudi la sessione se non ti serve', altro: 'chiudilo se non ti serve' };
 
-export function createShedDigest({ send = () => {}, log = () => {}, hogs = async () => [], offloads = async () => [], restartGateway = null, now = Date.now, limits = DIGEST } = {}) {
+// mcpChildren: async () => [{ name, pid, inFlight, memMB }] dei server figli del gateway MCP; remountMcp(name) li rimonta.
+export function createShedDigest({ send = () => {}, log = () => {}, hogs = async () => [], offloads = async () => [], restartGateway = null, mcpChildren = async () => [], remountMcp = null, now = Date.now, limits = DIGEST } = {}) {
   let ep = null;
   let lastRestartAt = -Infinity, lastCalmSample = -Infinity;
   const advised = new Map(); // nome → quando gliel'ho detto: lo stesso consiglio una volta al giorno
   const seen = new Map();    // nome → campioni {at, memMB} delle ultime 24 h: dicono se un processo è cresciuto
   const recent = [];
+  const lastRemount = new Map();
+  // Server MCP oltre 1,5 GB (sani stanno sotto 0,2): rimontati dal gateway, mai con una chiamata in corso, al più uno all'ora
+  // ciascuno. Il 24/10 wigolo era a 5,9 GB dopo 15 giorni; rimontato, 0,2 GB.
+  const checkMcp = async (at) => {
+    if (!remountMcp) return;
+    for (const c of await mcpChildren().catch(() => [])) {
+      if (!(c.memMB >= limits.mcpMaxMB) || at - (lastRemount.get(c.name) ?? -Infinity) < limits.mcpEveryMs) continue;
+      if (c.inFlight) { log(`MCP ${c.name} a ${gb(c.memMB)}: chiamata in corso, lo rimonto al prossimo giro`); continue; }
+      lastRemount.set(c.name, at);
+      const ok = await Promise.resolve(remountMcp(c.name)).then(() => true, () => false);
+      const after = ok ? (await mcpChildren().catch(() => [])).find((x) => x.name === c.name)?.memMB : null;
+      const text = !ok ? `${c.name}: il rimontaggio non è riuscito, guardalo tu` : after ? `riavviato ${c.name} (${gb(c.memMB)} → ${gb(after)})` : `riavviato ${c.name} (era ${gb(c.memMB)})`;
+      if (ep) ep.actions.push({ name: `MCP ${c.name}`, kind: 'mcp', text });
+      log(`MCP ${c.name}: ${text}`);
+    }
+  };
   const open = (at) => (ep = ep || { from: at, to: at, pauses: 0, agents: new Set(), open: 0, peak: new Map(), actions: [], causes: new Set(), lastSample: -Infinity });
   const remember = (hs, at) => {
     for (const h of hs) { const l = seen.get(h.name) || []; l.push({ at, memMB: h.memMB }); seen.set(h.name, l.filter((x) => at - x.at < DAY)); }
@@ -149,7 +167,7 @@ export function createShedDigest({ send = () => {}, log = () => {}, hogs = async
     // A Mac tranquillo un campione ogni 10 minuti, perché «cresciuto da 1,5 GB in 5 h» ha bisogno del prima.
     async tick(st, at = now()) {
       if (!st || !st.strained) {
-        if (at - lastCalmSample >= limits.calmSampleMs) { lastCalmSample = at; remember(await hogs().catch(() => []), at); }
+        if (at - lastCalmSample >= limits.calmSampleMs) { lastCalmSample = at; remember(await hogs().catch(() => []), at); await checkMcp(at); }
         return;
       }
       const e = open(at); e.to = at;
@@ -160,6 +178,7 @@ export function createShedDigest({ send = () => {}, log = () => {}, hogs = async
       const hs = await hogs().catch(() => []);
       for (const h of hs) if (!(e.peak.get(h.name)?.memMB >= h.memMB)) e.peak.set(h.name, { ...h, why: why(h, at) });
       remember(hs, at);
+      await checkMcp(at); // dopo il picco: la prima riga deve ancora dire chi pesava prima del rimontaggio
       const gw = hs.find((h) => h.kind === 'gateway');
       if (gw && gw.memMB >= limits.gatewayMaxMB && at - e.from >= limits.gatewayAfterMs && at - lastRestartAt >= limits.restartEveryMs && restartGateway) {
         lastRestartAt = at;

@@ -186,23 +186,43 @@ async function episode(d, { minutes, hogs = null, pauses = [] }) {
   return d.flush(T0 + (minutes + 11) * 60000);
 }
 
-test('episodio vero del 23/10: dice chi pesava e cosa fare, una riga, niente id', async () => {
+test('episodio vero del 23/10: in cima chi bloccava e perché, poi cosa ho fatto; il server TypeScript si nomina e basta', async () => {
   const sent = [], logs = [];
+  let wigolo = 5883; const remounts = [];
   const d = createShedDigest({ send: (x) => sent.push(x), log: (x) => logs.push(x), restartGateway: () => { throw new Error('non va riavviato'); },
+    mcpChildren: async () => [{ name: 'wigolo', pid: 9, inFlight: 0, memMB: wigolo }, { name: 'topics-board', pid: 8, inFlight: 0, memMB: 41 }],
+    remountMcp: async (n) => { remounts.push(n); wigolo = 184; },
     hogs: async () => [
-      { name: 'MCP wigolo', kind: 'mcp', memMB: 5883, cpu: 0, ageS: 15 * 86400 },
+      { name: 'MCP wigolo', kind: 'mcp', memMB: wigolo, cpu: 0, ageS: 15 * 86400 },
       { name: 'server TypeScript di armonia-site', kind: 'tsserver', memMB: 3037, cpu: 0, owner: 'di una sessione Claude aperta da 5 giorni' },
       { name: 'gateway OpenClaw', kind: 'gateway', memMB: 2929 },
       { name: 'Beeper Desktop', kind: 'app', memMB: 1500 },
     ] });
   const r = await episode(d, { minutes: 28 });
+  assert.deepEqual(remounts, ['wigolo'], 'rimontato solo il server oltre soglia, una volta');
   assert.equal(r.push, true);
-  assert.equal(r.text, '🔴 Mac bloccato 23:32–00:00 da MCP wigolo 5,7 GB (acceso da 15 giorni), poi server TypeScript di armonia-site 3,0 GB (di una sessione Claude aperta da 5 giorni).\n→ va riavviato dal gateway MCP (chiedimelo).');
+  assert.equal(r.text, '🔴 Mac bloccato 23:32–00:00 da MCP wigolo 5,7 GB (acceso da 15 giorni), poi server TypeScript di armonia-site 3,0 GB (di una sessione Claude aperta da 5 giorni).\n→ riavviato wigolo (5,7 GB → 0,2 GB).');
   assert.doesNotMatch(r.text, /openclaw-isolated|m-critic|[0-9a-f]{8}/);
-  assert.equal(sent.length, 1);
-  // stesso consiglio il giorno stesso: niente secondo messaggio
-  const again = await (async () => { for (let m = 0; m <= 15; m++) await d.tick(strained, T0 + (60 + m) * 60000); return d.flush(T0 + 90 * 60000); })();
-  assert.equal(again.push, false); assert.equal(sent.length, 1);
+  // dopo: in cima il server TypeScript, nominato e mai toccato; lo stesso consiglio una volta al giorno
+  const ep2 = async (h) => { for (let m = 0; m <= 15; m++) await d.tick(strained, T0 + (h * 60 + m) * 60000); return d.flush(T0 + (h * 60 + 30) * 60000); };
+  const r2 = await ep2(2);
+  assert.match(r2.text, /^🔴 Mac bloccato 01:32–01:47 da server TypeScript di armonia-site 3,0 GB \(di una sessione Claude aperta da 5 giorni\)/);
+  assert.match(r2.text, /→ riavvia quella sessione, se non ti serve più/);
+  assert.equal((await ep2(4)).push, false);
+  assert.equal(sent.length, 2); assert.deepEqual(remounts, ['wigolo']);
+});
+
+test('rimontaggio MCP: sopra 1,5 GB sì, sotto no, mai con una chiamata in corso, al più uno all\'ora', async () => {
+  const run = async (kids, ticks = [0]) => {
+    const remounts = [];
+    const d = createShedDigest({ mcpChildren: async () => kids, remountMcp: async (n) => { remounts.push(n); }, hogs: async () => [] });
+    for (const m of ticks) await d.tick({ strained: false }, T0 + m * 60000);
+    return remounts;
+  };
+  assert.deepEqual(await run([{ name: 'wigolo', pid: 1, inFlight: 0, memMB: 1600 }]), ['wigolo'], 'sopra soglia: rimonta');
+  assert.deepEqual(await run([{ name: 'wigolo', pid: 1, inFlight: 0, memMB: 1400 }]), [], 'sotto soglia: non tocca');
+  assert.deepEqual(await run([{ name: 'wigolo', pid: 1, inFlight: 1, memMB: 6000 }]), [], 'chiamata in corso: aspetta');
+  assert.deepEqual(await run([{ name: 'wigolo', pid: 1, inFlight: 0, memMB: 6000 }], [0, 10, 20, 70]), ['wigolo', 'wigolo'], 'una volta l\'ora');
 });
 
 test('gateway OpenClaw oltre 4 GB per 5 minuti: un riavvio sicuro, poi il messaggio lo dice', async () => {

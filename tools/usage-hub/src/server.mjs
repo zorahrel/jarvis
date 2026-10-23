@@ -133,6 +133,15 @@ export function createServer(config, deps = {}) {
     restartGateway: deps.restartGateway || (async () => { const { spawn } = await import('node:child_process'); const bin = path.join(os.homedir(), 'bin', 'oc-restart'); if (!fs.existsSync(bin)) return false;
       const out = fs.openSync(path.join(os.homedir(), '.claude', 'jarvis', 'state', `oc-restart-hub-${Date.now()}.log`), 'w');
       spawn(bin, [], { detached: true, stdio: ['ignore', out, out] }).unref(); return true; }),
+    // server figli del gateway MCP con la memoria vera del loro albero, e il rimontaggio (mcpgw.mjs)
+    mcpChildren: async () => {
+      const { mcpChildren } = await import('./mcpgw.mjs'), { descendants, footprintMap } = await import('./mac.mjs');
+      const [kids, table] = await Promise.all([mcpChildren(), processTable()]);
+      const trees = kids.map((k) => descendants(table, k.pid).map((r) => r.pid));
+      const fp = await footprintMap(trees.flat());
+      return kids.map((k, i) => ({ ...k, memMB: trees[i].reduce((a, p) => a + (fp.get(p) || 0), 0) }));
+    },
+    remountMcp: async (name) => (await import('./mcpgw.mjs')).remountMcp(name),
   });
   macShed = createShed({ probe: macWatch.probe, log: (l) => console.log('[shed] ' + l), onEvent: (e) => shedDigest.event(e), enabled: Boolean(config.shed && config.shed.enabled === true) });
   // La pausa degli agenti è spenta salvo `shed.enabled: true` (24/10): il 23/10 13 pause su 13 hanno colpito agenti che
