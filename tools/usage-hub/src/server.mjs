@@ -134,7 +134,10 @@ export function createServer(config, deps = {}) {
       const out = fs.openSync(path.join(os.homedir(), '.claude', 'jarvis', 'state', `oc-restart-hub-${Date.now()}.log`), 'w');
       spawn(bin, [], { detached: true, stdio: ['ignore', out, out] }).unref(); return true; }),
   });
-  macShed = createShed({ probe: macWatch.probe, log: (l) => console.log('[shed] ' + l), onEvent: (e) => shedDigest.event(e), enabled: !(config.shed && config.shed.enabled === false) });
+  macShed = createShed({ probe: macWatch.probe, log: (l) => console.log('[shed] ' + l), onEvent: (e) => shedDigest.event(e), enabled: Boolean(config.shed && config.shed.enabled === true) });
+  // La pausa degli agenti è spenta salvo `shed.enabled: true` (24/10): il 23/10 13 pause su 13 hanno colpito agenti che
+  // non pesavano, e chi bloccava (server TypeScript 3 GB, wigolo 5,9 GB, gateway OpenClaw) non è un agente fermabile.
+  // Resta la misura: il riepilogo dice chi blocca e perché.
   if (!deps.noLive && !deps.inProcess) {
     macShed.thawAll('avvio del hub').catch(() => {});
     const shedTick = () => macShed.tick().then((st) => shedDigest.tick(st)).catch(() => {});

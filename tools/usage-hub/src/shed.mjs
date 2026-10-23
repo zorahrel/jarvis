@@ -111,41 +111,60 @@ export function createShed({ probe, signal = (pid, sig) => process.kill(pid, sig
   };
 }
 
-// Un riepilogo per episodio di sforzo, non una riga per pausa (Attilio 19/10: «va capito»). L'episodio va dal primo giro
-// sotto sforzo all'ultimo, e si chiude dopo `quietMs` di Mac tranquillo. Dice chi pesava (il picco misurato durante
-// l'episodio, non chi pesa quando si scrive), cosa ho fatto e se serve qualcosa da lui. Su WhatsApp va solo se ho fatto
-// qualcosa oltre le pause brevi o se c'è da fare per lui: un episodio che si è sistemato da solo resta nel log e in `recent`.
+// Un riepilogo per episodio di sforzo (Attilio 19/10: «va capito»; 24/10: «capire cosa sta bloccando direttamente e perché,
+// e metterlo in cima»). L'episodio va dal primo giro sotto sforzo all'ultimo e si chiude dopo `quietMs` di Mac tranquillo.
+// Prima riga: chi bloccava, misurato al picco dell'episodio (non quando si scrive), e perché pesa. Seconda: cosa ho fatto
+// o cosa serve da lui. Su WhatsApp solo se c'è una delle due; un episodio che si sistema da solo resta nel log e in `recent`.
 const hhmm = (ms) => new Date(ms).toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit', timeZone: 'Europe/Rome' });
 const gb = (mb) => `${(mb / 1024).toFixed(1).replace('.', ',')} GB`;
-const MIN = 60000;
-export const DIGEST = { quietMs: 10 * MIN, minStrainMs: 10 * MIN, sampleMs: 2 * MIN, gatewayMaxMB: 4096, gatewayAfterMs: 5 * MIN, restartEveryMs: 6 * 60 * MIN, adviceMinMB: 2048, adviceEveryMs: 24 * 60 * MIN };
-// Cosa può fare lui, per tipo di processo; il gateway non è qui perché lo riavvio io.
-const ADVICE = { tsserver: 'riavvia la sessione che lo usa, se non ti serve più', app: 'chiudila se non ti serve', sessione: 'chiudi la sessione se non ti serve', altro: 'chiudilo se non ti serve' };
+const MIN = 60000, HOUR = 60 * MIN, DAY = 24 * HOUR;
+const span = (ms) => (ms >= 2 * DAY ? `${Math.round(ms / DAY)} giorni` : ms >= 2 * HOUR ? `${Math.round(ms / HOUR)} h` : `${Math.max(1, Math.round(ms / MIN))} min`);
+export const DIGEST = { quietMs: 10 * MIN, minStrainMs: 10 * MIN, sampleMs: 2 * MIN, calmSampleMs: 10 * MIN, gatewayMaxMB: 4096, gatewayAfterMs: 5 * MIN, restartEveryMs: 6 * HOUR, adviceMinMB: 2048, adviceEveryMs: DAY, growMB: 1024 };
+// Cosa può fare lui, per tipo di processo; il gateway OpenClaw non è qui perché lo riavvio io.
+const ADVICE = { tsserver: 'riavvia quella sessione, se non ti serve più', mcp: 'va riavviato dal gateway MCP (chiedimelo)', app: 'chiudila se non ti serve', sessione: 'chiudi la sessione se non ti serve', altro: 'chiudilo se non ti serve' };
 
 export function createShedDigest({ send = () => {}, log = () => {}, hogs = async () => [], offloads = async () => [], restartGateway = null, now = Date.now, limits = DIGEST } = {}) {
   let ep = null;
-  let lastRestartAt = -Infinity;
+  let lastRestartAt = -Infinity, lastCalmSample = -Infinity;
   const advised = new Map(); // nome → quando gliel'ho detto: lo stesso consiglio una volta al giorno
+  const seen = new Map();    // nome → campioni {at, memMB} delle ultime 24 h: dicono se un processo è cresciuto
   const recent = [];
   const open = (at) => (ep = ep || { from: at, to: at, pauses: 0, agents: new Set(), open: 0, peak: new Map(), actions: [], causes: new Set(), lastSample: -Infinity });
+  const remember = (hs, at) => {
+    for (const h of hs) { const l = seen.get(h.name) || []; l.push({ at, memMB: h.memMB }); seen.set(h.name, l.filter((x) => at - x.at < DAY)); }
+  };
+  // Perché pesa: è cresciuto (≥ 1 GB da almeno mezz'ora), macina CPU, è appeso a una sessione vecchia, o è acceso da giorni.
+  const why = (h, at) => {
+    const first = (seen.get(h.name) || [])[0];
+    if (first && at - first.at >= 30 * MIN && h.memMB - first.memMB >= limits.growMB) return `cresciuto da ${gb(first.memMB)} in ${span(at - first.at)}`;
+    if (h.cpu >= 1) return `CPU al ${Math.round(h.cpu * 100)}%`;
+    if (h.owner) return h.owner;
+    if (h.ageS >= 86400) return `acceso da ${span(h.ageS * 1000)}`;
+    return '';
+  };
 
   return {
     get recent() { return recent; },
     // Ogni giro del freno: tiene aperto l'episodio, misura chi pesa ogni 2 minuti, e se è il gateway oltre 4 GB lo riavvia.
+    // A Mac tranquillo un campione ogni 10 minuti, perché «cresciuto da 1,5 GB in 5 h» ha bisogno del prima.
     async tick(st, at = now()) {
-      if (!st || !st.strained) return;
+      if (!st || !st.strained) {
+        if (at - lastCalmSample >= limits.calmSampleMs) { lastCalmSample = at; remember(await hogs().catch(() => []), at); }
+        return;
+      }
       const e = open(at); e.to = at;
       if (st.byLoad) e.causes.add('processore al limite');
       if (st.byMem) e.causes.add('memoria piena');
       if (at - e.lastSample < limits.sampleMs) return;
       e.lastSample = at;
       const hs = await hogs().catch(() => []);
-      for (const h of hs) if (!(e.peak.get(h.name)?.memMB >= h.memMB)) e.peak.set(h.name, h);
+      for (const h of hs) if (!(e.peak.get(h.name)?.memMB >= h.memMB)) e.peak.set(h.name, { ...h, why: why(h, at) });
+      remember(hs, at);
       const gw = hs.find((h) => h.kind === 'gateway');
       if (gw && gw.memMB >= limits.gatewayMaxMB && at - e.from >= limits.gatewayAfterMs && at - lastRestartAt >= limits.restartEveryMs && restartGateway) {
         lastRestartAt = at;
         const ok = await Promise.resolve(restartGateway()).then((r) => r !== false, () => false);
-        e.actions.push({ name: gw.name, text: ok ? 'riavvio sicuro del gateway (parte a lavori finiti)' : 'riavvio del gateway non partito, guardalo tu' });
+        e.actions.push({ name: gw.name, text: ok ? 'gateway OpenClaw: riavvio sicuro chiesto, parte a lavori finiti' : 'gateway OpenClaw: il riavvio non è partito, guardalo tu' });
         log(`gateway OpenClaw a ${gb(gw.memMB)}: ${ok ? 'riavvio sicuro chiesto' : 'riavvio non partito'}`);
       }
     },
@@ -158,24 +177,25 @@ export function createShedDigest({ send = () => {}, log = () => {}, hogs = async
       const e = ep; ep = null;
       if (e.to - e.from < limits.minStrainMs && !e.actions.length) return null; // un picco breve non è un episodio
       const top = [...e.peak.values()].sort((a, b) => b.memMB - a.memMB);
-      const heavy = top.filter((h, i) => i === 0 || h.memMB >= limits.adviceMinMB).slice(0, 2);
-      const who = heavy.map((h) => `${h.name} (${gb(h.memMB)})`).join(' e ');
+      const [h0, h1] = top;
+      const blocker = h0 ? `${h0.name} ${gb(h0.memMB)}${h0.why ? ` (${h0.why})` : ''}${h1 && h1.memMB >= limits.adviceMinMB ? `, poi ${h1.name} ${gb(h1.memMB)}${h1.why ? ` (${h1.why})` : ''}` : ''}` : '';
       // consiglio solo sul primo, se è grosso, non l'ho già sistemato io e non gliel'ho già detto oggi
-      const h0 = top[0];
       const fixed = new Set(e.actions.map((a) => a.name));
       let advice = '';
       if (h0 && ADVICE[h0.kind] && !fixed.has(h0.name) && h0.memMB >= limits.adviceMinMB && !(at - (advised.get(h0.name) ?? -Infinity) < limits.adviceEveryMs)) {
         advice = ADVICE[h0.kind]; advised.set(h0.name, at);
       }
-      const did = [...e.actions.map((a) => a.text), advice].filter(Boolean).join('; ');
       const n = e.agents.size;
-      const pauses = n ? `${n === 1 ? '1 lavoro' : `${n} lavori`} in background in pausa breve, ${e.open ? `${e.open} ancora ferm${e.open === 1 ? 'o' : 'i'}, riparte da solo` : 'ripartit' + (n === 1 ? 'o' : 'i')}.`
-        : 'Nessun agente fermato: non pesavano loro.';
       const moved = (await offloads(e.from, at).catch(() => [])).length;
+      const extra = [
+        n ? `${n === 1 ? '1 lavoro' : `${n} lavori`} in pausa breve${e.open ? `, ${e.open} ancora ferm${e.open === 1 ? 'o' : 'i'}` : ''}` : '',
+        moved ? `${moved === 1 ? '1 lavoro pesante spostato' : `${moved} lavori pesanti spostati`} sul PC` : '',
+      ].filter(Boolean).join(', ');
+      const did = [...e.actions.map((a) => a.text), advice].filter(Boolean).join('; ');
       const text = [
-        `⚠️ Mac carico ${hhmm(e.from)}–${hhmm(e.to)}${who ? `: pesava ${who}` : ` (${[...e.causes].join(' e ') || 'carico alto'})`}${did ? ` → ${did}` : ''}.`,
-        pauses + (moved ? ` ${moved === 1 ? '1 lavoro pesante spostato' : `${moved} lavori pesanti spostati`} sul PC.` : ''),
-      ].join('\n');
+        `🔴 Mac bloccato ${hhmm(e.from)}–${hhmm(e.to)}${blocker ? ` da ${blocker}` : ` (${[...e.causes].join(' e ') || 'carico alto'})`}.`,
+        [did ? `→ ${did}` : '', extra].filter(Boolean).join('. ') + (did || extra ? '.' : ''),
+      ].filter((l) => l && l !== '.').join('\n');
       const push = Boolean(did);
       recent.unshift({ at, from: e.from, to: e.to, text, push }); recent.length = Math.min(recent.length, 10);
       if (push) send(text); else log(text.replace('\n', ' '));

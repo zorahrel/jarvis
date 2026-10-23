@@ -162,6 +162,19 @@ test('nomi da persona per chi pesa: niente «node 6,6 GB»', async () => {
   assert.deepEqual(hogName('/opt/homebrew/opt/node/bin/node --max-old-space-size=8192 /opt/homebrew/lib/node_modules/openclaw/dist/index.js gateway --port 18789'), { name: 'gateway OpenClaw', kind: 'gateway' });
   assert.deepEqual(hogName('/opt/homebrew/Cellar/node/26.9.0/bin/node /Users/x/Projects/armonia-agency/armonia-site/node_modules/typescript/lib/tsserver.js --useInferredProjectPerProjectRoot'), { name: 'server TypeScript di armonia-site', kind: 'tsserver' });
   assert.equal(hogName('/Applications/Google Chrome.app/Contents/MacOS/Google Chrome').name, 'Google Chrome');
+  assert.equal(hogName('node /Users/x/Projects/viaggi-mcp/src/index.ts').name, 'node viaggi-mcp');
+  // un server MCP figlio del gateway MCP porta il suo nome, non «node»; un tsserver dice di chi è
+  const { topHogs } = await import('../src/mac.mjs');
+  const table = [
+    { pid: 1, ppid: 0, cpu: 0, rssKB: 9000, etime: '17-04:00:00', command: 'node /x/node_modules/mcp-hot-gateway/index.mjs' },
+    { pid: 2, ppid: 1, cpu: 0, rssKB: 6000000, etime: '14-23:38:17', command: 'node /opt/homebrew/bin/wigolo' },
+    { pid: 3, ppid: 0, cpu: 0, rssKB: 1000, etime: '4-19:56:22', command: '/Users/x/.local/bin/claude --resume abc' },
+    { pid: 4, ppid: 3, cpu: 0, rssKB: 280000, etime: '4-19:52:21', command: 'node /Users/x/Projects/a/armonia-site/node_modules/typescript/lib/tsserver.js' },
+  ];
+  const hs = await topHogs(table, 4);
+  assert.equal(hs[0].name, 'MCP wigolo'); assert.equal(hs[0].kind, 'mcp'); assert.equal(Math.round(hs[0].ageS / 86400), 15);
+  const ts = hs.find((h) => h.kind === 'tsserver');
+  assert.equal(ts.owner, 'di una sessione Claude aperta da 5 giorni');
 });
 
 // 23/10 23:32 a Roma = 21:32 UTC
@@ -177,13 +190,14 @@ test('episodio vero del 23/10: dice chi pesava e cosa fare, una riga, niente id'
   const sent = [], logs = [];
   const d = createShedDigest({ send: (x) => sent.push(x), log: (x) => logs.push(x), restartGateway: () => { throw new Error('non va riavviato'); },
     hogs: async () => [
-      { name: 'server TypeScript di armonia-site', kind: 'tsserver', memMB: 3037 },
+      { name: 'MCP wigolo', kind: 'mcp', memMB: 5883, cpu: 0, ageS: 15 * 86400 },
+      { name: 'server TypeScript di armonia-site', kind: 'tsserver', memMB: 3037, cpu: 0, owner: 'di una sessione Claude aperta da 5 giorni' },
       { name: 'gateway OpenClaw', kind: 'gateway', memMB: 2929 },
       { name: 'Beeper Desktop', kind: 'app', memMB: 1500 },
     ] });
   const r = await episode(d, { minutes: 28 });
   assert.equal(r.push, true);
-  assert.equal(r.text, '⚠️ Mac carico 23:32–00:00: pesava server TypeScript di armonia-site (3,0 GB) e gateway OpenClaw (2,9 GB) → riavvia la sessione che lo usa, se non ti serve più.\nNessun agente fermato: non pesavano loro.');
+  assert.equal(r.text, '🔴 Mac bloccato 23:32–00:00 da MCP wigolo 5,7 GB (acceso da 15 giorni), poi server TypeScript di armonia-site 3,0 GB (di una sessione Claude aperta da 5 giorni).\n→ va riavviato dal gateway MCP (chiedimelo).');
   assert.doesNotMatch(r.text, /openclaw-isolated|m-critic|[0-9a-f]{8}/);
   assert.equal(sent.length, 1);
   // stesso consiglio il giorno stesso: niente secondo messaggio
@@ -193,15 +207,17 @@ test('episodio vero del 23/10: dice chi pesava e cosa fare, una riga, niente id'
 
 test('gateway OpenClaw oltre 4 GB per 5 minuti: un riavvio sicuro, poi il messaggio lo dice', async () => {
   const sent = []; let restarts = 0;
+  let gwMB = 1536;
   const d = createShedDigest({ send: (x) => sent.push(x), restartGateway: () => { restarts++; return true; },
-    hogs: async () => [{ name: 'gateway OpenClaw', kind: 'gateway', memMB: 6758 }],
+    hogs: async () => [{ name: 'gateway OpenClaw', kind: 'gateway', memMB: gwMB, cpu: 0.3 }],
     offloads: async () => [{ at: T0 + 60000, dir: 'zeno' }] });
+  await d.tick({ strained: false }, T0 - 5 * 3600000); gwMB = 6758;
   const r = await episode(d, { minutes: 20, pauses: [
     { type: 'pause', at: T0 + 120000, label: 'zeno · codex-exec' }, { type: 'resume', at: T0 + 180000, label: 'zeno · codex-exec' },
     { type: 'pause', at: T0 + 400000, label: 'zeno · codex-exec' }, { type: 'resume', at: T0 + 500000, label: 'zeno · codex-exec' },
     { type: 'pause', at: T0 + 600000, label: 'jarvis · muse-job' } ] });
   assert.equal(restarts, 1, 'un solo riavvio per episodio (e al più ogni 6 h)');
-  assert.equal(r.text, '⚠️ Mac carico 23:32–23:52: pesava gateway OpenClaw (6,6 GB) → riavvio sicuro del gateway (parte a lavori finiti).\n2 lavori in background in pausa breve, 1 ancora fermo, riparte da solo. 1 lavoro pesante spostato sul PC.');
+  assert.equal(r.text, '🔴 Mac bloccato 23:32–23:52 da gateway OpenClaw 6,6 GB (cresciuto da 1,5 GB in 5 h).\n→ gateway OpenClaw: riavvio sicuro chiesto, parte a lavori finiti. 2 lavori in pausa breve, 1 ancora fermo, 1 lavoro pesante spostato sul PC.');
   assert.equal(sent.length, 1);
 });
 
@@ -210,7 +226,7 @@ test('episodio che si sistema da solo: niente WhatsApp, solo log; un picco breve
   const d = createShedDigest({ send: (x) => sent.push(x), log: (x) => logs.push(x), hogs: async () => [{ name: 'Codex', kind: 'agente', memMB: 900 }] });
   const r = await episode(d, { minutes: 15, pauses: [{ type: 'pause', at: T0, label: 'zeno · codex-exec' }, { type: 'resume', at: T0 + 90000, label: 'zeno · codex-exec' }] });
   assert.equal(r.push, false); assert.equal(sent.length, 0);
-  assert.match(logs.at(-1), /1 lavoro in background in pausa breve, ripartito/);
+  assert.match(logs.at(-1), /^🔴 Mac bloccato 23:32–23:47 da Codex 0,9 GB\. 1 lavoro in pausa breve\.$/);
   assert.equal(d.recent.length, 1);
   const d2 = createShedDigest({ send: (x) => sent.push(x), hogs: async () => [{ name: 'Google Chrome', kind: 'app', memMB: 5000 }] });
   assert.equal(await episode(d2, { minutes: 4 }), null);

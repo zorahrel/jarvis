@@ -222,26 +222,64 @@ export function hogName(command) {
   if (/openclaw\/dist\/index\.js gateway|openclaw-gateway/.test(c)) return { name: 'gateway OpenClaw', kind: 'gateway' };
   const ts = c.match(/\/([^/\s]+)\/node_modules\/typescript\/lib\/tsserver\.js/);
   if (ts) return { name: `server TypeScript di ${ts[1]}`, kind: 'tsserver' };
+  // le sessioni Code dell'app Claude girano da un claude.app interno: senza questa riga erano «claude», come un comando qualsiasi
+  if (/\/claude-code\/[^/]+\/[^/]+\/claude\.app\//.test(c)) return { name: 'sessioni Claude Code (app)', kind: 'sessione' };
   const app = (c.match(/\/([^/]+)\.app\//) || [])[1];
   if (app) return { name: app, kind: 'app' };
   const k = classify({ command: c });
   if (k === 'interattivo') return { name: 'sessione Claude', kind: 'sessione' };
   if (k !== 'altro') return { name: k === 'codex-exec' ? 'Codex' : k === 'muse-job' ? 'Muse' : 'Claude in background', kind: 'agente' };
-  return { name: c.split(' ')[0].split('/').pop(), kind: 'altro' };
+  // node/bun/python nudi non dicono niente: il nome è il progetto o lo script che stanno facendo girare
+  const bin = c.split(' ')[0].split('/').pop();
+  if (/^(node|bun|python\d*(\.\d+)?|deno)$/i.test(bin)) {
+    // il progetto è l'ultima cartella prima di node_modules, src, dist… (Projects/armonia-agency/armonia-site/node_modules → armonia-site)
+    const segs = ((c.match(/\/Projects\/(\S+)/) || [])[1] || '').split('/');
+    const stop = segs.findIndex((x, i) => i > 0 && (/^(node_modules|src|dist|server|bin|scripts|lib)$/.test(x) || /\.(m?js|ts|py)$/.test(x)));
+    const proj = stop > 0 ? segs[stop - 1] : '';
+    const script = (c.split(' ').slice(1).find((x) => /^[~/.].*\.(m?js|ts|py)$|^\/opt\/homebrew\/bin\//.test(x)) || '').split('/').pop().replace(/\.(m?js|ts|py)$/, '');
+    const name = proj || (script && script !== 'index' ? script : '');
+    if (name) return { name: `${bin} ${name}`, kind: 'altro' };
+  }
+  return { name: bin, kind: 'altro' };
 }
 
-// Chi pesa di più sul Mac: scrematura su RSS, footprint vero sui primi (stessa strada di memhog), raggruppati per nome da persona.
+// etime di ps («4-19:32:05», «19:32:05», «32:05») in secondi.
+export function etimeSeconds(e) {
+  const m = /^(?:(\d+)-)?(?:(\d+):)?(\d+):(\d+)$/.exec(e || '');
+  return m ? ((+m[1] || 0) * 86400 + (+m[2] || 0) * 3600 + +m[3] * 60 + +m[4]) : null;
+}
+
+// Il nome dice anche di chi è: un server MCP figlio del gateway MCP (il 24/10 wigolo era a 5,9 GB dopo 15 giorni, e la tray
+// lo contava come «node mcp-hot-gateway ×12»), un server TypeScript figlio di una sessione Claude aperta da giorni.
+function ownerOf(table, row) {
+  const byPid = new Map(table.map((r) => [r.pid, r]));
+  for (let p = byPid.get(row.ppid), i = 0; p && i < 8; p = byPid.get(p.ppid), i++) {
+    if (/mcp-hot-gateway/.test(p.command)) return { kind: 'mcp' };
+    const k = classify(p);
+    if (k === 'interattivo') return { kind: 'sessione', ageS: etimeSeconds(p.etime) };
+    if (k !== 'altro') return { kind: 'agente' };
+  }
+  return null;
+}
+
+// Chi pesa di più sul Mac: scrematura su RSS e su CPU, footprint vero sui primi (stessa strada di memhog), raggruppati per nome da persona.
 export async function topHogs(table, n = 3) {
-  const cand = [...table].sort((a, b) => b.rssKB - a.rssKB).slice(0, 12);
+  // 30 e non 12: un processo con la memoria compressa ha RSS basso (tsserver 277 MB di RSS, 3 GB veri) e restava fuori
+  const byRss = [...table].sort((a, b) => b.rssKB - a.rssKB).slice(0, 30);
+  const byCpu = [...table].sort((a, b) => b.cpu - a.cpu).slice(0, 5).filter((r) => !byRss.includes(r));
+  const cand = [...byRss, ...byCpu];
   const fps = await footprintMap(cand.map((r) => r.pid));
   const out = [];
   for (const r of cand) {
     const fp = fps.get(r.pid);
     // Le app hanno spazi nel percorso («Google Chrome.app»): il nome è quello del bundle, non il primo pezzo prima dello spazio.
-    const h = hogName(r.command);
-    out.push({ pid: r.pid, name: h.name, kind: h.kind, full: r.command.slice(0, 80), cpu: r.cpu / 100, memMB: fp || r.rssKB / 1024 });
+    let h = hogName(r.command);
+    const own = h.kind === 'gateway' ? null : ownerOf(table, r);
+    if (own && own.kind === 'mcp') h = { name: `MCP ${r.command.split(' ').map((x) => x.split('/').pop()).find((x) => x && !/^(node|python\d*|bun|uv|npx|npm|run|exec|tool|uvx)$/.test(x)) || h.name}`, kind: 'mcp' };
+    const owner = own && own.kind === 'sessione' ? `di una sessione Claude aperta da ${Math.max(1, Math.round((own.ageS || 0) / 86400))} giorni` : '';
+    out.push({ pid: r.pid, name: h.name, kind: h.kind, owner: own && own.kind === 'sessione' && own.ageS >= 86400 ? owner : '', ageS: etimeSeconds(r.etime), full: r.command.slice(0, 80), cpu: r.cpu / 100, memMB: fp || r.rssKB / 1024 });
   }
   const by = {};
-  for (const o of out) { const k = o.name; by[k] = by[k] ? { ...by[k], memMB: by[k].memMB + o.memMB, cpu: by[k].cpu + o.cpu, n: by[k].n + 1 } : { ...o, n: 1 }; }
+  for (const o of out) { const k = o.name; by[k] = by[k] ? { ...by[k], memMB: by[k].memMB + o.memMB, cpu: by[k].cpu + o.cpu, ageS: Math.max(by[k].ageS || 0, o.ageS || 0), n: by[k].n + 1 } : { ...o, n: 1 }; }
   return Object.values(by).sort((a, b) => b.memMB - a.memMB).slice(0, n);
 }
