@@ -23,6 +23,7 @@ def scenario(name, argv, busy, want_restart, want_detach):
     calls = {"restart": 0, "popen": 0}
     m.STATE = Path(os.environ.get("TMPDIR", "/tmp")) / "oc-restart-test-state"
     m.blockers = lambda: busy
+    m.waiter_alive = lambda: 0
     m.running = lambda: []
     m.replying = lambda: []
     m.log_request = lambda *a: None
@@ -52,6 +53,41 @@ def scenario(name, argv, busy, want_restart, want_detach):
     else:
         ko += 1; print(f"  FAIL {name}: restart/detach atteso {(want_restart, want_detach)}, avuto {got}")
 
+
+def unit(name, cond):
+    global ok, ko
+    if cond:
+        ok += 1; print("  ok  ", name)
+    else:
+        ko += 1; print("  FAIL", name)
+
+
+def active(stdout):
+    m = load()
+    class R:
+        pass
+    r = R(); r.stdout = stdout
+    m.subprocess.run = lambda *a, **k: r
+    return m.active_work()
+
+
+unit("contatore gateway: un turno in volo blocca", active('{"shutdownBudget":{"activeWork":{"rootRequests":1,"cronRuns":0}}}') == [("gateway", "rootRequests 1")])
+unit("contatore gateway: tutto a zero non blocca", active('{"shutdownBudget":{"activeWork":{"rootRequests":0,"cronRuns":0}}}') == [])
+unit("contatore gateway: gateway muto non blocca", active('') == [])
+
+
+def lock_case():
+    m = load()
+    m.STATE = Path(os.environ.get("TMPDIR", "/tmp")) / "oc-restart-test-state"
+    m.STATE.mkdir(parents=True, exist_ok=True)
+    m.WAITER_PID = m.STATE / "w.pid"
+    m.WAITER_PID.write_text(str(os.getpid()))
+    alive = m.waiter_alive() == os.getpid()
+    m.WAITER_PID.write_text("999999")
+    return alive and m.waiter_alive() == 0
+
+
+unit("un solo processo in attesa (pid vivo sì, morto no)", lock_case())
 
 scenario("lavoro in corso: non riavvia, si stacca", [], [("sottoagente", "x")], False, True)
 scenario("chat che risponde: non riavvia, si stacca", [], [("chat", "agent:main:whatsapp:direct:+39")], False, True)
