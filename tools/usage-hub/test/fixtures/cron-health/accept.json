@@ -1,0 +1,4 @@
+[
+  { "match": "accettato-prova", "why": "errore noto di prova, resta per scelta" },
+  { "match": "prova.check", "why": "avviso del doctor di prova già deciso" }
+]

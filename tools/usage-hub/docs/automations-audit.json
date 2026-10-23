@@ -1,0 +1,212 @@
+{
+ "375-chiuso": {
+  "uiAudit": {
+   "viewport": {
+    "w": 375,
+    "h": 812
+   },
+   "counts": {
+    "analyzed": 265,
+    "misalign": 3,
+    "spacing": 4,
+    "overlap": 0,
+    "offscreen": 0,
+    "tapTargets": 1
+   },
+   "overflowX": {
+    "present": false,
+    "docWidth": 375,
+    "viewport": 375,
+    "offenders": []
+   },
+   "findings": {
+    "misalign": [
+     {
+      "edge": "right",
+      "off": 0.5,
+      "a": "button.b:nth(1)",
+      "b": "button.b:nth(4)"
+     },
+     {
+      "edge": "left",
+      "off": 0.5,
+      "a": "button.b:nth(2)",
+      "b": "button.b:nth(5)"
+     },
+     {
+      "edge": "top",
+      "off": 2,
+      "a": "b",
+      "b": "span.mut.small"
+     }
+    ],
+    "spacing": [
+     {
+      "parent": "div.au-act:nth(4)",
+      "axis": "h",
+      "gaps": [
+       -69.2,
+       6,
+       -125.5,
+       6
+      ],
+      "median": 6,
+      "n": 5
+     },
+     {
+      "parent": "details.tech",
+      "axis": "v",
+      "gaps": [
+       0,
+       0,
+       12
+      ],
+      "median": 0,
+      "n": 4
+     },
+     {
+      "parent": "details.tech",
+      "axis": "v",
+      "gaps": [
+       0,
+       0,
+       0,
+       12
+      ],
+      "median": 0,
+      "n": 5
+     },
+     {
+      "parent": "article.au-card.lv-va",
+      "axis": "v",
+      "gaps": [
+       4,
+       4,
+       0,
+       6,
+       8,
+       8
+      ],
+      "median": 6,
+      "n": 7
+     }
+    ],
+    "overlap": [],
+    "offscreen": [],
+    "tapTargets": [
+     {
+      "el": "button.b",
+      "w": 130.5,
+      "h": 26
+     }
+    ]
+   }
+  },
+  "axeSerious": []
+ },
+ "375-aperto": {
+  "uiAudit": {
+   "viewport": {
+    "w": 375,
+    "h": 812
+   },
+   "counts": {
+    "analyzed": 265,
+    "misalign": 3,
+    "spacing": 4,
+    "overlap": 0,
+    "offscreen": 0,
+    "tapTargets": 1
+   },
+   "overflowX": {
+    "present": false,
+    "docWidth": 375,
+    "viewport": 375,
+    "offenders": []
+   },
+   "findings": {
+    "misalign": [
+     {
+      "edge": "right",
+      "off": 0.5,
+      "a": "button.b:nth(1)",
+      "b": "button.b:nth(4)"
+     },
+     {
+      "edge": "left",
+      "off": 0.5,
+      "a": "button.b:nth(2)",
+      "b": "button.b:nth(5)"
+     },
+     {
+      "edge": "top",
+      "off": 2,
+      "a": "b",
+      "b": "span.mut.small"
+     }
+    ],
+    "spacing": [
+     {
+      "parent": "div.au-act:nth(4)",
+      "axis": "h",
+      "gaps": [
+       -69.2,
+       6,
+       -125.5,
+       6
+      ],
+      "median": 6,
+      "n": 5
+     },
+     {
+      "parent": "details.tech",
+      "axis": "v",
+      "gaps": [
+       0,
+       0,
+       12
+      ],
+      "median": 0,
+      "n": 4
+     },
+     {
+      "parent": "details.tech",
+      "axis": "v",
+      "gaps": [
+       0,
+       0,
+       0,
+       12
+      ],
+      "median": 0,
+      "n": 5
+     },
+     {
+      "parent": "article.au-card.lv-va",
+      "axis": "v",
+      "gaps": [
+       4,
+       4,
+       0,
+       6,
+       8,
+       8
+      ],
+      "median": 6,
+      "n": 7
+     }
+    ],
+    "overlap": [],
+    "offscreen": [],
+    "tapTargets": [
+     {
+      "el": "button.b",
+      "w": 130.5,
+      "h": 26
+     }
+    ]
+   }
+  },
+  "axeSerious": []
+ }
+}

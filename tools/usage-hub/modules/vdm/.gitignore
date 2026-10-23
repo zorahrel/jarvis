@@ -1,0 +1,23 @@
+# Account credentials (NEVER commit these)
+accounts/
+*.label
+api-accounts.json
+
+# Runtime config and data
+config.json
+activity-log.json
+account-state.json
+utilization-history.json
+probe-log.json
+token-usage.json
+.dashboard.pid
+
+# Logs
+*.log
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Node
+node_modules/

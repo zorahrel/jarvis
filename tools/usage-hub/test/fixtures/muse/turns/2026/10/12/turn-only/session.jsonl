@@ -1,0 +1,3 @@
+{"payload_type":"runtime.session.metadata","payload":{"record":{"workspace_root":"/work/turn-only"}}}
+{"payload_type":"runtime.session","recorded_at":1791802800000000,"payload":{"event":{"kind":"model_completed","model":"muse-spark-1.3"}}}
+{"payload_type":"runtime.session","recorded_at":1791806400000000,"payload":{"event":{"kind":"model_completed","model":"muse-spark-1.3","usage":{}}}}

@@ -1,0 +1,2621 @@
+{
+  "checkedAt": 1792764000000,
+  "verdict": {
+    "needsYou": 0,
+    "broken": 0,
+    "ok": 20,
+    "hidden": 0,
+    "runsToday": 474
+  },
+  "needsYou": [],
+  "broken": [],
+  "groups": [
+    {
+      "id": "arriva",
+      "title": "Ti arriva ciò che deve",
+      "cards": [
+        {
+          "key": "cron:avvisi-tele",
+          "provider": "openclaw",
+          "title": "Avvisi urgenti in chat",
+          "cosa": "Controlla i canali urgenti e avvisa subito.",
+          "means": "Ti scrive su Telegram.",
+          "who": "Claude",
+          "reportsTo": "Telegram",
+          "when": "ogni giorno",
+          "next": null,
+          "nextApprox": false,
+          "last": {
+            "at": 1792753200000,
+            "outcome": "ok",
+            "delivered": "none",
+            "error": null
+          },
+          "proof": null,
+          "runsToday": 1,
+          "group": "arriva",
+          "level": "va",
+          "reason": "gira come deve",
+          "since": 1792753200000,
+          "sources": [
+            {
+              "key": "cron:avvisi-tele",
+              "provider": "openclaw",
+              "level": "va",
+              "last": {
+                "at": 1792753200000,
+                "outcome": "ok",
+                "delivered": "none",
+                "error": null
+              }
+            }
+          ],
+          "tech": {
+            "schedule": null,
+            "exit": null,
+            "command": null,
+            "prompt": null,
+            "label": null,
+            "url": null
+          },
+          "feedback": {
+            "vote": null,
+            "changedSinceVote": false,
+            "mute": null,
+            "open": 0,
+            "notes": []
+          },
+          "fp": "rs8v4t",
+          "missing": false
+        },
+        {
+          "key": "cron:posta-veloce",
+          "provider": "openclaw",
+          "title": "Avviso mail importanti",
+          "cosa": "Legge la posta ogni minuto e avvisa se c’è qualcosa di urgente.",
+          "means": "Ti scrive su WhatsApp solo quando serve.",
+          "who": "script: posta.py",
+          "reportsTo": "WhatsApp",
+          "when": "ogni minuto",
+          "next": 1792764030000,
+          "nextApprox": false,
+          "last": {
+            "at": 1792763970000,
+            "outcome": "ok",
+            "delivered": "none",
+            "error": null
+          },
+          "proof": null,
+          "runsToday": 240,
+          "group": "arriva",
+          "level": "va",
+          "reason": "gira come deve",
+          "since": 1792763970000,
+          "sources": [
+            {
+              "key": "cron:posta-veloce",
+              "provider": "openclaw",
+              "level": "va",
+              "last": {
+                "at": 1792763970000,
+                "outcome": "ok",
+                "delivered": "none",
+                "error": null
+              }
+            }
+          ],
+          "tech": {
+            "schedule": "ogni minuto",
+            "exit": null,
+            "command": "posta.py --controlla",
+            "prompt": null,
+            "label": "posta-veloce",
+            "url": null
+          },
+          "feedback": {
+            "vote": {
+              "v": "ok",
+              "at": "2026-10-20T14:00:00.000Z",
+              "fp": "1rmoiku",
+              "note": null,
+              "id": "ok-v0"
+            },
+            "changedSinceVote": false,
+            "mute": null,
+            "open": 0,
+            "notes": []
+          },
+          "fp": "1rmoiku",
+          "missing": false
+        },
+        {
+          "key": "launchd:com.prova.sera",
+          "provider": "launchd",
+          "title": "Promemoria della sera",
+          "cosa": "Ricorda le cose rimaste in sospeso prima di cena.",
+          "means": "Ti scrive su WhatsApp.",
+          "who": "Claude",
+          "reportsTo": "nessun messaggio",
+          "when": "ogni giorno alle 20:00",
+          "next": 1792778400000,
+          "nextApprox": false,
+          "last": {
+            "at": 1792692000000,
+            "outcome": "ok",
+            "delivered": null,
+            "error": null
+          },
+          "proof": null,
+          "runsToday": 1,
+          "group": "arriva",
+          "level": "va",
+          "reason": "gira come deve",
+          "since": 1792692000000,
+          "sources": [
+            {
+              "key": "launchd:com.prova.sera",
+              "provider": "launchd",
+              "level": "va",
+              "last": {
+                "at": 1792692000000,
+                "outcome": "ok",
+                "delivered": null,
+                "error": null
+              }
+            }
+          ],
+          "tech": {
+            "schedule": null,
+            "exit": null,
+            "command": null,
+            "prompt": null,
+            "label": null,
+            "url": null
+          },
+          "feedback": {
+            "vote": {
+              "v": "ok",
+              "at": "2026-10-20T14:00:00.000Z",
+              "fp": "ryqjom",
+              "note": null,
+              "id": "ok-v2"
+            },
+            "changedSinceVote": false,
+            "mute": null,
+            "open": 0,
+            "notes": []
+          },
+          "fp": "ryqjom",
+          "missing": false
+        },
+        {
+          "key": "desktop:promemoria-festa",
+          "provider": "desktop",
+          "title": "Promemoria festa di prova",
+          "cosa": "Ricorda di preparare la festa di prova di domani.",
+          "means": "Ti scrive la sessione che lo ha creato.",
+          "who": "Claude (app desktop)",
+          "reportsTo": "la sessione che l'ha creato",
+          "when": "oggi alle 21:00",
+          "next": 1792782000000,
+          "nextApprox": false,
+          "last": {
+            "at": null,
+            "outcome": null,
+            "delivered": null,
+            "error": null
+          },
+          "proof": null,
+          "runsToday": 0,
+          "group": "arriva",
+          "level": "va",
+          "reason": "gira come deve",
+          "since": null,
+          "sources": [
+            {
+              "key": "desktop:promemoria-festa",
+              "provider": "desktop",
+              "level": "va",
+              "last": {
+                "at": null,
+                "outcome": null,
+                "delivered": null,
+                "error": null
+              }
+            }
+          ],
+          "tech": {
+            "schedule": "2026-10-23T19:00:00.000Z",
+            "exit": null,
+            "command": null,
+            "prompt": "Ricorda la festa di prova.",
+            "label": "festa",
+            "url": null
+          },
+          "feedback": {
+            "vote": {
+              "v": "ok",
+              "at": "2026-10-20T14:00:00.000Z",
+              "fp": "copo66",
+              "note": null,
+              "id": "ok-v3"
+            },
+            "changedSinceVote": false,
+            "mute": null,
+            "open": 0,
+            "notes": []
+          },
+          "fp": "copo66",
+          "missing": false
+        },
+        {
+          "key": "cron:posta-sera",
+          "provider": "openclaw",
+          "title": "Riepilogo serale dei messaggi",
+          "cosa": "Raccoglie i messaggi della giornata in un unico riepilogo.",
+          "means": "Ti scrive su WhatsApp la sera.",
+          "who": "Claude",
+          "reportsTo": "WhatsApp",
+          "when": "ogni ora",
+          "next": null,
+          "nextApprox": false,
+          "last": {
+            "at": 1792762800000,
+            "outcome": "ok",
+            "delivered": "delivered",
+            "error": null
+          },
+          "proof": null,
+          "runsToday": 12,
+          "group": "arriva",
+          "level": "va",
+          "reason": "gira come deve",
+          "since": 1792762800000,
+          "sources": [
+            {
+              "key": "cron:posta-sera",
+              "provider": "openclaw",
+              "level": "va",
+              "last": {
+                "at": 1792762800000,
+                "outcome": "ok",
+                "delivered": "delivered",
+                "error": null
+              }
+            }
+          ],
+          "tech": {
+            "schedule": null,
+            "exit": null,
+            "command": null,
+            "prompt": null,
+            "label": null,
+            "url": null
+          },
+          "feedback": {
+            "vote": {
+              "v": "ok",
+              "at": "2026-10-20T14:00:00.000Z",
+              "fp": "p0obk5",
+              "note": null,
+              "id": "ok-v1"
+            },
+            "changedSinceVote": false,
+            "mute": null,
+            "open": 0,
+            "notes": []
+          },
+          "fp": "p0obk5",
+          "missing": false
+        }
+      ]
+    },
+    {
+      "id": "dati",
+      "title": "I dati sono al sicuro",
+      "cards": [
+        {
+          "key": "gh:prova/foto/.github/workflows/foto.yml",
+          "provider": "github",
+          "title": "Archivio foto verificato",
+          "cosa": "Controlla ogni giorno che l’archivio foto sia integro.",
+          "means": "Lo vedi su GitHub.",
+          "who": "GitHub Actions",
+          "reportsTo": "GitHub",
+          "when": "ogni giorno",
+          "next": 1792832400000,
+          "nextApprox": true,
+          "last": {
+            "at": 1792746000000,
+            "outcome": "ok",
+            "delivered": null,
+            "error": null
+          },
+          "proof": null,
+          "runsToday": 1,
+          "group": "dati",
+          "level": "va",
+          "reason": "gira come deve",
+          "since": 1792746000000,
+          "sources": [
+            {
+              "key": "gh:prova/foto/.github/workflows/foto.yml",
+              "provider": "github",
+              "level": "va",
+              "last": {
+                "at": 1792746000000,
+                "outcome": "ok",
+                "delivered": null,
+                "error": null
+              }
+            }
+          ],
+          "tech": {
+            "schedule": null,
+            "exit": null,
+            "command": null,
+            "prompt": null,
+            "label": null,
+            "url": null
+          },
+          "feedback": {
+            "vote": {
+              "v": "ok",
+              "at": "2026-10-20T14:00:00.000Z",
+              "fp": "18s0tc7",
+              "note": null,
+              "id": "ok-v7"
+            },
+            "changedSinceVote": false,
+            "mute": null,
+            "open": 0,
+            "notes": []
+          },
+          "fp": "18s0tc7",
+          "missing": false
+        },
+        {
+          "key": "cron:backup-notte",
+          "provider": "openclaw",
+          "title": "Backup notturno nel repo privato",
+          "cosa": "Copia i dati della giornata nel repo privato di notte.",
+          "means": "Nessun messaggio se va tutto bene.",
+          "who": "script: backup.py",
+          "reportsTo": "nessun messaggio",
+          "when": "ogni giorno alle 3:19",
+          "next": null,
+          "nextApprox": false,
+          "last": {
+            "at": 1792718340000,
+            "outcome": "ok",
+            "delivered": "none",
+            "error": null
+          },
+          "proof": null,
+          "runsToday": 1,
+          "group": "dati",
+          "level": "va",
+          "reason": "gira come deve",
+          "since": 1792718340000,
+          "sources": [
+            {
+              "key": "cron:backup-notte",
+              "provider": "openclaw",
+              "level": "va",
+              "last": {
+                "at": 1792718340000,
+                "outcome": "ok",
+                "delivered": "none",
+                "error": null
+              }
+            }
+          ],
+          "tech": {
+            "schedule": null,
+            "exit": null,
+            "command": null,
+            "prompt": null,
+            "label": null,
+            "url": null
+          },
+          "feedback": {
+            "vote": {
+              "v": "ok",
+              "at": "2026-10-20T14:00:00.000Z",
+              "fp": "rfmruk",
+              "note": null,
+              "id": "ok-v4"
+            },
+            "changedSinceVote": false,
+            "mute": null,
+            "open": 0,
+            "notes": []
+          },
+          "fp": "rfmruk",
+          "missing": false
+        },
+        {
+          "key": "launchd:com.prova.ore",
+          "provider": "launchd",
+          "title": "Copia di sicurezza ogni sei ore",
+          "cosa": "Fa una copia di sicurezza a intervalli regolari.",
+          "means": "Nessun messaggio.",
+          "who": "script: copia.sh",
+          "reportsTo": "nessun messaggio",
+          "when": "ogni 6 ore",
+          "next": 1792782000000,
+          "nextApprox": false,
+          "last": {
+            "at": 1792760400000,
+            "outcome": "ok",
+            "delivered": null,
+            "error": null
+          },
+          "proof": null,
+          "runsToday": 3,
+          "group": "dati",
+          "level": "va",
+          "reason": "gira come deve",
+          "since": 1792760400000,
+          "sources": [
+            {
+              "key": "launchd:com.prova.ore",
+              "provider": "launchd",
+              "level": "va",
+              "last": {
+                "at": 1792760400000,
+                "outcome": "ok",
+                "delivered": null,
+                "error": null
+              }
+            }
+          ],
+          "tech": {
+            "schedule": null,
+            "exit": null,
+            "command": null,
+            "prompt": null,
+            "label": null,
+            "url": null
+          },
+          "feedback": {
+            "vote": {
+              "v": "ok",
+              "at": "2026-10-20T14:00:00.000Z",
+              "fp": "d9450o",
+              "note": null,
+              "id": "ok-v5"
+            },
+            "changedSinceVote": false,
+            "mute": null,
+            "open": 0,
+            "notes": []
+          },
+          "fp": "d9450o",
+          "missing": false
+        },
+        {
+          "key": "cron:pulizia-scratch",
+          "provider": "openclaw",
+          "title": "Pulizia settimanale dei file temporanei",
+          "cosa": "Butta i file temporanei vecchi di una settimana.",
+          "means": "Nessun messaggio.",
+          "who": "Claude",
+          "reportsTo": "nessun messaggio",
+          "when": "il lunedì",
+          "next": null,
+          "nextApprox": false,
+          "last": {
+            "at": 1792591200000,
+            "outcome": "ok",
+            "delivered": "none",
+            "error": null
+          },
+          "proof": null,
+          "runsToday": 0,
+          "group": "dati",
+          "level": "va",
+          "reason": "gira come deve",
+          "since": 1792591200000,
+          "sources": [
+            {
+              "key": "cron:pulizia-scratch",
+              "provider": "openclaw",
+              "level": "va",
+              "last": {
+                "at": 1792591200000,
+                "outcome": "ok",
+                "delivered": "none",
+                "error": null
+              }
+            }
+          ],
+          "tech": {
+            "schedule": null,
+            "exit": null,
+            "command": null,
+            "prompt": null,
+            "label": null,
+            "url": null
+          },
+          "feedback": {
+            "vote": {
+              "v": "ok",
+              "at": "2026-10-20T14:00:00.000Z",
+              "fp": "cr8q9m",
+              "note": null,
+              "id": "ok-v6"
+            },
+            "changedSinceVote": false,
+            "mute": null,
+            "open": 0,
+            "notes": []
+          },
+          "fp": "cr8q9m",
+          "missing": false
+        }
+      ]
+    },
+    {
+      "id": "quote",
+      "title": "Le quote reggono",
+      "cards": [
+        {
+          "key": "launchd:com.prova.residui",
+          "provider": "launchd",
+          "title": "Controllo dei residui di quota",
+          "cosa": "Verifica i residui di quota dal Mac.",
+          "means": "Nessun messaggio.",
+          "who": "Claude",
+          "reportsTo": "nessun messaggio",
+          "when": "ogni giorno alle 7:00",
+          "next": null,
+          "nextApprox": false,
+          "last": {
+            "at": 1792731600000,
+            "outcome": "ok",
+            "delivered": null,
+            "error": null
+          },
+          "proof": null,
+          "runsToday": 1,
+          "group": "quote",
+          "level": "va",
+          "reason": "gira come deve",
+          "since": 1792731600000,
+          "sources": [
+            {
+              "key": "launchd:com.prova.residui",
+              "provider": "launchd",
+              "level": "va",
+              "last": {
+                "at": 1792731600000,
+                "outcome": "ok",
+                "delivered": null,
+                "error": null
+              }
+            }
+          ],
+          "tech": {
+            "schedule": null,
+            "exit": null,
+            "command": null,
+            "prompt": null,
+            "label": null,
+            "url": null
+          },
+          "feedback": {
+            "vote": {
+              "v": "ok",
+              "at": "2026-10-20T14:00:00.000Z",
+              "fp": "1wyxmqc",
+              "note": null,
+              "id": "ok-v9"
+            },
+            "changedSinceVote": false,
+            "mute": null,
+            "open": 0,
+            "notes": []
+          },
+          "fp": "1wyxmqc",
+          "missing": false
+        },
+        {
+          "key": "cron:quote-muse",
+          "provider": "openclaw",
+          "title": "Livello delle quote IA",
+          "cosa": "Controlla quanto hai usato del modello principale.",
+          "means": "Nessun messaggio.",
+          "who": "Claude",
+          "reportsTo": "nessun messaggio",
+          "when": "ogni 6 ore",
+          "next": null,
+          "nextApprox": false,
+          "last": {
+            "at": 1792756800000,
+            "outcome": "ok",
+            "delivered": "none",
+            "error": null
+          },
+          "proof": null,
+          "runsToday": 3,
+          "group": "quote",
+          "level": "va",
+          "reason": "gira come deve",
+          "since": 1792756800000,
+          "sources": [
+            {
+              "key": "cron:quote-muse",
+              "provider": "openclaw",
+              "level": "va",
+              "last": {
+                "at": 1792756800000,
+                "outcome": "ok",
+                "delivered": "none",
+                "error": null
+              }
+            }
+          ],
+          "tech": {
+            "schedule": null,
+            "exit": null,
+            "command": null,
+            "prompt": null,
+            "label": null,
+            "url": null
+          },
+          "feedback": {
+            "vote": {
+              "v": "ok",
+              "at": "2026-10-20T14:00:00.000Z",
+              "fp": "1vfjwxs",
+              "note": null,
+              "id": "ok-v8"
+            },
+            "changedSinceVote": false,
+            "mute": null,
+            "open": 0,
+            "notes": []
+          },
+          "fp": "1vfjwxs",
+          "missing": false
+        },
+        {
+          "key": "cron:quote-codex",
+          "provider": "openclaw",
+          "title": "Quote del secondo modello",
+          "cosa": "Controlla quanto hai usato del secondo modello.",
+          "means": "Nessun messaggio.",
+          "who": "Claude",
+          "reportsTo": "nessun messaggio",
+          "when": "ogni giorno",
+          "next": null,
+          "nextApprox": false,
+          "last": {
+            "at": 1792742400000,
+            "outcome": "ok",
+            "delivered": "none",
+            "error": null
+          },
+          "proof": null,
+          "runsToday": 1,
+          "group": "quote",
+          "level": "va",
+          "reason": "gira come deve",
+          "since": 1792742400000,
+          "sources": [
+            {
+              "key": "cron:quote-codex",
+              "provider": "openclaw",
+              "level": "va",
+              "last": {
+                "at": 1792742400000,
+                "outcome": "ok",
+                "delivered": "none",
+                "error": null
+              }
+            }
+          ],
+          "tech": {
+            "schedule": null,
+            "exit": null,
+            "command": null,
+            "prompt": null,
+            "label": null,
+            "url": null
+          },
+          "feedback": {
+            "vote": null,
+            "changedSinceVote": false,
+            "mute": null,
+            "open": 0,
+            "notes": []
+          },
+          "fp": "1d5mao4",
+          "missing": false
+        }
+      ]
+    },
+    {
+      "id": "macchine",
+      "title": "Mac e PC respirano",
+      "cards": [
+        {
+          "key": "cron:battito",
+          "provider": "openclaw",
+          "title": "Battito del sistema",
+          "cosa": "Verifica ogni cinque minuti che il sistema risponda.",
+          "means": "Ti scrive in chat solo se c’è qualcosa.",
+          "who": "Jarvis nella chat principale",
+          "reportsTo": "la tua chat, solo se c’è qualcosa",
+          "when": "ogni 5 min",
+          "next": null,
+          "nextApprox": false,
+          "last": {
+            "at": 1792763880000,
+            "outcome": "ok",
+            "delivered": "none",
+            "error": null
+          },
+          "proof": null,
+          "runsToday": 190,
+          "group": "macchine",
+          "level": "va",
+          "reason": "gira come deve",
+          "since": 1792763880000,
+          "sources": [
+            {
+              "key": "cron:battito",
+              "provider": "openclaw",
+              "level": "va",
+              "last": {
+                "at": 1792763880000,
+                "outcome": "ok",
+                "delivered": "none",
+                "error": null
+              }
+            }
+          ],
+          "tech": {
+            "schedule": null,
+            "exit": null,
+            "command": null,
+            "prompt": null,
+            "label": null,
+            "url": null
+          },
+          "feedback": {
+            "vote": {
+              "v": "ok",
+              "at": "2026-10-20T14:00:00.000Z",
+              "fp": "59yyjb",
+              "note": null,
+              "id": "ok-v10"
+            },
+            "changedSinceVote": false,
+            "mute": null,
+            "open": 0,
+            "notes": []
+          },
+          "fp": "59yyjb",
+          "missing": false
+        },
+        {
+          "key": "gh:prova/rete/.github/workflows/lint.yml",
+          "provider": "github",
+          "title": "Controllo automatico del codice",
+          "cosa": "Esegue il controllo del codice a ogni giro.",
+          "means": "Lo vedi su GitHub.",
+          "who": "GitHub Actions",
+          "reportsTo": "GitHub",
+          "when": "ogni giorno",
+          "next": null,
+          "nextApprox": true,
+          "last": {
+            "at": 1792738800000,
+            "outcome": "ok",
+            "delivered": null,
+            "error": null
+          },
+          "proof": null,
+          "runsToday": 1,
+          "group": "macchine",
+          "level": "va",
+          "reason": "gira come deve",
+          "since": 1792738800000,
+          "sources": [
+            {
+              "key": "gh:prova/rete/.github/workflows/lint.yml",
+              "provider": "github",
+              "level": "va",
+              "last": {
+                "at": 1792738800000,
+                "outcome": "ok",
+                "delivered": null,
+                "error": null
+              }
+            }
+          ],
+          "tech": {
+            "schedule": null,
+            "exit": null,
+            "command": null,
+            "prompt": null,
+            "label": null,
+            "url": null
+          },
+          "feedback": {
+            "vote": {
+              "v": "ok",
+              "at": "2026-10-20T14:00:00.000Z",
+              "fp": "a9g5bl",
+              "note": null,
+              "id": "ok-v12"
+            },
+            "changedSinceVote": false,
+            "mute": null,
+            "open": 0,
+            "notes": []
+          },
+          "fp": "a9g5bl",
+          "missing": false
+        },
+        {
+          "key": "cron:rete-casa",
+          "provider": "openclaw",
+          "title": "Controllo della rete di casa",
+          "cosa": "Verifica ogni ora che la rete di casa risponda.",
+          "means": "Nessun messaggio.",
+          "who": "Claude",
+          "reportsTo": "nessun messaggio",
+          "when": "ogni ora",
+          "next": null,
+          "nextApprox": false,
+          "last": {
+            "at": 1792762200000,
+            "outcome": "ok",
+            "delivered": "none",
+            "error": null
+          },
+          "proof": null,
+          "runsToday": 15,
+          "group": "macchine",
+          "level": "va",
+          "reason": "gira come deve",
+          "since": 1792762200000,
+          "sources": [
+            {
+              "key": "cron:rete-casa",
+              "provider": "openclaw",
+              "level": "va",
+              "last": {
+                "at": 1792762200000,
+                "outcome": "ok",
+                "delivered": "none",
+                "error": null
+              }
+            }
+          ],
+          "tech": {
+            "schedule": null,
+            "exit": null,
+            "command": null,
+            "prompt": null,
+            "label": null,
+            "url": null
+          },
+          "feedback": {
+            "vote": null,
+            "changedSinceVote": false,
+            "mute": null,
+            "open": 0,
+            "notes": []
+          },
+          "fp": "1wfva72",
+          "missing": false
+        },
+        {
+          "key": "cron:pulizia-log",
+          "provider": "openclaw",
+          "title": "Rotazione dei log di sistema",
+          "cosa": "Ruota i log di sistema una volta a settimana.",
+          "means": "Nessun messaggio.",
+          "who": "Claude",
+          "reportsTo": "nessun messaggio",
+          "when": "il martedì",
+          "next": null,
+          "nextApprox": false,
+          "last": {
+            "at": 1792504800000,
+            "outcome": "ok",
+            "delivered": "none",
+            "error": null
+          },
+          "proof": null,
+          "runsToday": 0,
+          "group": "macchine",
+          "level": "va",
+          "reason": "gira come deve",
+          "since": 1792504800000,
+          "sources": [
+            {
+              "key": "cron:pulizia-log",
+              "provider": "openclaw",
+              "level": "va",
+              "last": {
+                "at": 1792504800000,
+                "outcome": "ok",
+                "delivered": "none",
+                "error": null
+              }
+            }
+          ],
+          "tech": {
+            "schedule": null,
+            "exit": null,
+            "command": null,
+            "prompt": null,
+            "label": null,
+            "url": null
+          },
+          "feedback": {
+            "vote": null,
+            "changedSinceVote": false,
+            "mute": null,
+            "open": 0,
+            "notes": []
+          },
+          "fp": "748pr2",
+          "missing": false
+        },
+        {
+          "key": "launchd:com.prova.dischi",
+          "provider": "launchd",
+          "title": "Sorveglianza dei dischi",
+          "cosa": "Controlla lo spazio libero sui dischi.",
+          "means": "Nessun messaggio.",
+          "who": "Claude",
+          "reportsTo": "nessun messaggio",
+          "when": "ogni giorno alle 8:00",
+          "next": null,
+          "nextApprox": false,
+          "last": {
+            "at": 1792735200000,
+            "outcome": "ok",
+            "delivered": null,
+            "error": null
+          },
+          "proof": null,
+          "runsToday": 1,
+          "group": "macchine",
+          "level": "va",
+          "reason": "gira come deve",
+          "since": 1792735200000,
+          "sources": [
+            {
+              "key": "launchd:com.prova.dischi",
+              "provider": "launchd",
+              "level": "va",
+              "last": {
+                "at": 1792735200000,
+                "outcome": "ok",
+                "delivered": null,
+                "error": null
+              }
+            }
+          ],
+          "tech": {
+            "schedule": null,
+            "exit": null,
+            "command": null,
+            "prompt": null,
+            "label": null,
+            "url": null
+          },
+          "feedback": {
+            "vote": {
+              "v": "ok",
+              "at": "2026-10-20T14:00:00.000Z",
+              "fp": "v2iv85",
+              "note": null,
+              "id": "ok-v11"
+            },
+            "changedSinceVote": false,
+            "mute": null,
+            "open": 0,
+            "notes": []
+          },
+          "fp": "v2iv85",
+          "missing": false
+        }
+      ]
+    },
+    {
+      "id": "prodotti",
+      "title": "I prodotti sono verificati",
+      "cards": [
+        {
+          "key": "cron:collaudo-rapido",
+          "provider": "openclaw",
+          "title": "Collaudo completo del prodotto",
+          "cosa": "Esegue ogni giorno il collaudo completo del prodotto.",
+          "means": "Lo vedi su GitHub.",
+          "who": "Claude",
+          "reportsTo": "nessun messaggio",
+          "when": "ogni giorno",
+          "next": null,
+          "nextApprox": false,
+          "last": {
+            "at": 1792731600000,
+            "outcome": "ok",
+            "delivered": "none",
+            "error": null
+          },
+          "proof": null,
+          "runsToday": 1,
+          "group": "prodotti",
+          "level": "va",
+          "reason": "gira come deve",
+          "since": 1792731600000,
+          "sources": [
+            {
+              "key": "cron:collaudo-rapido",
+              "provider": "openclaw",
+              "level": "va",
+              "last": {
+                "at": 1792731600000,
+                "outcome": "ok",
+                "delivered": "none",
+                "error": null
+              }
+            }
+          ],
+          "tech": {
+            "schedule": null,
+            "exit": null,
+            "command": null,
+            "prompt": null,
+            "label": null,
+            "url": null
+          },
+          "feedback": {
+            "vote": {
+              "v": "ok",
+              "at": "2026-10-20T14:00:00.000Z",
+              "fp": "1bb2nob",
+              "note": null,
+              "id": "ok-v13"
+            },
+            "changedSinceVote": false,
+            "mute": null,
+            "open": 0,
+            "notes": []
+          },
+          "fp": "1bb2nob",
+          "missing": false
+        },
+        {
+          "key": "gh:prova/app/.github/workflows/collaudo.yml",
+          "provider": "github",
+          "title": "Collaudo settimanale del prodotto",
+          "cosa": "Esegue il collaudo lungo una volta a settimana.",
+          "means": "Lo vedi su GitHub.",
+          "who": "GitHub Actions",
+          "reportsTo": "GitHub",
+          "when": "ogni settimana",
+          "next": null,
+          "nextApprox": true,
+          "last": {
+            "at": 1792591200000,
+            "outcome": "ok",
+            "delivered": null,
+            "error": null
+          },
+          "proof": null,
+          "runsToday": 0,
+          "group": "prodotti",
+          "level": "va",
+          "reason": "gira come deve",
+          "since": 1792591200000,
+          "sources": [
+            {
+              "key": "gh:prova/app/.github/workflows/collaudo.yml",
+              "provider": "github",
+              "level": "va",
+              "last": {
+                "at": 1792591200000,
+                "outcome": "ok",
+                "delivered": null,
+                "error": null
+              }
+            }
+          ],
+          "tech": {
+            "schedule": null,
+            "exit": null,
+            "command": null,
+            "prompt": null,
+            "label": null,
+            "url": null
+          },
+          "feedback": {
+            "vote": {
+              "v": "ok",
+              "at": "2026-10-20T14:00:00.000Z",
+              "fp": "9rb003",
+              "note": null,
+              "id": "ok-v14"
+            },
+            "changedSinceVote": false,
+            "mute": null,
+            "open": 0,
+            "notes": []
+          },
+          "fp": "9rb003",
+          "missing": false
+        },
+        {
+          "key": "cron:verifica-prezzi",
+          "provider": "openclaw",
+          "title": "Verifica dei prezzi pubblicati",
+          "cosa": "Controlla ogni giorno che i prezzi pubblicati siano giusti.",
+          "means": "Nessun messaggio.",
+          "who": "Claude",
+          "reportsTo": "nessun messaggio",
+          "when": "ogni giorno",
+          "next": null,
+          "nextApprox": false,
+          "last": {
+            "at": 1792728000000,
+            "outcome": "ok",
+            "delivered": "none",
+            "error": null
+          },
+          "proof": null,
+          "runsToday": 1,
+          "group": "prodotti",
+          "level": "va",
+          "reason": "gira come deve",
+          "since": 1792728000000,
+          "sources": [
+            {
+              "key": "cron:verifica-prezzi",
+              "provider": "openclaw",
+              "level": "va",
+              "last": {
+                "at": 1792728000000,
+                "outcome": "ok",
+                "delivered": "none",
+                "error": null
+              }
+            }
+          ],
+          "tech": {
+            "schedule": null,
+            "exit": null,
+            "command": null,
+            "prompt": null,
+            "label": null,
+            "url": null
+          },
+          "feedback": {
+            "vote": null,
+            "changedSinceVote": false,
+            "mute": null,
+            "open": 0,
+            "notes": []
+          },
+          "fp": "1cy0354",
+          "missing": false
+        }
+      ]
+    }
+  ],
+  "workflows": {
+    "days": 7,
+    "total": 6,
+    "failed": 0,
+    "byName": [
+      {
+        "name": "riordino-prova",
+        "total": 3,
+        "failed": 0,
+        "last": 1792756800000,
+        "runs": [
+          {
+            "runId": "wf_000001",
+            "at": 1792756800000,
+            "outcome": "ok",
+            "durationMs": 90000,
+            "agents": 3,
+            "phases": [
+              {
+                "title": "Preparazione",
+                "total": 2,
+                "done": 2,
+                "failed": 0
+              },
+              {
+                "title": "Esecuzione",
+                "total": 1,
+                "done": 1,
+                "failed": 0
+              }
+            ],
+            "summary": "Tutto in ordine."
+          },
+          {
+            "runId": "wf_000002",
+            "at": 1792670400000,
+            "outcome": "ok",
+            "durationMs": 80000,
+            "agents": 3,
+            "phases": [
+              {
+                "title": "Preparazione",
+                "total": 2,
+                "done": 2,
+                "failed": 0
+              },
+              {
+                "title": "Esecuzione",
+                "total": 1,
+                "done": 1,
+                "failed": 0
+              }
+            ],
+            "summary": "Tutto in ordine."
+          },
+          {
+            "runId": "wf_000003",
+            "at": 1792591200000,
+            "outcome": "ok",
+            "durationMs": 85000,
+            "agents": 2,
+            "phases": [
+              {
+                "title": "Preparazione",
+                "total": 2,
+                "done": 2,
+                "failed": 0
+              },
+              {
+                "title": "Esecuzione",
+                "total": 1,
+                "done": 1,
+                "failed": 0
+              }
+            ],
+            "summary": "Tutto in ordine."
+          }
+        ]
+      },
+      {
+        "name": "scaffale-prova",
+        "total": 3,
+        "failed": 0,
+        "last": 1792677600000,
+        "runs": [
+          {
+            "runId": "wf_000004",
+            "at": 1792677600000,
+            "outcome": "ok",
+            "durationMs": 60000,
+            "agents": 2,
+            "phases": [
+              {
+                "title": "Preparazione",
+                "total": 2,
+                "done": 2,
+                "failed": 0
+              },
+              {
+                "title": "Esecuzione",
+                "total": 1,
+                "done": 1,
+                "failed": 0
+              }
+            ],
+            "summary": "Scaffale sistemato."
+          },
+          {
+            "runId": "wf_000005",
+            "at": 1792504800000,
+            "outcome": "ok",
+            "durationMs": 61000,
+            "agents": 2,
+            "phases": [
+              {
+                "title": "Preparazione",
+                "total": 2,
+                "done": 2,
+                "failed": 0
+              },
+              {
+                "title": "Esecuzione",
+                "total": 1,
+                "done": 1,
+                "failed": 0
+              }
+            ],
+            "summary": "Scaffale sistemato."
+          },
+          {
+            "runId": "wf_000006",
+            "at": 1792332000000,
+            "outcome": "ok",
+            "durationMs": 59000,
+            "agents": 1,
+            "phases": [
+              {
+                "title": "Preparazione",
+                "total": 2,
+                "done": 2,
+                "failed": 0
+              },
+              {
+                "title": "Esecuzione",
+                "total": 1,
+                "done": 1,
+                "failed": 0
+              }
+            ],
+            "summary": "Scaffale sistemato."
+          }
+        ]
+      }
+    ]
+  },
+  "review": {
+    "total": 20,
+    "unconfirmed": [
+      "cron:avvisi-tele",
+      "cron:quote-codex",
+      "cron:rete-casa",
+      "cron:pulizia-log",
+      "cron:verifica-prezzi"
+    ]
+  },
+  "footer": {
+    "sources": [
+      {
+        "name": "openclaw",
+        "label": "OpenClaw",
+        "ok": true,
+        "at": 1792763940000,
+        "pending": false,
+        "note": null
+      },
+      {
+        "name": "launchd",
+        "label": "Mac (launchd)",
+        "ok": true,
+        "at": 1792763940000,
+        "pending": false,
+        "note": null
+      },
+      {
+        "name": "desktop",
+        "label": "Claude desktop",
+        "ok": true,
+        "at": 1792763940000,
+        "pending": false,
+        "note": null
+      },
+      {
+        "name": "workflows",
+        "label": "Workflow",
+        "ok": true,
+        "at": 1792763940000,
+        "pending": false,
+        "note": null
+      },
+      {
+        "name": "github",
+        "label": "GitHub",
+        "ok": true,
+        "at": 1792763940000,
+        "pending": false,
+        "note": null
+      },
+      {
+        "name": "pc",
+        "label": "PC di casa",
+        "ok": true,
+        "at": 1792763940000,
+        "pending": false,
+        "note": "PC dorme"
+      },
+      {
+        "name": "findings",
+        "label": "Controllo di salute",
+        "ok": true,
+        "at": 1792760400000,
+        "pending": false,
+        "note": null
+      }
+    ],
+    "pcAsleep": true,
+    "hidden": {
+      "count": 0,
+      "why": []
+    },
+    "counts": {
+      "codex": 2,
+      "jcode": 0,
+      "topics": null
+    }
+  },
+  "cards": {
+    "cron:avvisi-tele": {
+      "key": "cron:avvisi-tele",
+      "provider": "openclaw",
+      "title": "Avvisi urgenti in chat",
+      "cosa": "Controlla i canali urgenti e avvisa subito.",
+      "means": "Ti scrive su Telegram.",
+      "who": "Claude",
+      "reportsTo": "Telegram",
+      "when": "ogni giorno",
+      "next": null,
+      "nextApprox": false,
+      "last": {
+        "at": 1792753200000,
+        "outcome": "ok",
+        "delivered": "none",
+        "error": null
+      },
+      "proof": null,
+      "runsToday": 1,
+      "group": "arriva",
+      "level": "va",
+      "reason": "gira come deve",
+      "since": 1792753200000,
+      "sources": [
+        {
+          "key": "cron:avvisi-tele",
+          "provider": "openclaw",
+          "level": "va",
+          "last": {
+            "at": 1792753200000,
+            "outcome": "ok",
+            "delivered": "none",
+            "error": null
+          }
+        }
+      ],
+      "tech": {
+        "schedule": null,
+        "exit": null,
+        "command": null,
+        "prompt": null,
+        "label": null,
+        "url": null
+      },
+      "feedback": {
+        "vote": null,
+        "changedSinceVote": false,
+        "mute": null,
+        "open": 0,
+        "notes": []
+      },
+      "fp": "rs8v4t",
+      "missing": false
+    },
+    "cron:posta-veloce": {
+      "key": "cron:posta-veloce",
+      "provider": "openclaw",
+      "title": "Avviso mail importanti",
+      "cosa": "Legge la posta ogni minuto e avvisa se c’è qualcosa di urgente.",
+      "means": "Ti scrive su WhatsApp solo quando serve.",
+      "who": "script: posta.py",
+      "reportsTo": "WhatsApp",
+      "when": "ogni minuto",
+      "next": 1792764030000,
+      "nextApprox": false,
+      "last": {
+        "at": 1792763970000,
+        "outcome": "ok",
+        "delivered": "none",
+        "error": null
+      },
+      "proof": null,
+      "runsToday": 240,
+      "group": "arriva",
+      "level": "va",
+      "reason": "gira come deve",
+      "since": 1792763970000,
+      "sources": [
+        {
+          "key": "cron:posta-veloce",
+          "provider": "openclaw",
+          "level": "va",
+          "last": {
+            "at": 1792763970000,
+            "outcome": "ok",
+            "delivered": "none",
+            "error": null
+          }
+        }
+      ],
+      "tech": {
+        "schedule": "ogni minuto",
+        "exit": null,
+        "command": "posta.py --controlla",
+        "prompt": null,
+        "label": "posta-veloce",
+        "url": null
+      },
+      "feedback": {
+        "vote": {
+          "v": "ok",
+          "at": "2026-10-20T14:00:00.000Z",
+          "fp": "1rmoiku",
+          "note": null,
+          "id": "ok-v0"
+        },
+        "changedSinceVote": false,
+        "mute": null,
+        "open": 0,
+        "notes": []
+      },
+      "fp": "1rmoiku",
+      "missing": false
+    },
+    "launchd:com.prova.sera": {
+      "key": "launchd:com.prova.sera",
+      "provider": "launchd",
+      "title": "Promemoria della sera",
+      "cosa": "Ricorda le cose rimaste in sospeso prima di cena.",
+      "means": "Ti scrive su WhatsApp.",
+      "who": "Claude",
+      "reportsTo": "nessun messaggio",
+      "when": "ogni giorno alle 20:00",
+      "next": 1792778400000,
+      "nextApprox": false,
+      "last": {
+        "at": 1792692000000,
+        "outcome": "ok",
+        "delivered": null,
+        "error": null
+      },
+      "proof": null,
+      "runsToday": 1,
+      "group": "arriva",
+      "level": "va",
+      "reason": "gira come deve",
+      "since": 1792692000000,
+      "sources": [
+        {
+          "key": "launchd:com.prova.sera",
+          "provider": "launchd",
+          "level": "va",
+          "last": {
+            "at": 1792692000000,
+            "outcome": "ok",
+            "delivered": null,
+            "error": null
+          }
+        }
+      ],
+      "tech": {
+        "schedule": null,
+        "exit": null,
+        "command": null,
+        "prompt": null,
+        "label": null,
+        "url": null
+      },
+      "feedback": {
+        "vote": {
+          "v": "ok",
+          "at": "2026-10-20T14:00:00.000Z",
+          "fp": "ryqjom",
+          "note": null,
+          "id": "ok-v2"
+        },
+        "changedSinceVote": false,
+        "mute": null,
+        "open": 0,
+        "notes": []
+      },
+      "fp": "ryqjom",
+      "missing": false
+    },
+    "desktop:promemoria-festa": {
+      "key": "desktop:promemoria-festa",
+      "provider": "desktop",
+      "title": "Promemoria festa di prova",
+      "cosa": "Ricorda di preparare la festa di prova di domani.",
+      "means": "Ti scrive la sessione che lo ha creato.",
+      "who": "Claude (app desktop)",
+      "reportsTo": "la sessione che l'ha creato",
+      "when": "oggi alle 21:00",
+      "next": 1792782000000,
+      "nextApprox": false,
+      "last": {
+        "at": null,
+        "outcome": null,
+        "delivered": null,
+        "error": null
+      },
+      "proof": null,
+      "runsToday": 0,
+      "group": "arriva",
+      "level": "va",
+      "reason": "gira come deve",
+      "since": null,
+      "sources": [
+        {
+          "key": "desktop:promemoria-festa",
+          "provider": "desktop",
+          "level": "va",
+          "last": {
+            "at": null,
+            "outcome": null,
+            "delivered": null,
+            "error": null
+          }
+        }
+      ],
+      "tech": {
+        "schedule": "2026-10-23T19:00:00.000Z",
+        "exit": null,
+        "command": null,
+        "prompt": "Ricorda la festa di prova.",
+        "label": "festa",
+        "url": null
+      },
+      "feedback": {
+        "vote": {
+          "v": "ok",
+          "at": "2026-10-20T14:00:00.000Z",
+          "fp": "copo66",
+          "note": null,
+          "id": "ok-v3"
+        },
+        "changedSinceVote": false,
+        "mute": null,
+        "open": 0,
+        "notes": []
+      },
+      "fp": "copo66",
+      "missing": false
+    },
+    "cron:posta-sera": {
+      "key": "cron:posta-sera",
+      "provider": "openclaw",
+      "title": "Riepilogo serale dei messaggi",
+      "cosa": "Raccoglie i messaggi della giornata in un unico riepilogo.",
+      "means": "Ti scrive su WhatsApp la sera.",
+      "who": "Claude",
+      "reportsTo": "WhatsApp",
+      "when": "ogni ora",
+      "next": null,
+      "nextApprox": false,
+      "last": {
+        "at": 1792762800000,
+        "outcome": "ok",
+        "delivered": "delivered",
+        "error": null
+      },
+      "proof": null,
+      "runsToday": 12,
+      "group": "arriva",
+      "level": "va",
+      "reason": "gira come deve",
+      "since": 1792762800000,
+      "sources": [
+        {
+          "key": "cron:posta-sera",
+          "provider": "openclaw",
+          "level": "va",
+          "last": {
+            "at": 1792762800000,
+            "outcome": "ok",
+            "delivered": "delivered",
+            "error": null
+          }
+        }
+      ],
+      "tech": {
+        "schedule": null,
+        "exit": null,
+        "command": null,
+        "prompt": null,
+        "label": null,
+        "url": null
+      },
+      "feedback": {
+        "vote": {
+          "v": "ok",
+          "at": "2026-10-20T14:00:00.000Z",
+          "fp": "p0obk5",
+          "note": null,
+          "id": "ok-v1"
+        },
+        "changedSinceVote": false,
+        "mute": null,
+        "open": 0,
+        "notes": []
+      },
+      "fp": "p0obk5",
+      "missing": false
+    },
+    "gh:prova/foto/.github/workflows/foto.yml": {
+      "key": "gh:prova/foto/.github/workflows/foto.yml",
+      "provider": "github",
+      "title": "Archivio foto verificato",
+      "cosa": "Controlla ogni giorno che l’archivio foto sia integro.",
+      "means": "Lo vedi su GitHub.",
+      "who": "GitHub Actions",
+      "reportsTo": "GitHub",
+      "when": "ogni giorno",
+      "next": 1792832400000,
+      "nextApprox": true,
+      "last": {
+        "at": 1792746000000,
+        "outcome": "ok",
+        "delivered": null,
+        "error": null
+      },
+      "proof": null,
+      "runsToday": 1,
+      "group": "dati",
+      "level": "va",
+      "reason": "gira come deve",
+      "since": 1792746000000,
+      "sources": [
+        {
+          "key": "gh:prova/foto/.github/workflows/foto.yml",
+          "provider": "github",
+          "level": "va",
+          "last": {
+            "at": 1792746000000,
+            "outcome": "ok",
+            "delivered": null,
+            "error": null
+          }
+        }
+      ],
+      "tech": {
+        "schedule": null,
+        "exit": null,
+        "command": null,
+        "prompt": null,
+        "label": null,
+        "url": null
+      },
+      "feedback": {
+        "vote": {
+          "v": "ok",
+          "at": "2026-10-20T14:00:00.000Z",
+          "fp": "18s0tc7",
+          "note": null,
+          "id": "ok-v7"
+        },
+        "changedSinceVote": false,
+        "mute": null,
+        "open": 0,
+        "notes": []
+      },
+      "fp": "18s0tc7",
+      "missing": false
+    },
+    "cron:backup-notte": {
+      "key": "cron:backup-notte",
+      "provider": "openclaw",
+      "title": "Backup notturno nel repo privato",
+      "cosa": "Copia i dati della giornata nel repo privato di notte.",
+      "means": "Nessun messaggio se va tutto bene.",
+      "who": "script: backup.py",
+      "reportsTo": "nessun messaggio",
+      "when": "ogni giorno alle 3:19",
+      "next": null,
+      "nextApprox": false,
+      "last": {
+        "at": 1792718340000,
+        "outcome": "ok",
+        "delivered": "none",
+        "error": null
+      },
+      "proof": null,
+      "runsToday": 1,
+      "group": "dati",
+      "level": "va",
+      "reason": "gira come deve",
+      "since": 1792718340000,
+      "sources": [
+        {
+          "key": "cron:backup-notte",
+          "provider": "openclaw",
+          "level": "va",
+          "last": {
+            "at": 1792718340000,
+            "outcome": "ok",
+            "delivered": "none",
+            "error": null
+          }
+        }
+      ],
+      "tech": {
+        "schedule": null,
+        "exit": null,
+        "command": null,
+        "prompt": null,
+        "label": null,
+        "url": null
+      },
+      "feedback": {
+        "vote": {
+          "v": "ok",
+          "at": "2026-10-20T14:00:00.000Z",
+          "fp": "rfmruk",
+          "note": null,
+          "id": "ok-v4"
+        },
+        "changedSinceVote": false,
+        "mute": null,
+        "open": 0,
+        "notes": []
+      },
+      "fp": "rfmruk",
+      "missing": false
+    },
+    "launchd:com.prova.ore": {
+      "key": "launchd:com.prova.ore",
+      "provider": "launchd",
+      "title": "Copia di sicurezza ogni sei ore",
+      "cosa": "Fa una copia di sicurezza a intervalli regolari.",
+      "means": "Nessun messaggio.",
+      "who": "script: copia.sh",
+      "reportsTo": "nessun messaggio",
+      "when": "ogni 6 ore",
+      "next": 1792782000000,
+      "nextApprox": false,
+      "last": {
+        "at": 1792760400000,
+        "outcome": "ok",
+        "delivered": null,
+        "error": null
+      },
+      "proof": null,
+      "runsToday": 3,
+      "group": "dati",
+      "level": "va",
+      "reason": "gira come deve",
+      "since": 1792760400000,
+      "sources": [
+        {
+          "key": "launchd:com.prova.ore",
+          "provider": "launchd",
+          "level": "va",
+          "last": {
+            "at": 1792760400000,
+            "outcome": "ok",
+            "delivered": null,
+            "error": null
+          }
+        }
+      ],
+      "tech": {
+        "schedule": null,
+        "exit": null,
+        "command": null,
+        "prompt": null,
+        "label": null,
+        "url": null
+      },
+      "feedback": {
+        "vote": {
+          "v": "ok",
+          "at": "2026-10-20T14:00:00.000Z",
+          "fp": "d9450o",
+          "note": null,
+          "id": "ok-v5"
+        },
+        "changedSinceVote": false,
+        "mute": null,
+        "open": 0,
+        "notes": []
+      },
+      "fp": "d9450o",
+      "missing": false
+    },
+    "cron:pulizia-scratch": {
+      "key": "cron:pulizia-scratch",
+      "provider": "openclaw",
+      "title": "Pulizia settimanale dei file temporanei",
+      "cosa": "Butta i file temporanei vecchi di una settimana.",
+      "means": "Nessun messaggio.",
+      "who": "Claude",
+      "reportsTo": "nessun messaggio",
+      "when": "il lunedì",
+      "next": null,
+      "nextApprox": false,
+      "last": {
+        "at": 1792591200000,
+        "outcome": "ok",
+        "delivered": "none",
+        "error": null
+      },
+      "proof": null,
+      "runsToday": 0,
+      "group": "dati",
+      "level": "va",
+      "reason": "gira come deve",
+      "since": 1792591200000,
+      "sources": [
+        {
+          "key": "cron:pulizia-scratch",
+          "provider": "openclaw",
+          "level": "va",
+          "last": {
+            "at": 1792591200000,
+            "outcome": "ok",
+            "delivered": "none",
+            "error": null
+          }
+        }
+      ],
+      "tech": {
+        "schedule": null,
+        "exit": null,
+        "command": null,
+        "prompt": null,
+        "label": null,
+        "url": null
+      },
+      "feedback": {
+        "vote": {
+          "v": "ok",
+          "at": "2026-10-20T14:00:00.000Z",
+          "fp": "cr8q9m",
+          "note": null,
+          "id": "ok-v6"
+        },
+        "changedSinceVote": false,
+        "mute": null,
+        "open": 0,
+        "notes": []
+      },
+      "fp": "cr8q9m",
+      "missing": false
+    },
+    "launchd:com.prova.residui": {
+      "key": "launchd:com.prova.residui",
+      "provider": "launchd",
+      "title": "Controllo dei residui di quota",
+      "cosa": "Verifica i residui di quota dal Mac.",
+      "means": "Nessun messaggio.",
+      "who": "Claude",
+      "reportsTo": "nessun messaggio",
+      "when": "ogni giorno alle 7:00",
+      "next": null,
+      "nextApprox": false,
+      "last": {
+        "at": 1792731600000,
+        "outcome": "ok",
+        "delivered": null,
+        "error": null
+      },
+      "proof": null,
+      "runsToday": 1,
+      "group": "quote",
+      "level": "va",
+      "reason": "gira come deve",
+      "since": 1792731600000,
+      "sources": [
+        {
+          "key": "launchd:com.prova.residui",
+          "provider": "launchd",
+          "level": "va",
+          "last": {
+            "at": 1792731600000,
+            "outcome": "ok",
+            "delivered": null,
+            "error": null
+          }
+        }
+      ],
+      "tech": {
+        "schedule": null,
+        "exit": null,
+        "command": null,
+        "prompt": null,
+        "label": null,
+        "url": null
+      },
+      "feedback": {
+        "vote": {
+          "v": "ok",
+          "at": "2026-10-20T14:00:00.000Z",
+          "fp": "1wyxmqc",
+          "note": null,
+          "id": "ok-v9"
+        },
+        "changedSinceVote": false,
+        "mute": null,
+        "open": 0,
+        "notes": []
+      },
+      "fp": "1wyxmqc",
+      "missing": false
+    },
+    "cron:quote-muse": {
+      "key": "cron:quote-muse",
+      "provider": "openclaw",
+      "title": "Livello delle quote IA",
+      "cosa": "Controlla quanto hai usato del modello principale.",
+      "means": "Nessun messaggio.",
+      "who": "Claude",
+      "reportsTo": "nessun messaggio",
+      "when": "ogni 6 ore",
+      "next": null,
+      "nextApprox": false,
+      "last": {
+        "at": 1792756800000,
+        "outcome": "ok",
+        "delivered": "none",
+        "error": null
+      },
+      "proof": null,
+      "runsToday": 3,
+      "group": "quote",
+      "level": "va",
+      "reason": "gira come deve",
+      "since": 1792756800000,
+      "sources": [
+        {
+          "key": "cron:quote-muse",
+          "provider": "openclaw",
+          "level": "va",
+          "last": {
+            "at": 1792756800000,
+            "outcome": "ok",
+            "delivered": "none",
+            "error": null
+          }
+        }
+      ],
+      "tech": {
+        "schedule": null,
+        "exit": null,
+        "command": null,
+        "prompt": null,
+        "label": null,
+        "url": null
+      },
+      "feedback": {
+        "vote": {
+          "v": "ok",
+          "at": "2026-10-20T14:00:00.000Z",
+          "fp": "1vfjwxs",
+          "note": null,
+          "id": "ok-v8"
+        },
+        "changedSinceVote": false,
+        "mute": null,
+        "open": 0,
+        "notes": []
+      },
+      "fp": "1vfjwxs",
+      "missing": false
+    },
+    "cron:quote-codex": {
+      "key": "cron:quote-codex",
+      "provider": "openclaw",
+      "title": "Quote del secondo modello",
+      "cosa": "Controlla quanto hai usato del secondo modello.",
+      "means": "Nessun messaggio.",
+      "who": "Claude",
+      "reportsTo": "nessun messaggio",
+      "when": "ogni giorno",
+      "next": null,
+      "nextApprox": false,
+      "last": {
+        "at": 1792742400000,
+        "outcome": "ok",
+        "delivered": "none",
+        "error": null
+      },
+      "proof": null,
+      "runsToday": 1,
+      "group": "quote",
+      "level": "va",
+      "reason": "gira come deve",
+      "since": 1792742400000,
+      "sources": [
+        {
+          "key": "cron:quote-codex",
+          "provider": "openclaw",
+          "level": "va",
+          "last": {
+            "at": 1792742400000,
+            "outcome": "ok",
+            "delivered": "none",
+            "error": null
+          }
+        }
+      ],
+      "tech": {
+        "schedule": null,
+        "exit": null,
+        "command": null,
+        "prompt": null,
+        "label": null,
+        "url": null
+      },
+      "feedback": {
+        "vote": null,
+        "changedSinceVote": false,
+        "mute": null,
+        "open": 0,
+        "notes": []
+      },
+      "fp": "1d5mao4",
+      "missing": false
+    },
+    "cron:battito": {
+      "key": "cron:battito",
+      "provider": "openclaw",
+      "title": "Battito del sistema",
+      "cosa": "Verifica ogni cinque minuti che il sistema risponda.",
+      "means": "Ti scrive in chat solo se c’è qualcosa.",
+      "who": "Jarvis nella chat principale",
+      "reportsTo": "la tua chat, solo se c’è qualcosa",
+      "when": "ogni 5 min",
+      "next": null,
+      "nextApprox": false,
+      "last": {
+        "at": 1792763880000,
+        "outcome": "ok",
+        "delivered": "none",
+        "error": null
+      },
+      "proof": null,
+      "runsToday": 190,
+      "group": "macchine",
+      "level": "va",
+      "reason": "gira come deve",
+      "since": 1792763880000,
+      "sources": [
+        {
+          "key": "cron:battito",
+          "provider": "openclaw",
+          "level": "va",
+          "last": {
+            "at": 1792763880000,
+            "outcome": "ok",
+            "delivered": "none",
+            "error": null
+          }
+        }
+      ],
+      "tech": {
+        "schedule": null,
+        "exit": null,
+        "command": null,
+        "prompt": null,
+        "label": null,
+        "url": null
+      },
+      "feedback": {
+        "vote": {
+          "v": "ok",
+          "at": "2026-10-20T14:00:00.000Z",
+          "fp": "59yyjb",
+          "note": null,
+          "id": "ok-v10"
+        },
+        "changedSinceVote": false,
+        "mute": null,
+        "open": 0,
+        "notes": []
+      },
+      "fp": "59yyjb",
+      "missing": false
+    },
+    "gh:prova/rete/.github/workflows/lint.yml": {
+      "key": "gh:prova/rete/.github/workflows/lint.yml",
+      "provider": "github",
+      "title": "Controllo automatico del codice",
+      "cosa": "Esegue il controllo del codice a ogni giro.",
+      "means": "Lo vedi su GitHub.",
+      "who": "GitHub Actions",
+      "reportsTo": "GitHub",
+      "when": "ogni giorno",
+      "next": null,
+      "nextApprox": true,
+      "last": {
+        "at": 1792738800000,
+        "outcome": "ok",
+        "delivered": null,
+        "error": null
+      },
+      "proof": null,
+      "runsToday": 1,
+      "group": "macchine",
+      "level": "va",
+      "reason": "gira come deve",
+      "since": 1792738800000,
+      "sources": [
+        {
+          "key": "gh:prova/rete/.github/workflows/lint.yml",
+          "provider": "github",
+          "level": "va",
+          "last": {
+            "at": 1792738800000,
+            "outcome": "ok",
+            "delivered": null,
+            "error": null
+          }
+        }
+      ],
+      "tech": {
+        "schedule": null,
+        "exit": null,
+        "command": null,
+        "prompt": null,
+        "label": null,
+        "url": null
+      },
+      "feedback": {
+        "vote": {
+          "v": "ok",
+          "at": "2026-10-20T14:00:00.000Z",
+          "fp": "a9g5bl",
+          "note": null,
+          "id": "ok-v12"
+        },
+        "changedSinceVote": false,
+        "mute": null,
+        "open": 0,
+        "notes": []
+      },
+      "fp": "a9g5bl",
+      "missing": false
+    },
+    "cron:rete-casa": {
+      "key": "cron:rete-casa",
+      "provider": "openclaw",
+      "title": "Controllo della rete di casa",
+      "cosa": "Verifica ogni ora che la rete di casa risponda.",
+      "means": "Nessun messaggio.",
+      "who": "Claude",
+      "reportsTo": "nessun messaggio",
+      "when": "ogni ora",
+      "next": null,
+      "nextApprox": false,
+      "last": {
+        "at": 1792762200000,
+        "outcome": "ok",
+        "delivered": "none",
+        "error": null
+      },
+      "proof": null,
+      "runsToday": 15,
+      "group": "macchine",
+      "level": "va",
+      "reason": "gira come deve",
+      "since": 1792762200000,
+      "sources": [
+        {
+          "key": "cron:rete-casa",
+          "provider": "openclaw",
+          "level": "va",
+          "last": {
+            "at": 1792762200000,
+            "outcome": "ok",
+            "delivered": "none",
+            "error": null
+          }
+        }
+      ],
+      "tech": {
+        "schedule": null,
+        "exit": null,
+        "command": null,
+        "prompt": null,
+        "label": null,
+        "url": null
+      },
+      "feedback": {
+        "vote": null,
+        "changedSinceVote": false,
+        "mute": null,
+        "open": 0,
+        "notes": []
+      },
+      "fp": "1wfva72",
+      "missing": false
+    },
+    "cron:pulizia-log": {
+      "key": "cron:pulizia-log",
+      "provider": "openclaw",
+      "title": "Rotazione dei log di sistema",
+      "cosa": "Ruota i log di sistema una volta a settimana.",
+      "means": "Nessun messaggio.",
+      "who": "Claude",
+      "reportsTo": "nessun messaggio",
+      "when": "il martedì",
+      "next": null,
+      "nextApprox": false,
+      "last": {
+        "at": 1792504800000,
+        "outcome": "ok",
+        "delivered": "none",
+        "error": null
+      },
+      "proof": null,
+      "runsToday": 0,
+      "group": "macchine",
+      "level": "va",
+      "reason": "gira come deve",
+      "since": 1792504800000,
+      "sources": [
+        {
+          "key": "cron:pulizia-log",
+          "provider": "openclaw",
+          "level": "va",
+          "last": {
+            "at": 1792504800000,
+            "outcome": "ok",
+            "delivered": "none",
+            "error": null
+          }
+        }
+      ],
+      "tech": {
+        "schedule": null,
+        "exit": null,
+        "command": null,
+        "prompt": null,
+        "label": null,
+        "url": null
+      },
+      "feedback": {
+        "vote": null,
+        "changedSinceVote": false,
+        "mute": null,
+        "open": 0,
+        "notes": []
+      },
+      "fp": "748pr2",
+      "missing": false
+    },
+    "launchd:com.prova.dischi": {
+      "key": "launchd:com.prova.dischi",
+      "provider": "launchd",
+      "title": "Sorveglianza dei dischi",
+      "cosa": "Controlla lo spazio libero sui dischi.",
+      "means": "Nessun messaggio.",
+      "who": "Claude",
+      "reportsTo": "nessun messaggio",
+      "when": "ogni giorno alle 8:00",
+      "next": null,
+      "nextApprox": false,
+      "last": {
+        "at": 1792735200000,
+        "outcome": "ok",
+        "delivered": null,
+        "error": null
+      },
+      "proof": null,
+      "runsToday": 1,
+      "group": "macchine",
+      "level": "va",
+      "reason": "gira come deve",
+      "since": 1792735200000,
+      "sources": [
+        {
+          "key": "launchd:com.prova.dischi",
+          "provider": "launchd",
+          "level": "va",
+          "last": {
+            "at": 1792735200000,
+            "outcome": "ok",
+            "delivered": null,
+            "error": null
+          }
+        }
+      ],
+      "tech": {
+        "schedule": null,
+        "exit": null,
+        "command": null,
+        "prompt": null,
+        "label": null,
+        "url": null
+      },
+      "feedback": {
+        "vote": {
+          "v": "ok",
+          "at": "2026-10-20T14:00:00.000Z",
+          "fp": "v2iv85",
+          "note": null,
+          "id": "ok-v11"
+        },
+        "changedSinceVote": false,
+        "mute": null,
+        "open": 0,
+        "notes": []
+      },
+      "fp": "v2iv85",
+      "missing": false
+    },
+    "cron:collaudo-rapido": {
+      "key": "cron:collaudo-rapido",
+      "provider": "openclaw",
+      "title": "Collaudo completo del prodotto",
+      "cosa": "Esegue ogni giorno il collaudo completo del prodotto.",
+      "means": "Lo vedi su GitHub.",
+      "who": "Claude",
+      "reportsTo": "nessun messaggio",
+      "when": "ogni giorno",
+      "next": null,
+      "nextApprox": false,
+      "last": {
+        "at": 1792731600000,
+        "outcome": "ok",
+        "delivered": "none",
+        "error": null
+      },
+      "proof": null,
+      "runsToday": 1,
+      "group": "prodotti",
+      "level": "va",
+      "reason": "gira come deve",
+      "since": 1792731600000,
+      "sources": [
+        {
+          "key": "cron:collaudo-rapido",
+          "provider": "openclaw",
+          "level": "va",
+          "last": {
+            "at": 1792731600000,
+            "outcome": "ok",
+            "delivered": "none",
+            "error": null
+          }
+        }
+      ],
+      "tech": {
+        "schedule": null,
+        "exit": null,
+        "command": null,
+        "prompt": null,
+        "label": null,
+        "url": null
+      },
+      "feedback": {
+        "vote": {
+          "v": "ok",
+          "at": "2026-10-20T14:00:00.000Z",
+          "fp": "1bb2nob",
+          "note": null,
+          "id": "ok-v13"
+        },
+        "changedSinceVote": false,
+        "mute": null,
+        "open": 0,
+        "notes": []
+      },
+      "fp": "1bb2nob",
+      "missing": false
+    },
+    "gh:prova/app/.github/workflows/collaudo.yml": {
+      "key": "gh:prova/app/.github/workflows/collaudo.yml",
+      "provider": "github",
+      "title": "Collaudo settimanale del prodotto",
+      "cosa": "Esegue il collaudo lungo una volta a settimana.",
+      "means": "Lo vedi su GitHub.",
+      "who": "GitHub Actions",
+      "reportsTo": "GitHub",
+      "when": "ogni settimana",
+      "next": null,
+      "nextApprox": true,
+      "last": {
+        "at": 1792591200000,
+        "outcome": "ok",
+        "delivered": null,
+        "error": null
+      },
+      "proof": null,
+      "runsToday": 0,
+      "group": "prodotti",
+      "level": "va",
+      "reason": "gira come deve",
+      "since": 1792591200000,
+      "sources": [
+        {
+          "key": "gh:prova/app/.github/workflows/collaudo.yml",
+          "provider": "github",
+          "level": "va",
+          "last": {
+            "at": 1792591200000,
+            "outcome": "ok",
+            "delivered": null,
+            "error": null
+          }
+        }
+      ],
+      "tech": {
+        "schedule": null,
+        "exit": null,
+        "command": null,
+        "prompt": null,
+        "label": null,
+        "url": null
+      },
+      "feedback": {
+        "vote": {
+          "v": "ok",
+          "at": "2026-10-20T14:00:00.000Z",
+          "fp": "9rb003",
+          "note": null,
+          "id": "ok-v14"
+        },
+        "changedSinceVote": false,
+        "mute": null,
+        "open": 0,
+        "notes": []
+      },
+      "fp": "9rb003",
+      "missing": false
+    },
+    "cron:verifica-prezzi": {
+      "key": "cron:verifica-prezzi",
+      "provider": "openclaw",
+      "title": "Verifica dei prezzi pubblicati",
+      "cosa": "Controlla ogni giorno che i prezzi pubblicati siano giusti.",
+      "means": "Nessun messaggio.",
+      "who": "Claude",
+      "reportsTo": "nessun messaggio",
+      "when": "ogni giorno",
+      "next": null,
+      "nextApprox": false,
+      "last": {
+        "at": 1792728000000,
+        "outcome": "ok",
+        "delivered": "none",
+        "error": null
+      },
+      "proof": null,
+      "runsToday": 1,
+      "group": "prodotti",
+      "level": "va",
+      "reason": "gira come deve",
+      "since": 1792728000000,
+      "sources": [
+        {
+          "key": "cron:verifica-prezzi",
+          "provider": "openclaw",
+          "level": "va",
+          "last": {
+            "at": 1792728000000,
+            "outcome": "ok",
+            "delivered": "none",
+            "error": null
+          }
+        }
+      ],
+      "tech": {
+        "schedule": null,
+        "exit": null,
+        "command": null,
+        "prompt": null,
+        "label": null,
+        "url": null
+      },
+      "feedback": {
+        "vote": null,
+        "changedSinceVote": false,
+        "mute": null,
+        "open": 0,
+        "notes": []
+      },
+      "fp": "1cy0354",
+      "missing": false
+    }
+  }
+}

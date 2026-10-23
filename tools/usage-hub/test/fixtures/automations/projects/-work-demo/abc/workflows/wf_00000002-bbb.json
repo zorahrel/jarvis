@@ -1,0 +1,4 @@
+{ "runId": "wf_00000002-bbb", "timestamp": "2026-10-22T15:00:00.000Z", "workflowName": "revisione-prova", "summary": "Revisione di prova, secondo giro", "status": "failed",
+  "startTime": 1792674000000, "durationMs": 120000, "agentCount": 2, "totalTokens": 30000, "totalToolCalls": 9, "defaultModel": "claude-sonnet-demo",
+  "phases": [ { "title": "Leggi" }, { "title": "Verifica" } ],
+  "workflowProgress": [ { "type": "workflow_phase", "index": 1, "title": "Leggi" }, { "type": "workflow_agent", "index": 1, "label": "leggi:a", "phaseIndex": 1, "state": "done" }, { "type": "workflow_phase", "index": 2, "title": "Verifica" }, { "type": "workflow_agent", "index": 2, "label": "verifica:a", "phaseIndex": 2, "state": "failed" } ] }

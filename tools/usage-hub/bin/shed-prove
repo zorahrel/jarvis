@@ -1,0 +1,35 @@
+#!/usr/bin/env node
+// Prova dal vivo della pausa: un processo di prova che brucia CPU viene fermato (SIGSTOP) e ripreso (SIGCONT) dal vero meccanismo
+// di src/shed.mjs, con la tabella dei processi vera. Solo il verdetto «Mac sotto sforzo» è forzato; il candidato è la sonda,
+// che va sempre per prima, quindi nessun agente vero viene toccato.
+import { spawn, execFileSync } from 'node:child_process';
+import os from 'node:os';
+import path from 'node:path';
+import fs from 'node:fs';
+import { createMacWatch } from '../src/macwatch.mjs';
+import { createShed, SHED } from '../src/shed.mjs';
+
+const stat = (pid) => execFileSync('ps', ['-o', 'stat=,time=', '-p', String(pid)]).toString().trim();
+const child = spawn(process.execPath, ['-e', 'for(;;){}', 'usage-hub-shed-probe'], { stdio: 'ignore' });
+await new Promise((r) => setTimeout(r, 1500));
+console.log(`sonda pid ${child.pid} · prima        : stato/CPU = ${stat(child.pid)}`);
+
+let calm = false;
+const watch = createMacWatch({});
+const probe = { ...watch.probe, strain: (m) => (calm ? { strained: false, calm: true, reason: '' } : { strained: true, calm: false, reason: `Mac a 2,3 per core (prova)` }) };
+const shed = createShed({ probe, file: path.join(os.tmpdir(), 'shed-prove.json'), limits: { ...SHED, minPauseMs: 1000 }, log: (l) => console.log('  hub:', l) });
+await shed.tick();
+const t0 = stat(child.pid);
+console.log(`dopo la pausa              : stato/CPU = ${t0}`);
+await new Promise((r) => setTimeout(r, 3000));
+const t1 = stat(child.pid);
+console.log(`3 s dopo, ancora in pausa  : stato/CPU = ${t1}  ${t0 === t1 ? '(CPU ferma: non consuma)' : '(CPU cambiata: NON ferma)'}`);
+calm = true;
+await new Promise((r) => setTimeout(r, 1200));
+await shed.tick();
+await new Promise((r) => setTimeout(r, 2000));
+console.log(`dopo la ripresa            : stato/CPU = ${stat(child.pid)}`);
+child.kill('SIGKILL');
+const ok = /T/.test(t0.split(/\s+/)[0]) && t0 === t1;
+console.log(ok ? 'PROVA OK: fermato e ripreso' : 'PROVA FALLITA');
+process.exit(ok ? 0 : 1);

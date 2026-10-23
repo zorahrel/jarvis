@@ -1,0 +1,173 @@
+{
+ "cron": [
+  {
+   "key": "cron:11111111-aaaa-4000-8000-000000000001",
+   "when": "ogni 1 min",
+   "cond": null,
+   "who": {
+    "who": "script: posta.py",
+    "ai": false,
+    "cmd": "/usr/bin/python3 /Users/demo/.openclaw/bin/posta.py"
+   },
+   "out": "WhatsApp",
+   "times": {
+    "every": 1,
+    "band": null
+   }
+  },
+  {
+   "key": "cron:11111111-aaaa-4000-8000-000000000002",
+   "when": "ogni giorno alle 8:45",
+   "cond": null,
+   "who": {
+    "who": "script: salute.mjs",
+    "ai": false,
+    "cmd": "node /Users/demo/.openclaw/bin/salute.mjs"
+   },
+   "out": "WhatsApp",
+   "times": {
+    "at": [
+     525
+    ],
+    "days": ""
+   }
+  },
+  {
+   "key": "cron:11111111-aaaa-4000-8000-000000000003",
+   "when": "ogni ora",
+   "cond": null,
+   "who": {
+    "who": "Jarvis nella chat principale",
+    "ai": true
+   },
+   "out": "la tua chat, solo se c'è qualcosa",
+   "times": {
+    "every": 60,
+    "band": null
+   }
+  },
+  {
+   "key": "cron:11111111-aaaa-4000-8000-000000000004",
+   "when": "lun-ven alle 9:30",
+   "cond": "fra le 9-18 abbonamento libero",
+   "who": {
+    "who": "Muse, poi Codex, Claude Sonnet",
+    "ai": true
+   },
+   "out": "Discord",
+   "times": {
+    "at": [
+     570
+    ],
+    "days": "lun-ven"
+   }
+  },
+  {
+   "key": "cron:11111111-aaaa-4000-8000-000000000005",
+   "when": "il lunedì alle 9:00",
+   "cond": null,
+   "who": {
+    "who": "Claude Opus",
+    "ai": true
+   },
+   "out": "nessun messaggio",
+   "times": {
+    "at": [
+     540
+    ],
+    "days": "lun"
+   }
+  },
+  {
+   "key": "cron:11111111-aaaa-4000-8000-000000000006",
+   "when": "lun 2 nov, 09:00",
+   "cond": null,
+   "who": {
+    "who": "modello predefinito",
+    "ai": true
+   },
+   "out": "l'ultima chat",
+   "times": null
+  },
+  {
+   "key": "cron:11111111-aaaa-4000-8000-000000000007",
+   "when": "ogni 10 min",
+   "cond": null,
+   "who": {
+    "who": "script: true",
+    "ai": false,
+    "cmd": "true"
+   },
+   "out": "nessun messaggio",
+   "times": {
+    "every": 10,
+    "band": null
+   }
+  },
+  {
+   "key": "cron:11111111-aaaa-4000-8000-000000000008",
+   "when": "ogni 10 min",
+   "cond": "Mac fermo da 200 s fra le 1-8 finché non esiste fatto.marker",
+   "who": {
+    "who": "Claude Haiku",
+    "ai": true
+   },
+   "out": "nessun messaggio",
+   "times": {
+    "every": 10,
+    "band": [
+     1,
+     8
+    ]
+   }
+  }
+ ],
+ "launchd": [
+  {
+   "label": "com.jarvis.esempio-backup",
+   "times": {
+    "at": [
+     272
+    ],
+    "days": ""
+   }
+  },
+  {
+   "label": "com.jarvis.esempio-ogni15",
+   "times": {
+    "every": 15
+   }
+  },
+  {
+   "label": "com.jarvis.esempio-server",
+   "times": null
+  },
+  {
+   "label": "com.esempio.esempio-watch",
+   "times": {
+    "at": [
+     600
+    ],
+    "days": "lun, mer"
+   }
+  }
+ ],
+ "fps": [
+  [
+   "",
+   "45h"
+  ],
+  [
+   "Va bene|mai|",
+   "1b1urqd"
+  ],
+  [
+   "Ogni ora fa una cosa di prova.|WhatsApp, solo se serve|echo ciao",
+   "1avrr8p"
+  ],
+  [
+   "àèìòù € 😀",
+   "fk1a0g"
+  ]
+ ]
+}

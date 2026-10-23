@@ -1,0 +1,14 @@
+{
+  "progetto-esempio": {
+    "label": "Progetto di esempio",
+    "what": "Voce di esempio: stessa forma del file vero, che sta fuori dal repo"
+  },
+  "altro-esempio": {
+    "label": "Altro esempio",
+    "what": "Altro progetto finto per mostrare il formato"
+  },
+  "openclaw/sottoagenti": {
+    "label": "OpenClaw · sottoagenti",
+    "what": "Lavori delegati dal gateway OpenClaw"
+  }
+}

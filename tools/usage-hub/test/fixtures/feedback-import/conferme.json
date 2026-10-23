@@ -1,0 +1,4 @@
+[
+ { "doc_id": "cron:11111111-aaaa-4000-8000-000000000001", "v": "ok", "at": "2026-10-22T18:01:02.000Z", "fp": "1x2y3z" },
+ { "doc_id": "launchd:com.jarvis.esempio-backup", "v": "cambia", "at": "2026-10-22T18:03:00.000Z", "fp": "abc12", "note": "di prova: avvisami solo se manca due notti" }
+]

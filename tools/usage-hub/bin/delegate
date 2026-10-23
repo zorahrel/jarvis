@@ -1,0 +1,61 @@
+#!/bin/bash
+# Porta unica per delegare un compito: chi chiama non sceglie modello né abbonamento.
+#   delegate [-C dir] [--class taste|mechanical] [--dry-run] "compito"
+# Il hub (:3360/api/route) fa classificare il compito a Jev e chiede al gate del pacing chi può lavorare.
+# Esegue: free → canali gratis (free-router) · muse → museagent · codex → codex exec · claude → claude -p (Opus per il gusto con margine, Sonnet altrimenti).
+# Frenato: il lavoro entra nella coda del hub (:3360/api/queue), che lo rilancia da solo; stampa id e ora stimata, exit 11.
+# Con --no-queue niente coda: exit 10 = frenato, riprova più tardi. Hub giù → museagent, come il freno di prima.
+dir="$PWD"; cls=""; dry=0; queue=1
+while [ $# -gt 1 ]; do
+  case "$1" in
+    -C) dir="$2"; shift 2 ;;
+    --class) cls="$2"; shift 2 ;;
+    --dry-run) dry=1; shift ;;
+    --no-queue) queue=0; shift ;;
+    *) break ;;
+  esac
+done
+task="$1"
+[ -z "$task" ] && { echo 'uso: delegate [-C dir] [--class taste|mechanical] [--dry-run] [--no-queue] "compito"' >&2; exit 2; }
+cd "$dir" || exit 2
+project=$(basename "$(git rev-parse --show-toplevel 2>/dev/null || pwd)")
+
+r=$(curl -s --max-time 30 -G http://127.0.0.1:3360/api/route --data-urlencode "task=$task" \
+      --data-urlencode "project=$project" ${cls:+--data-urlencode "class=$cls"} 2>/dev/null)
+provider=$(jq -r '.provider // empty' <<<"$r" 2>/dev/null)
+go=$(jq -r '.go' <<<"$r" 2>/dev/null)
+if [ -z "$go" ] || [ "$go" = null ]; then
+  provider=muse; r='{"provider":"muse","by":"hub giù","reason":"hub non raggiungibile, passo a museagent"}'
+fi
+echo "delegate: $(jq -r '"\(.cls // "?") (\(.by // "-"), strumenti \(.tools | tostring)) → \(.provider // "nessuno")\(if .model and .provider == "claude" then " " + .model else "" end) · \(.reason // "")\(if .modelReason != null and .modelReason != "" then " · " + .modelReason else "" end)"' <<<"$r") · progetto $project" >&2
+if [ "$go" = false ]; then
+  eta=$(jq -r '.waitUntil // empty | . / 1000 | strftime("%a %d %H:%M")' <<<"$r")
+  if [ $queue -eq 1 ]; then
+    q=$(jq -n --arg t "$task" --arg d "$PWD" --arg p "$project" --argjson c "$(jq '.cls // null' <<<"$r")" --argjson w "$(jq '.waitUntil // null' <<<"$r")" \
+          '{task:$t, dir:$d, project:$p, cls:$c, waitUntil:$w}' \
+        | curl -s --max-time 10 -X POST http://127.0.0.1:3360/api/queue -H 'Content-Type: application/json' -d @- 2>/dev/null)
+    id=$(jq -r '.id // empty' <<<"$q" 2>/dev/null)
+    if [ -n "$id" ]; then echo "delegate: frenato, accodato come $id${eta:+, stima dopo $eta} (il hub lo lancia da solo)" >&2; exit 11; fi
+    echo "delegate: coda non raggiungibile" >&2
+  fi
+  echo "delegate: frenato, riprova dopo $eta" >&2
+  exit 10
+fi
+[ $dry -eq 1 ] && exit 0
+
+export DELEGATE=1   # museagent non rifà il gate: ha già deciso il hub
+case "$provider" in
+  free)
+    body=$(jq -n --arg t "$task" '{model:"free-auto", messages:[{role:"user", content:$t}]}')
+    ans=$(curl -s --max-time 300 http://127.0.0.1:18791/v1/chat/completions -H 'Content-Type: application/json' -d "$body" \
+          | jq -r '.choices[0].message.content // empty' 2>/dev/null)
+    [ -n "$ans" ] && { printf '%s\n' "$ans"; exit 0; }
+    echo "delegate: canali gratis senza risposta, passo a museagent" >&2
+    exec "$HOME/bin/museagent" -C "$dir" "$task" ;;
+  muse)   exec "$HOME/bin/museagent" -C "$dir" "$task" ;;
+  codex)  exec /opt/homebrew/bin/codex exec -m gpt-6-luna --skip-git-repo-check "$task" </dev/null ;;
+  claude) # il modello lo decide il hub: Opus per il gusto con margine, Sonnet altrimenti
+    case "$(jq -r '.model // "sonnet"' <<<"$r" 2>/dev/null)" in opus) cmodel=claude-opus-5-5 ;; *) cmodel=claude-sonnet-5-5 ;; esac
+    exec "$HOME/.local/bin/claude" -p --model "$cmodel" --dangerously-skip-permissions "$task" </dev/null ;;
+  *) echo "delegate: esecutore sconosciuto «$provider»" >&2; exit 2 ;;
+esac

@@ -1,0 +1,102 @@
+[
+ {
+  "task": "Nel repository di esempio prepara un controllo automatico per i file di configurazione del progetto Alfa. Prima ricostruisci quali impostazioni vengono lette all'avvio e quali hanno valori predefiniti; poi individua le opzioni duplicate o mai usate senza cambiare il comportamento valido. Separa le verifiche di formato da quelle che dipendono dall'ambiente, e fai in modo che un valore mancante produca un errore comprensibile con il nome dell'opzione. Aggiungi test per configurazione minima, configurazione completa, campo sconosciuto e valore del tipo sbagliato. Esegui la suite pertinente, correggi eventuali regressioni e riporta i file modificati, i casi coperti e l'esito dei comandi. Non aggiungere dipendenze e non riscrivere moduli che non partecipano al caricamento della configurazione.",
+  "label": "mechanical",
+  "source": "openclaw"
+ },
+ {
+  "task": "Nel progetto Alfa controlla il flusso che importa una raccolta di record da un file di esempio. Ricostruisci prima il formato atteso e il punto in cui i dati vengono validati; poi correggi gli errori riproducibili senza cambiare le regole di prodotto. I record validi devono mantenere ordine e valori, mentre quelli incompleti vanno scartati con un motivo leggibile e una riga di log. Aggiungi casi di prova per file vuoto, intestazione assente, campo facoltativo mancante, duplicati e caratteri accentati. Verifica che un errore in un record non interrompa l'intera importazione, e che il riepilogo finale conti correttamente elementi accettati e respinti. Esegui i test mirati e indica i risultati con i nomi dei moduli, senza copiare nel report i contenuti del dataset.",
+  "label": "mechanical",
+  "source": "openclaw"
+ },
+ {
+  "task": "Esprimi un giudizio estetico sul prototipo della pagina iniziale del progetto Alfa e rendilo più convincente senza cambiare il contenuto approvato. Osserva gerarchia visiva, ritmo degli spazi, leggibilità, rapporto tra titolo e immagine, contrasto, allineamenti e coerenza dei dettagli. Prepara tre direzioni visive distinguibili: una sobria, una editoriale e una più espressiva; usa testi e immagini inventati, con una versione chiara e una scura per ciascuna. Metti le sei varianti in una tavola comparabile e descrivi in poche righe quale appare più curata, riconoscibile e adatta al tono richiesto, motivando la scelta con elementi visibili. Per la direzione scelta, rifinisci caratteri, pesi, spaziatura, bordi e trattamento dell'immagine, poi controlla il risultato alle dimensioni desktop e telefono. Mantieni l'atmosfera morbida del prototipo, ma evita l'effetto di un modello preconfezionato. Non inventare funzioni, slogan o metriche. Consegna un giudizio estetico netto, le alternative scartate e una breve nota sui ritocchi applicati, così chi legge capisce cosa ha reso la proposta più armoniosa.",
+  "label": "taste",
+  "source": "openclaw"
+ },
+ {
+  "task": "Nel repository di esempio sistema il processo che trasforma file caricati in schede consultabili. Esamina il flusso esistente e annota i campi che vengono letti, quelli richiesti e il punto in cui una scheda viene salvata. Implementa una validazione coerente per formato, codifica, campi obbligatori e dimensione; i messaggi d'errore devono indicare il problema senza mostrare dati sensibili. I file validi vanno normalizzati senza alterarne il significato, mentre quelli non validi devono lasciare il registro nello stato precedente. Gestisci un lotto con elementi misti, evitando che il fallimento di un singolo file blocchi gli altri. Aggiungi test per duplicati, contenuto vuoto, righe malformate, caratteri non latini, limiti superati e interruzione durante il salvataggio. Se trovi un difetto, correggilo nel modulo minimo coinvolto. Non introdurre servizi esterni né dipendenze nuove; usa i componenti già presenti. Esegui i test pertinenti e riporta quali casi passano, quali errori erano riproducibili e quali file sono cambiati. Documenta l'esito.",
+  "label": "mechanical",
+  "source": "openclaw"
+ },
+ {
+  "task": "Completa nel progetto Alfa una funzione generica di raccolta messaggi in ingresso, usando solo dati fittizi e l'ambiente di prova. Prima leggi il percorso già esistente dall'arrivo del messaggio alla creazione della scheda, poi individua le parti riutilizzabili per mittente, oggetto, data e allegati. Aggiungi la normalizzazione dei campi, il controllo della dimensione e il rifiuto degli allegati con formato non ammesso. Un messaggio duplicato non deve creare una seconda scheda; un messaggio incompleto deve restituire un esito esplicito e non lasciare record parziali. Se esiste già un flusso di revisione, instrada lì il contenuto accettato senza inventare passaggi nuovi. Non contattare caselle reali, non inviare messaggi e non esporre credenziali. Prepara test locali con messaggi sintetici per caso valido, allegato vuoto, doppione, campo obbligatorio assente, dimensione oltre il limite e errore di persistenza. Controlla inoltre che i log descrivano l'esito senza includere il corpo o i nomi degli allegati. Esegui i test pertinenti e riassumi le modifiche e le prove ottenute.",
+  "label": "mechanical",
+  "source": "openclaw"
+ },
+ {
+  "task": "Nel server di esempio aggiorna il flusso che riceve eventi da un servizio simulato e li salva per gruppi separati. Ricostruisci l'autenticazione già prevista e il modello dati, senza cambiare il formato pubblico. Verifica la firma prima di interpretare il corpo, respingi richieste troppo grandi e conserva l'isolamento tra gruppi anche quando un identificativo manca o è malformato. Gli eventi ripetuti devono restare idempotenti, mentre un errore nel salvataggio deve lasciare possibile un nuovo tentativo senza duplicare i dati. Aggiungi una risposta chiara per ogni errore e limita i dettagli restituiti al chiamante. Scrivi test per firma valida e non valida, corpo vuoto, evento ripetuto, gruppo sconosciuto, contenuto oltre il limite e indisponibilità temporanea del deposito. Usa un servizio finto già disponibile, senza rete reale, e non aggiungere librerie se il codice esistente basta. Esegui i test del modulo e controlla le modifiche con una revisione del diff. Nel resoconto indica gli scenari provati, l'esito e gli eventuali limiti rimasti, senza inserire esempi che contengano segreti.",
+  "label": "mechanical",
+  "source": "openclaw"
+ },
+ {
+  "task": "Archivia la chiave di prova del progetto Alfa nel portachiavi locale senza stamparla, copiarla negli appunti o inserirla nei log. Cerca la voce solo nelle fonti locali previste e non provare credenziali alternative. Esegui la procedura esclusivamente quando il computer risulta inattivo da almeno trecento secondi; se è attivo o il segnaposto di completamento esiste già, termina con una riga e non modificare nulla. Salva la chiave con il nome di servizio e l'uso previsti, poi verifica la presenza della voce senza leggerne il valore. A procedura riuscita crea il segnaposto, svuota gli appunti e completa il promemoria di prova associato. Se un passaggio fallisce, lascia il promemoria aperto e riporta soltanto il punto dell'errore. Non creare copie temporanee e non mostrare hash, valore o dettagli del portachiavi.",
+  "label": "mechanical",
+  "source": "openclaw"
+ },
+ {
+  "task": "Leggi ed esegui il promemoria operativo inventato per il progetto Alfa, rispettando ogni istruzione e riportando solo l'esito.",
+  "label": "mechanical",
+  "source": "openclaw"
+ },
+ {
+  "task": "Esamina le note settimanali del progetto di prova. Se emerge una scoperta utile, prepara un breve messaggio conclusivo; altrimenti rispondi NO_REPLY.",
+  "label": "mechanical",
+  "source": "openclaw"
+ },
+ {
+  "task": "Esegui il controllo giornaliero del catalogo di prova seguendo le regole registrate nel repository. Verifica le nuove schede, aggiorna soltanto quelle ammesse, salta i duplicati e annota i motivi degli scarti. Non pubblicare contenuti, non contattare persone e non superare i limiti configurati. Se un controllo richiede una decisione estetica o un dato assente, fermati su quel solo elemento e lascia invariato il resto. Alla fine confronta il riepilogo con i log, conta gli elementi esaminati, aggiornati e ignorati, e scrivi una riga di stato per ciascun gruppo fittizio. Se compare un errore di validazione, correggi solo un difetto evidente e coperto da test; altrimenti descrivilo con il riferimento al modulo e al caso riproducibile. Mantieni i dati sintetici, non inventare risultati e non riportare identificativi lunghi. Prima di chiudere verifica che il comando di controllo sia terminato e che la sua uscita sia coerente con il riepilogo. Controlla anche i confini tra i permessi, registra gli eventi senza contenuti personali e verifica che i tentativi ripetuti non producano effetti doppi. Nella chiusura separa i risultati certi dalle anomalie e indica il comando conclusivo.",
+  "label": "mechanical",
+  "source": "openclaw"
+ },
+ {
+  "task": "Per il simbolo del progetto Alfa, esprimi un giudizio estetico sull'animazione: il movimento deve essere continuo e armonioso. Confronta due varianti della demo, scegli la più leggibile e motiva la scelta. Consegna un'anteprima video per revisione visiva indipendente.",
+  "label": "taste",
+  "source": "sessione 18/10"
+ },
+ {
+  "task": "Prima immagine: schermata inventata di una pagina premiata. Seconda immagine: prototipo da valutare. Esprimi un giudizio estetico sulla fedeltà dell'impaginazione e rispondi FEDELE o NON FEDELE, citando le differenze visibili di caratteri, spazi, bordi e maschere.",
+  "label": "taste",
+  "source": "sessione 18/10"
+ },
+ {
+  "task": "Esprimi un giudizio estetico sulla libreria del progetto Alfa. Valuta i componenti rispetto alle schermate inventate e indica se intestazione e apertura risultano coerenti per forme, caratteri, immagini e dettagli.",
+  "label": "taste",
+  "source": "sessione 18/10"
+ },
+ {
+  "task": "Esprimi un giudizio estetico sulla pagina del sito di prova: rafforza la gerarchia tipografica, dai respiro alla sezione principale e conserva l'atmosfera granulosa.",
+  "label": "taste",
+  "source": "sessione 18/10"
+ },
+ {
+  "task": "Per la scheda del progetto Alfa, esprimi un giudizio estetico sull'animazione della mano: scegli scintille o onda per una lettura immediata in piccolo.",
+  "label": "taste",
+  "source": "sessione 18/10"
+ },
+ {
+  "task": "Esprimi un giudizio estetico sul menu dell'applicazione di prova: riorganizza le voci su più livelli, con un riepilogo chiaro in apertura e i dettagli nelle sezioni secondarie.",
+  "label": "taste",
+  "source": "sessione 18/10"
+ },
+ {
+  "task": "Per il manifesto del progetto Alfa, riscrivi il testo con tono caldo e diretto. Esprimi un giudizio estetico e conserva l'atmosfera granulosa della prima versione.",
+  "label": "taste",
+  "source": "sessione 18/10"
+ },
+ {
+  "task": "Aggiungi al server di esempio l'endpoint gates, che restituisce la decisione per ogni classe di attività. Copri il comportamento con test automatici nel runner Node già presente.",
+  "label": "mechanical",
+  "source": "sessione 18/10"
+ },
+ {
+  "task": "Cerca nei moduli e negli script del progetto Alfa chi legge la chiave di prova del servizio simulato; elenca nome del file e riga senza mostrare il valore.",
+  "label": "mechanical",
+  "source": "sessione 18/10"
+ },
+ {
+  "task": "Ricerca gli approcci per assegnare attività a modelli e abbonamenti diversi. Confrontali in circa centottanta parole, indicando criteri, limiti e casi d'uso senza indirizzi web.",
+  "label": "mechanical",
+  "source": "sessione 18/10"
+ }
+]

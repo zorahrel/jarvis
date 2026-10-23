@@ -1,0 +1,15 @@
+{
+  "name": "claude-usage-hub",
+  "version": "0.1.0",
+  "description": "Per-project share of your weekly Claude quota, with configurable alerts. Local, zero dependencies.",
+  "type": "module",
+  "license": "MIT",
+  "bin": { "usage-hub": "bin/usage-hub.mjs" },
+  "engines": { "node": ">=20" },
+  "scripts": {
+    "start": "node bin/usage-hub.mjs serve",
+    "test": "node --test test/",
+    "test:tmp": "sh scripts/tmp-leak-check.sh",
+"bar": "sh scripts/bar.sh"
+  }
+}

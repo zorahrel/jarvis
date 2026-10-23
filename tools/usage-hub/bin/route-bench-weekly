@@ -1,0 +1,34 @@
+#!/bin/bash
+# Controllo settimanale del decisore della delega (cron OpenClaw, zero token): rifà il banco su tutti i decisori
+# e confronta con la settimana prima. Stampa un messaggio solo se cambia qualcosa che conta; altrimenti niente.
+H="$HOME/Projects/claude-usage-hub"; S="$HOME/.cache/route-bench"; mkdir -p "$S"
+now="$S/now.json"; last="$S/last.json"
+ROUTE_BENCH_JSON="$now" node "$H/bin/route-bench.mjs" > "$S/run.log" 2>&1
+[ -s "$now" ] || { echo "Banco decisori della delega non partito: $(tail -1 "$S/run.log")"; exit 0; }
+models() {  # modelli online dei candidati, per accorgersi dei nuovi
+  for p in "groq https://api.groq.com/openai/v1/models" "cerebras https://api.cerebras.ai/v1/models"; do
+    set -- $p; k=$(security find-generic-password -s "$1" -a api-key -w 2>/dev/null) || continue
+    curl -s --max-time 20 "$2" -H "Authorization: Bearer $k" | jq -r --arg p "$1" '.data[]?.id | "\($p) \(.)"'
+  done | sort
+}
+models > "$S/models-now.txt"
+python3 - "$now" "$last" "$S/models-now.txt" "$S/models-last.txt" <<'PY'
+import json, os, sys
+now = json.load(open(sys.argv[1])); last = json.load(open(sys.argv[2])) if os.path.exists(sys.argv[2]) else None
+mnow = set(open(sys.argv[3]).read().split("\n")) - {""}
+mlast = set(open(sys.argv[4]).read().split("\n")) - {""} if os.path.exists(sys.argv[4]) else mnow
+r = now["results"]; b = now["best"]
+msg = []
+if last and last["best"] != b:
+    msg.append(f"il decisore migliore è cambiato: ora {b} ({round(r[b]['all']*100)}%), prima {last['best']}")
+if not now["ok"]:
+    msg.append(f"la barra è rossa: il migliore ({b}, {round(r[b]['all']*100)}%) non stacca le regole ({round(r['regole']['all']*100)}%) di 15 punti")
+if last and set(now["jevModels"]) != set(last["jevModels"]):
+    msg.append(f"TypeSafe ha modelli nuovi: {', '.join(sorted(set(now['jevModels']) - set(last['jevModels']))) or 'qualcuno è sparito'}")
+new = sorted(mnow - mlast)
+if new:
+    msg.append(f"modelli nuovi su Groq/Cerebras da provare nel banco: {', '.join(new[:8])}")
+if msg:
+    print("Decisore della delega, controllo settimanale: " + "; ".join(msg) + ". Dettagli: ~/.cache/route-bench/run.log")
+PY
+mv "$now" "$last"; mv "$S/models-now.txt" "$S/models-last.txt"

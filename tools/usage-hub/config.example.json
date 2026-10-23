@@ -1,0 +1,46 @@
+{
+  "port": 3350,
+  "quotaSource": {
+    "type": "tray",
+    "url": "http://127.0.0.1:3360/api/overview"
+  },
+  "groups": [
+    {
+      "name": "my-game",
+      "match": [
+        "-work-game",
+        "game-cloud"
+      ]
+    }
+  ],
+  "alerts": {
+    "rules": [
+      {
+        "scope": "project",
+        "project": "my-game",
+        "threshold": 3,
+        "message": "{subject} is at {value}% of the weekly quota (budget {threshold}%)"
+      },
+      {
+        "scope": "account",
+        "metric": "7d",
+        "threshold": 80
+      },
+      {
+        "scope": "account",
+        "metric": "5h",
+        "threshold": 90
+      }
+    ],
+    "notify": {
+      "command": "node scripts/notify-stdout.mjs",
+      "webhook": null
+    }
+  },
+  "openclaw": {
+    "_comment": "optional: splits sessions run by OpenClaw by chat, cron, subagent",
+    "labels": {
+      "<chat or channel id>": "readable label"
+    }
+  }
+}

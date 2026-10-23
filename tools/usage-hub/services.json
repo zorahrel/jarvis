@@ -1,0 +1,23 @@
+{
+  "note": "Servizi AI mostrati nella scheda Servizi della dashboard. label = job launchd, match = processo senza launchd, port = porta in ascolto attesa, url = link.",
+  "services": [
+    { "id": "usage-hub", "group": "Consumi", "name": "Hub dei consumi", "what": "Questa dashboard: quote, freno, coda, agenti, Mac. Risponde anche su :3337 per i vecchi script.", "label": "com.jarvis.usage-hub", "app": true, "port": 3360, "url": "http://127.0.0.1:3360/" },
+    { "id": "vdm", "group": "Consumi", "name": "Proxy degli account Claude (VDM)", "what": "Instrada le richieste di Claude Code sull'account con quota libera.", "label": "com.jarvis.vdm", "port": 3335 },
+    { "id": "tray", "group": "Consumi", "name": "Tray nella barra dei menu", "what": "Il colpo d'occhio su quote, agenti e Mac; legge dal hub.", "label": "com.jarvis.claude-usage-tray", "app": true },
+    { "id": "openclaw", "group": "Assistente", "name": "OpenClaw · gateway", "what": "L'assistente: WhatsApp e Discord, cron, sottoagenti.", "label": "ai.openclaw.gateway", "port": 18789, "url": "http://127.0.0.1:18789/" },
+    { "id": "openclaw-app", "group": "Assistente", "name": "OpenClaw · app", "what": "L'app per Mac di OpenClaw (voce, notifiche).", "match": "OpenClaw.app/Contents/MacOS/OpenClaw" },
+    { "id": "topics", "group": "Agenti", "name": "Topics", "what": "Workspace degli agenti in worktree e board dei task.", "label": "com.armonia.topics-server", "app": true, "port": 3333 },
+    { "id": "topics-board", "group": "Agenti", "name": "Topics · MCP della board", "what": "Fa leggere e scrivere la board agli agenti fuori da Topics.", "match": "topics-board/server.mjs" },
+    { "id": "jcode-guard", "group": "Agenti", "name": "jcode · guardia del server", "what": "Tiene vivo il server di jcode.", "label": "com.jarvis.jcode-server-guard" },
+    { "id": "jcode-decoy", "group": "Agenti", "name": "jcode · server", "what": "Il server di jcode, protetto dai SIGTERM accidentali.", "label": "com.jarvis.jcode-sigterm-decoy" },
+    { "id": "jcode-hotkey", "group": "Agenti", "name": "jcode · scorciatoia", "what": "La scorciatoia da tastiera che apre jcode.", "label": "com.jcode.hotkey" },
+    { "id": "jcode-proxy", "group": "Agenti", "name": "jcode · proxy Anthropic", "what": "Proxy locale verso Anthropic per jcode.", "match": "anthropic-proxy.mjs", "port": 18790 },
+    { "id": "llamacpp-tunnel", "group": "Agenti", "name": "jcode · tunnel verso il PC", "what": "Porta llama.cpp della 3090 sul Mac (:18080) via ssh.", "label": "com.jcode.llamacpp-3090-tunnel", "port": 18080 },
+    { "id": "mcp-gateway", "group": "Strumenti", "name": "Gateway MCP", "what": "Monta e smonta gli MCP a richiesta, senza riavvii.", "label": "com.jarvis.gateway" },
+    { "id": "distilled", "group": "Strumenti", "name": "MCP distillati", "what": "Tool distillati da siti pilotati a mano.", "match": "mcp-servers/distilled/index.mjs" },
+    { "id": "free-router", "group": "Strumenti", "name": "Router dei modelli gratis", "what": "Un endpoint OpenAI-compatibile sui canali LLM gratuiti; parte alla prima richiesta.", "label": "com.jarvis.free-router", "port": 18791, "onDemand": true },
+    { "id": "devbridge", "group": "Strumenti", "name": "devbridge", "what": "Dà le mani sul Mac alla chat di ChatGPT.", "label": "com.jarvis.devbridge", "port": 8787 },
+    { "id": "darkroom", "group": "Strumenti", "name": "Darkroom", "what": "Gallerie di foto e modifiche con l'AI, con MCP.", "label": "com.jarvis.darkroom-server", "app": true, "port": 3535, "url": "http://127.0.0.1:3535/" },
+    { "id": "claude-bridge", "group": "Strumenti", "name": "claude-bridge", "what": "Ponte verso Claude per sales-companion.", "label": "com.armonia.claude-bridge", "port": 7842 }
+  ]
+}

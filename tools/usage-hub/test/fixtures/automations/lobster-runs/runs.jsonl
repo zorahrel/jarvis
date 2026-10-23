@@ -1,0 +1,3 @@
+{"ts": "2026-10-23T01:00:44+0200", "run": "aa11bb22", "workflow": "prova", "step": "uno", "status": "running"}
+{"ts": "2026-10-23T01:00:45+0200", "run": "aa11bb22", "workflow": "prova", "step": "uno", "status": "step-ok"}
+{"ts": "2026-10-23T01:00:46+0200", "run": "aa11bb22", "workflow": "prova", "step": "cancello", "status": "waiting-approval"}

@@ -1,0 +1,21 @@
+[
+  {
+    "account": "you@example.com",
+    "amount": "$20.00",
+    "cycle": "monthly",
+    "note": "optional note, shown as tooltip",
+    "renewsAt": "2026-11-06",
+    "service": "Claude Max 20x",
+    "provider": "claude"
+  },
+  {
+    "account": "Infra",
+    "amount": "$5.00",
+    "cycle": "monthly",
+    "note": "",
+    "renewsAt": null,
+    "service": "Example VPS",
+    "provider": "infra",
+    "tray": false
+  }
+]

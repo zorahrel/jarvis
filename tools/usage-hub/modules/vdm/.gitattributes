@@ -1,0 +1,23 @@
+# Line endings.
+#
+# Git for Windows defaults to core.autocrlf=true, so a plain `git clone` there
+# rewrites every text file to CRLF. That is fine for prose and fatal for the
+# rest of this repo:
+#
+#   * `vdm` and the hooks are bash scripts. A shebang line ending in CR makes
+#     the kernel look for an interpreter literally named "bash\r", and the
+#     error ("bad interpreter: no such file or directory") names a file that
+#     plainly exists — hours of confusion for one invisible byte.
+#   * The tests lift functions out of dashboard.mjs by slicing on "\n}\n".
+#     With CRLF that needle never matches, and five tests fail with
+#     "updateAccountState is not defined" while the code is perfectly fine.
+#
+# So: LF for everything the machine reads, regardless of platform. install.ps1
+# is the exception — PowerShell is happy either way, but a Windows user opening
+# it in Notepad should not see one long line.
+
+* text=auto eol=lf
+
+*.ps1 text eol=crlf
+
+*.png binary

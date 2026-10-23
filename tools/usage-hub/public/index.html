@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="it">
+<meta charset="utf-8">
+<title>Usage hub</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<link rel="stylesheet" href="/app.css">
+<body>
+<main>
+  <header><h1>Usage hub</h1><span class="sub" id="sub"></span></header>
+  <nav id="nav">
+    <button data-t="overview">Panoramica</button>
+    <button data-t="projects">Progetti</button>
+    <button data-t="accounts">Account</button>
+    <button data-t="usage">Consumi</button>
+    <button data-t="sessions">Sessioni<span class="badge" id="nsess" hidden></span></button>
+    <button data-t="activity">Attività</button>
+    <button data-t="services">Servizi</button>
+    <button data-t="automations">Automazioni<span class="badge" id="nauto" hidden></span></button>
+    <button data-t="settings">Impostazioni</button>
+    <button data-t="logs">Log</button>
+  </nav>
+  <div class="tab" id="t-overview"><p class="mut small">Carico quote, agenti e Mac…</p></div>
+  <div class="tab" id="t-projects"></div>
+  <div class="tab" id="t-accounts"></div>
+  <div class="tab" id="t-usage"></div>
+  <div class="tab" id="t-sessions"></div>
+  <div class="tab" id="t-activity"></div>
+  <div class="tab" id="t-services"></div>
+  <div class="tab" id="t-automations"></div>
+  <div class="tab" id="t-settings"></div>
+  <div class="tab" id="t-logs"></div>
+  <footer><a href="http://127.0.0.1:18789" target="_blank" rel="noopener">OpenClaw: canali, cron, agenti</a></footer>
+</main>
+<div class="toast" id="toast"></div>
+<script src="/actions.js"></script>
+<script src="/automations-view.js"></script>
+<script src="/automations.js"></script>
+<script src="/vdm-tabs.js"></script>
+<script src="/app.js"></script>

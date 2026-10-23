@@ -1,0 +1,7 @@
+ClaudeUsage
+ClaudeUsage.bak*
+*.o
+.build/
+server/renewals.json
+server/anthropic-balances.json
+__pycache__/

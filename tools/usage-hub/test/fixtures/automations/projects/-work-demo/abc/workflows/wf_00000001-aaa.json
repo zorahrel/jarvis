@@ -1,0 +1,4 @@
+{ "runId": "wf_00000001-aaa", "timestamp": "2026-10-22T13:57:23.193Z", "workflowName": "revisione-prova", "summary": "Revisione di prova su tre file", "status": "completed",
+  "startTime": 1792670801077, "durationMs": 600000, "agentCount": 3, "totalTokens": 120000, "totalToolCalls": 40, "defaultModel": "claude-sonnet-demo",
+  "phases": [ { "title": "Leggi" }, { "title": "Verifica" } ],
+  "workflowProgress": [ { "type": "workflow_phase", "index": 1, "title": "Leggi" }, { "type": "workflow_agent", "index": 1, "label": "leggi:a", "phaseIndex": 1, "state": "done" }, { "type": "workflow_phase", "index": 2, "title": "Verifica" }, { "type": "workflow_agent", "index": 2, "label": "verifica:a", "phaseIndex": 2, "state": "done" } ] }

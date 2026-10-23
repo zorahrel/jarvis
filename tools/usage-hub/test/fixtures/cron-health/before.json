@@ -1,0 +1,54 @@
+{
+ "raw": [
+  {
+   "kind": "errori",
+   "line": "posta-prova (aaaa0001): 2 errori nelle ultime 24h, l'ultimo: timeout imap di prova"
+  },
+  {
+   "kind": "a vuoto",
+   "line": "chiave-prova (aaaa0002): 5 turni LLM di fila senza lavoro («niente da fare»): la condizione va in un trigger (cron-when), non nel prompt"
+  },
+  {
+   "kind": "attesa fissa",
+   "line": "attesa-prova (aaaa0003): aspetta una quota fino al 25/10, 11:00 a ora fissa: un altro provider libero fa lo stesso lavoro? Altrimenti cron-when arm aaaa0003 --free any"
+  },
+  {
+   "kind": "rumore",
+   "line": "rumore-prova (aaaa0004): 14 messaggi consegnati in 7 giorni"
+  },
+  {
+   "kind": "errori",
+   "line": "accettato-prova (aaaa0005): 2 errori nelle ultime 24h, l'ultimo: errore accettato di prova"
+  },
+  {
+   "kind": "heartbeat",
+   "line": "scratch dell'heartbeat a 5 KB: con compiti chiusi dentro il modello gira sempre; vuoto = nessun turno"
+  },
+  {
+   "kind": "doctor",
+   "line": "doctor warn: prova.check — avviso di prova del doctor"
+  }
+ ],
+ "accepted": [
+  {
+   "kind": "errori",
+   "line": "posta-prova (aaaa0001): 2 errori nelle ultime 24h, l'ultimo: timeout imap di prova"
+  },
+  {
+   "kind": "a vuoto",
+   "line": "chiave-prova (aaaa0002): 5 turni LLM di fila senza lavoro («niente da fare»): la condizione va in un trigger (cron-when), non nel prompt"
+  },
+  {
+   "kind": "attesa fissa",
+   "line": "attesa-prova (aaaa0003): aspetta una quota fino al 25/10, 11:00 a ora fissa: un altro provider libero fa lo stesso lavoro? Altrimenti cron-when arm aaaa0003 --free any"
+  },
+  {
+   "kind": "rumore",
+   "line": "rumore-prova (aaaa0004): 14 messaggi consegnati in 7 giorni"
+  },
+  {
+   "kind": "heartbeat",
+   "line": "scratch dell'heartbeat a 5 KB: con compiti chiusi dentro il modello gira sempre; vuoto = nessun turno"
+  }
+ ]
+}

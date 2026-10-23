@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>com.jarvis.esempio-backup</string>
+  <key>ProgramArguments</key><array><string>/bin/sh</string><string>/Users/demo/backup/sync.sh</string><string>--commit</string></array>
+  <key>StartCalendarInterval</key><dict><key>Hour</key><integer>4</integer><key>Minute</key><integer>32</integer></dict>
+  <key>StandardOutPath</key><string>LOGDIR/esempio-backup.log</string>
+  <key>StandardErrorPath</key><string>LOGDIR/esempio-backup.err</string>
+</dict>
+</plist>

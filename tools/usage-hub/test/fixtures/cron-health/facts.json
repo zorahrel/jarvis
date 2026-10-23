@@ -1,0 +1,237 @@
+{
+ "note": "Fatti congelati e sintetici per cron-health: un caso per tipo di riga. now fisso.",
+ "now": 1792764000000,
+ "jobs": [
+  {
+   "id": "aaaa0001-0000-4000-8000-000000000001",
+   "name": "posta-prova",
+   "enabled": true,
+   "schedule": {
+    "kind": "every",
+    "everyMs": 60000
+   },
+   "payload": {
+    "kind": "command"
+   }
+  },
+  {
+   "id": "aaaa0002-0000-4000-8000-000000000002",
+   "name": "chiave-prova",
+   "enabled": true,
+   "schedule": {
+    "kind": "every",
+    "everyMs": 600000
+   },
+   "payload": {
+    "kind": "agentTurn",
+    "message": "Salva la chiave"
+   }
+  },
+  {
+   "id": "aaaa0003-0000-4000-8000-000000000003",
+   "name": "attesa-prova",
+   "enabled": true,
+   "schedule": {
+    "kind": "at",
+    "at": "2026-10-25T10:00:00.000Z"
+   },
+   "payload": {
+    "kind": "agentTurn",
+    "message": "Quando torna la quota di codex rifai il lavoro"
+   }
+  },
+  {
+   "id": "aaaa0004-0000-4000-8000-000000000004",
+   "name": "rumore-prova",
+   "enabled": true,
+   "schedule": {
+    "kind": "every",
+    "everyMs": 3600000
+   },
+   "payload": {
+    "kind": "command"
+   }
+  },
+  {
+   "id": "aaaa0005-0000-4000-8000-000000000005",
+   "name": "accettato-prova",
+   "enabled": true,
+   "schedule": {
+    "kind": "every",
+    "everyMs": 3600000
+   },
+   "payload": {
+    "kind": "command"
+   }
+  },
+  {
+   "id": "aaaa0006-0000-4000-8000-000000000006",
+   "name": "spento-prova",
+   "enabled": false,
+   "schedule": {
+    "kind": "every",
+    "everyMs": 60000
+   },
+   "payload": {
+    "kind": "command"
+   }
+  },
+  {
+   "id": "aaaa0007-0000-4000-8000-000000000007",
+   "name": "errori-chiusi-prova",
+   "enabled": true,
+   "schedule": {
+    "kind": "every",
+    "everyMs": 600000
+   },
+   "payload": {
+    "kind": "command"
+   }
+  }
+ ],
+ "runsByJob": {
+  "aaaa0001-0000-4000-8000-000000000001": [
+   {
+    "runId": "r1",
+    "status": "error",
+    "runAtMs": 1792763000000,
+    "error": "timeout imap di prova"
+   },
+   {
+    "runId": "r2",
+    "status": "error",
+    "runAtMs": 1792762000000,
+    "error": "timeout imap di prova"
+   },
+   {
+    "runId": "r3",
+    "status": "ok",
+    "runAtMs": 1792761000000
+   }
+  ],
+  "aaaa0002-0000-4000-8000-000000000002": [
+   {
+    "runId": "k1",
+    "status": "ok",
+    "runAtMs": 1792763000000,
+    "summary": "niente da fare"
+   },
+   {
+    "runId": "k2",
+    "status": "ok",
+    "runAtMs": 1792762000000,
+    "summary": "NO_REPLY"
+   },
+   {
+    "runId": "k3",
+    "status": "ok",
+    "runAtMs": 1792761000000,
+    "summary": "salto il giro"
+   },
+   {
+    "runId": "k4",
+    "status": "ok",
+    "runAtMs": 1792760000000,
+    "summary": "condizione non vera"
+   },
+   {
+    "runId": "k5",
+    "status": "ok",
+    "runAtMs": 1792759000000,
+    "summary": "termino subito"
+   }
+  ],
+  "aaaa0005-0000-4000-8000-000000000005": [
+   {
+    "runId": "a1",
+    "status": "error",
+    "runAtMs": 1792763000000,
+    "error": "errore accettato di prova"
+   },
+   {
+    "runId": "a2",
+    "status": "error",
+    "runAtMs": 1792762000000,
+    "error": "errore accettato di prova"
+   }
+  ],
+  "aaaa0007-0000-4000-8000-000000000007": [
+   {
+    "runId": "c0",
+    "status": "ok",
+    "runAtMs": 1792763500000
+   },
+   {
+    "runId": "c1",
+    "status": "error",
+    "runAtMs": 1792700000000,
+    "error": "vecchio"
+   },
+   {
+    "runId": "c2",
+    "status": "error",
+    "runAtMs": 1792699000000,
+    "error": "vecchio"
+   },
+   {
+    "runId": "c3",
+    "status": "ok",
+    "runAtMs": 1792698000000
+   },
+   {
+    "runId": "c4",
+    "status": "ok",
+    "runAtMs": 1792697000000
+   },
+   {
+    "runId": "c5",
+    "status": "ok",
+    "runAtMs": 1792696000000
+   },
+   {
+    "runId": "c6",
+    "status": "ok",
+    "runAtMs": 1792695000000
+   },
+   {
+    "runId": "c7",
+    "status": "ok",
+    "runAtMs": 1792694000000
+   },
+   {
+    "runId": "c8",
+    "status": "ok",
+    "runAtMs": 1792693000000
+   },
+   {
+    "runId": "c9",
+    "status": "ok",
+    "runAtMs": 1792692000000
+   },
+   {
+    "runId": "c10",
+    "status": "ok",
+    "runAtMs": 1792691000000
+   },
+   {
+    "runId": "c11",
+    "status": "ok",
+    "runAtMs": 1792690000000
+   }
+  ]
+ },
+ "delivered": {
+  "aaaa0004-0000-4000-8000-000000000004": 14
+ },
+ "lastDelivered": {
+  "aaaa0004-0000-4000-8000-000000000004": 1792760000000
+ },
+ "doctor": [
+  {
+   "severity": "warn",
+   "checkId": "prova.check",
+   "message": "avviso di prova del doctor"
+  }
+ ],
+ "scratchLen": 5200
+}

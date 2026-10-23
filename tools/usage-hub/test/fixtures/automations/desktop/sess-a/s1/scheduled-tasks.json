@@ -1,0 +1,4 @@
+{ "scheduledTasks": [
+  { "id": "rientro-esempio", "displayName": "Rientro di prova", "fireAt": 1790000000000, "enabled": true, "filePath": "/Users/demo/.claude/scheduled-tasks/rientro-esempio/SKILL.md", "createdAt": 1789990000000, "cwd": "/Users/demo/Projects/demo" },
+  { "id": "analisi-esempio", "displayName": "Analisi di prova", "fireAt": 1790100000000, "enabled": false, "filePath": "/Users/demo/.claude/scheduled-tasks/analisi-esempio/SKILL.md", "createdAt": 1790000000000, "cwd": "/Users/demo/Projects/demo", "lastRunAt": "2026-09-23T10:00:19.239Z", "lastScheduledFor": "2026-09-23T10:00:00.000Z" }
+], "recordedSkips": {} }

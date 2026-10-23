@@ -1,0 +1,9 @@
+{
+  "autoSwitch": true,
+  "proxyEnabled": true,
+  "rotationStrategy": "conserve",
+  "rotationIntervalMin": 60,
+  "notifications": true,
+  "serializeRequests": false,
+  "serializeDelayMs": 200
+}

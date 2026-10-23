@@ -1,0 +1,12 @@
+{
+  "at": 1791892800000,
+  "account": {},
+  "muse": {
+    "quota": { "weekPct": 60, "weekResetsAt": 1792238400000 },
+    "projects": [
+      { "name": "alpha", "share": 0.6 },
+      { "name": "beta", "share": 0.3 },
+      { "name": "gamma", "share": 0.1 }
+    ]
+  }
+}
