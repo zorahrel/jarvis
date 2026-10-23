@@ -107,7 +107,10 @@ struct LastSeen: Codable { let at: Double; let provider: String }
 struct TopicsChat: Codable { let title: String; let busy: Bool; let url: String }
 struct AgentOpen: Codable { let url: String; let via: String }
 struct AgentInfo: Codable { let kind: String; let provider: String; let model: String; let title: String; let startedAt: Double; let lastActivity: Double; let open: AgentOpen?; let `where`: String?; let res: AgentRes?
-    let depth: Int? }
+    let depth: Int?; let use: AgentUse? }
+// Consumo della sessione dall'hub: token nuovi del giro attuale e dell'ultima ora; per Claude anche la % della settimana.
+struct AgentUse: Codable { let tokens: Double; let hourTokens: Double; let pct: Double?; let hourPct: Double? }
+func tokText(_ t: Double) -> String { t >= 1_000_000 ? String(format: "%.1f M", t / 1_000_000).replacingOccurrences(of: ".", with: ",") : t >= 1000 ? "\(Int((t / 1000).rounded())) k" : "\(Int(t))" }
 struct SubGroup: Codable { let path: String; let members: [String]; let agents: Int; let claude: Double; let codex: Double; let muse: Double }
 struct AgentRes: Codable { let cpu: Double; let memMB: Double; let shared: Int? }
 struct AgentModelCount: Codable { let provider: String; let model: String; let n: Int }
@@ -161,6 +164,11 @@ var liveTrust: TrustResp?
 func trustOf(_ pids: [pid_t]) -> [TrustItem] { (liveTrust?.items ?? []).filter { pids.contains($0.pid) } }
 // PC di casa (hub /api/pc, da ~/bin/pc-state): dorme, acceso o lavora. avviso = Mac sopra la soglia
 // di offload e PC che dorme, cioè il lavoro pesante sta girando qui invece che là.
+// Una macchina, dall'hub (/api/machines): questo Mac, il PC, domani altre. Tutte la stessa card: niente nomi nel codice.
+struct MachineMetric: Codable { let key: String; let name: String; let pct: Int; let level: Int; let limit: Double?; let note: String; let history: [HistoryPoint]? }
+struct Machine: Codable { let id: String; let name: String; let local: Bool; let state: String; let level: Int; let caption: String?; let lines: [String]; let metrics: [MachineMetric]; let foot: String? }
+var liveMachines: [Machine]?
+var snapshotMode = false
 struct PcResp: Codable { let pc: String; let perche: String?; let mac: Double?; let soglia: Double?; let avviso: Bool }
 var livePc: PcResp?
 // Automazioni dell'hub (:3360/api/automations/summary): chi ti aspetta, cosa è rotto, se le fonti rispondono.
@@ -169,7 +177,7 @@ struct AutoSummary: Codable { let needsYou: Int; let broken: Int; let ok: Int; l
 var liveAuto: AutoSummary?
 // Ultima lettura buona: oltre 10 minuti il dato sparisce (stessa convenzione dell'overview: meglio niente che un numero vecchio).
 var liveAutoAt: Date?
-let livePaths: [(String, Double)] = [("/api/live", 10.0), ("/api/gates", 25.0), ("/api/queue", 10.0), ("/api/heavy", 25.0), ("/api/mac", 25.0), ("/api/mac/trust", 25.0), ("/api/pc", 15.0), ("/api/automations/summary", 25.0)]
+let livePaths: [(String, Double)] = [("/api/live", 10.0), ("/api/gates", 25.0), ("/api/queue", 10.0), ("/api/heavy", 25.0), ("/api/mac", 25.0), ("/api/mac/trust", 25.0), ("/api/pc", 15.0), ("/api/machines", 25.0), ("/api/automations/summary", 25.0)]
 // Una risposta del hub nello stato globale giusto; usata da fetchLive e dallo snapshot.
 func applyLive(_ path: String, _ data: Data?) {
     guard let d = data else { return }
@@ -181,6 +189,7 @@ func applyLive(_ path: String, _ data: Data?) {
     case "/api/mac/trust": if let t = try? JSONDecoder().decode(TrustResp.self, from: d) { liveTrust = t }
     case "/api/heavy": if let h = try? JSONDecoder().decode(HeavyResp.self, from: d) { liveHeavy = h }
     case "/api/pc": if let p = try? JSONDecoder().decode(PcResp.self, from: d) { livePc = p }
+    case "/api/machines": if let m = try? JSONDecoder().decode([Machine].self, from: d) { liveMachines = m }
     case "/api/automations/summary": if let a = try? JSONDecoder().decode(AutoSummary.self, from: d) { liveAuto = a; liveAutoAt = Date() }
     default: break
     }
@@ -1109,8 +1118,11 @@ func overallStatus(_ snapshot: Overview?) -> (Level, String, String) {
 func statusRow(_ snapshot: Overview?) -> NSMenuItem {
     let (lv, title, why) = overallStatus(snapshot)
     let (name, tone) = lv == .ok ? ("checkmark.circle.fill", toneOK) : lv == .warn ? ("exclamationmark.triangle.fill", toneWarn) : ("hand.raised.fill", toneBad)
-    return richRow(icon: sym(name, pt: 16, color: tone), txt(title, rowBold), detail: why,
-                   tip: "Verde = tutto in linea · arancione = un account ha superato la quota di oggi · rosso = un abbonamento è frenato e il lavoro rimandabile aspetta. Le sessioni aperte non vengono mai bloccate.", wrap: 90)
+    // una riga sola, piccola: il dettaglio di ogni account sta già nella sua card, qui basta dire cosa succede
+    let line = NSMutableAttributedString(attributedString: txt(title, .systemFont(ofSize: 12, weight: .semibold), lv == .ok ? .labelColor : tone))
+    if !why.isEmpty { line.append(txt("  " + (why.count > 70 ? String(why.prefix(69)) + "…" : why), rowSmall, .secondaryLabelColor)) }
+    return richRow(icon: sym(name, pt: 11, color: tone), line,
+                   tip: (why.isEmpty ? "" : why + "\n\n") + "Verde = tutto in linea · arancione = un account ha superato la quota di oggi · rosso = un abbonamento è frenato e il lavoro rimandabile aspetta. Le sessioni aperte non vengono mai bloccate.")
 }
 
 // MARK: il Mac: carico, memoria, chi pesa, agenti in pausa
@@ -1159,6 +1171,30 @@ func macRow() -> NSMenuItem? {
     v.vertical = true
     v.toolTip = tip; it.view = v; it.toolTip = tip
     it.submenu = macProcs.newMenu()   // al passaggio: chi pesa adesso, per CPU e per memoria
+    return it
+}
+
+// Una macchina come card: stato a parole nel badge, una misura per riquadro col grafico 24 h quando c'è, sotto cosa pesa.
+// Senza misure (spenta, addormentata) una riga sola. La macchina su cui gira la tray ha i processi nel sottomenu.
+func machineItem(_ m: Machine) -> NSMenuItem {
+    let tone: (Int) -> NSColor = { $0 == 0 ? toneOK : $0 == 1 ? toneWarn : toneBad }
+    var lines = m.lines
+    if m.local, let g = liveTrust?.items.filter({ $0.level == "grave" }), !g.isEmpty { lines.append("Processi sospetti: " + g.prefix(3).map { $0.name }.joined(separator: ", ") + " (passa qui per i motivi)") }
+    let bars = m.metrics.map { x in
+        BarSpec(label: x.name, frac: Double(x.pct) / 100, mark: x.limit.map { $0 / 100 }, color: tone(x.level), value: "\(x.pct)%",
+                spark: (x.history?.count ?? 0) > 1 ? x.history : nil, note: x.note)
+    }
+    let quiet = m.metrics.isEmpty
+    // senza misure la riga sotto dice cosa aspettarsi (la didascalia), lo stato è già nel badge
+    let v = AccountBlockView(icon: sym(m.local ? "laptopcomputer" : "desktopcomputer", pt: 14, color: .labelColor), name: m.name, caption: quiet ? nil : m.caption,
+                             badge: m.state, badgeColor: quiet && m.level == 0 ? .secondaryLabelColor : tone(m.level),
+                             brake: lines.isEmpty ? nil : lines.joined(separator: " · "), bars: bars,
+                             single: quiet ? txt(m.caption ?? "nessuna misura adesso", rowSmall, .secondaryLabelColor) : nil)
+    if !quiet { v.foot = m.foot; v.vertical = true }
+    let it = NSMenuItem()
+    let tip = "Conta la misura più vicina alla sua soglia (la tacca). Sotto sforzo, gli agenti in background di priorità bassa vanno in pausa e ripartono da soli; le sessioni aperte non si fermano mai."
+    v.toolTip = tip; it.view = v; it.toolTip = tip
+    if m.local { it.submenu = macProcs.newMenu() }   // al passaggio: chi pesa adesso, per CPU e per memoria
     return it
 }
 
@@ -1292,6 +1328,28 @@ final class MacProcMenu: NSObject, NSMenuDelegate {
         win.target = self; win.image = sym("magnifyingglass")
         m.addItem(win)
     }
+    // Sezione nel menu principale: le app che pesano di più adesso (CPU + memoria), lette al volo. Le righe nascono vuote
+    // e si riempiono mezzo secondo dopo l'apertura (la CPU è la media tra due letture), con il menu già aperto.
+    func inlineSection(count n: Int = 5) -> [NSMenuItem] {
+        let head = headRow(["PESANO DI PIÙ ADESSO", "CPU", "memoria"], tabs: tabs)
+        let slots = (0..<n).map { _ in noteRow("…") }
+        let apply: ([ProcRow]) -> Void = { [weak self] rows in
+            guard let self else { return }
+            self.lastRows = rows
+            let top = groupByApp(rows, all: rows).sorted { ($0.cpu / 100 + $0.mem / 2e9) > ($1.cpu / 100 + $1.mem / 2e9) }.prefix(n)
+            for (slot, g) in zip(slots, top) {
+                let it = self.procItem(g, members: rows.filter { g.pids.contains($0.pid) })
+                let sm = it.submenu; it.submenu = nil
+                slot.attributedTitle = it.attributedTitle; slot.image = it.image; slot.submenu = sm
+            }
+        }
+        if snapshotMode { prime(); Thread.sleep(forTimeInterval: 0.6); apply(queue.sync { sampler.sample() }); return [head] + slots }
+        queue.asyncAfter(deadline: .now() + 0.6) { [sampler] in
+            let rows = sampler.sample()
+            RunLoop.main.perform(inModes: [.common, .eventTracking]) { apply(rows) }
+        }
+        return [head] + slots
+    }
     @objc func open(_ s: NSMenuItem) { ProcessWindowController.shared.show(query: s.representedObject as? String ?? "") }
     @objc func kill(_ s: NSMenuItem) {
         guard let o = s.representedObject as? [String: Any], let pids = o["pids"] as? [pid_t], let force = o["force"] as? Bool else { return }
@@ -1333,9 +1391,21 @@ final class AccountBlockView: NSView {
     var noteX0: CGFloat { Self.noteX }
     var labelX0: CGFloat { Self.labelX }
     var valueX0: CGFloat { Self.valueX }
-    init(icon: NSImage?, name: String, caption: String?, badge: String?, badgeColor: NSColor, brake: String?, bars: [BarSpec], single: NSAttributedString?) {
+    // compactW: la card a metà larghezza della griglia degli account. Stesse barre, stesso grafico col mouse;
+    // la nota (azzera, libera tra) va accanto all'etichetta, la barra e il grafico sotto.
+    let compactW: CGFloat?
+    static let cRowH: CGFloat = 32
+    func cBrakeH() -> CGFloat {
+        guard let b = brake, let w = compactW else { return 0 }
+        let h = (b as NSString).boundingRect(with: NSSize(width: w - 20, height: 100), options: [.usesLineFragmentOrigin], attributes: [.font: Self.brakeFont]).height
+        return min(ceil(h), 42)
+    }
+    func cTop() -> CGFloat { brake == nil ? 27 : 27 + cBrakeH() + 4 }
+    init(icon: NSImage?, name: String, caption: String?, badge: String?, badgeColor: NSColor, brake: String?, bars: [BarSpec], single: NSAttributedString?, compactW: CGFloat? = nil) {
         self.icon = icon; self.name = name; self.caption = caption; self.badge = badge; self.badgeColor = badgeColor; self.brake = brake; self.bars = bars; self.single = single
+        self.compactW = compactW
         super.init(frame: NSRect(x: 0, y: 0, width: blockW, height: Self.top(brake) + Self.rowH * CGFloat(single != nil ? 1 : bars.count) + 6))
+        if let w = compactW { setFrameSize(NSSize(width: w, height: cTop() + (single != nil ? 22 : Self.cRowH * CGFloat(bars.count)) + 6)) }
         addTrackingArea(NSTrackingArea(rect: .zero, options: [.mouseMoved, .mouseEnteredAndExited, .activeAlways, .inVisibleRect], owner: self))
         if single == nil { applySnapshotHover() }
         addSparkTips()
@@ -1346,6 +1416,7 @@ final class AccountBlockView: NSView {
         let sr = sparkRect(r); hover = (row: r, x: sr.minX + sr.width * CGFloat(f))
     }
     func sparkRect(_ i: Int) -> NSRect {
+        if let w = compactW { return NSRect(x: 104, y: cTop() + Self.cRowH * CGFloat(i) + 16, width: w - 114, height: 11) }
         if vertical { let c = cardRect(i); return NSRect(x: c.minX + Self.vColW + 6, y: c.minY + 18, width: c.width - Self.vColW - 20, height: Self.cardChartH) }
         return NSRect(x: sparkX0, y: Self.top(brake) + Self.rowH * CGFloat(i) + 3, width: Self.sparkW, height: Self.sparkH)
     }
@@ -1387,6 +1458,7 @@ final class AccountBlockView: NSView {
     required init?(coder: NSCoder) { nil }
     override var isFlipped: Bool { true }
     override func draw(_ dirty: NSRect) {
+        if compactW != nil { drawCompact(); return }
         let braked = brake != nil
         // con un sottomenu (il Mac: i processi) il blocco si comporta da voce: evidenza al passaggio e freccia a destra
         let sub = enclosingMenuItem?.hasSubmenu == true
@@ -1447,6 +1519,60 @@ final class AccountBlockView: NSView {
             } else {
                 (bar.note as NSString).draw(at: NSPoint(x: noteX0, y: y + 2), withAttributes: [.font: NSFont.systemFont(ofSize: 10.5), .foregroundColor: NSColor.secondaryLabelColor])
             }
+        }
+    }
+    private func drawCompact() {
+        let W = bounds.width
+        // fondo leggero: le card affiancate si leggono come blocchi separati
+        NSColor.labelColor.withAlphaComponent(0.045).setFill()
+        NSBezierPath(roundedRect: bounds.insetBy(dx: 0, dy: 1), xRadius: 7, yRadius: 7).fill()
+        if brake != nil { badgeColor.setFill(); NSBezierPath(roundedRect: NSRect(x: 0, y: 1, width: 3, height: bounds.height - 2), xRadius: 1.5, yRadius: 1.5).fill() }
+        icon?.draw(in: NSRect(x: 10, y: 7, width: 13, height: 13), from: .zero, operation: .sourceOver, fraction: 1)
+        var right = W - 8
+        if let b = badge {
+            let attr: [NSAttributedString.Key: Any] = [.font: NSFont.systemFont(ofSize: 10, weight: .semibold), .foregroundColor: badgeColor]
+            // il badge del freno dice già l'ora nella riga sotto: nella card basta la parola
+            let t = (b.components(separatedBy: " fino").first ?? b) as NSString
+            let sz = t.size(withAttributes: attr)
+            let r = NSRect(x: right - sz.width - 12, y: 5, width: sz.width + 12, height: 16)
+            badgeColor.withAlphaComponent(0.18).setFill(); NSBezierPath(roundedRect: r, xRadius: 8, yRadius: 8).fill()
+            t.draw(at: NSPoint(x: r.minX + 6, y: r.minY + 1.5), withAttributes: attr)
+            right = r.minX - 6
+        }
+        (name as NSString).draw(with: NSRect(x: 28, y: 5, width: right - 28, height: 16), options: [.usesLineFragmentOrigin, .truncatesLastVisibleLine],
+                                attributes: [.font: NSFont.systemFont(ofSize: 12, weight: .semibold), .foregroundColor: NSColor.labelColor])
+        if let br = brake {
+            (br as NSString).draw(with: NSRect(x: 10, y: 25, width: W - 20, height: cBrakeH()), options: [.usesLineFragmentOrigin, .truncatesLastVisibleLine],
+                                  attributes: [.font: Self.brakeFont, .foregroundColor: badgeColor])
+        }
+        let y0 = cTop()
+        if let one = single { one.draw(at: NSPoint(x: 10, y: y0 + 1)); return }
+        let small: [NSAttributedString.Key: Any] = [.font: NSFont.systemFont(ofSize: 10), .foregroundColor: NSColor.tertiaryLabelColor]
+        for (i, bar) in bars.enumerated() {
+            let y = y0 + Self.cRowH * CGFloat(i)
+            let la: [NSAttributedString.Key: Any] = [.font: NSFont.systemFont(ofSize: 10.5), .foregroundColor: NSColor.secondaryLabelColor]
+            (bar.label as NSString).draw(at: NSPoint(x: 10, y: y + 1), withAttributes: la)
+            let va: [NSAttributedString.Key: Any] = [.font: NSFont.monospacedDigitSystemFont(ofSize: 11.5, weight: .bold), .foregroundColor: bar.color]
+            let vs = bar.value as NSString, vw = vs.size(withAttributes: va).width
+            vs.draw(at: NSPoint(x: W - 10 - vw, y: y), withAttributes: va)
+            // la nota tra etichetta e numero; col mouse sul grafico diventa «quando · quanto»
+            let lx = 10 + (bar.label as NSString).size(withAttributes: la).width + 6
+            var note = bar.note, na = small
+            let sr = sparkRect(i)
+            if let hv = hover, hv.row == i, let pts = bar.spark, pts.count >= 2 {
+                let hp = hoverPoint(pts, x: hv.x, in: sr)
+                NSColor.labelColor.withAlphaComponent(0.7).setFill(); NSRect(x: hv.x - 0.5, y: sr.minY - 2, width: 1, height: sr.height + 4).fill()
+                let v = bar.scaleMax == 100 ? "\(Int(hp.v.rounded()))%" : String(format: "%.1f×", hp.v).replacingOccurrences(of: ".", with: ",")
+                note = "\(hhmmText(hp.t)) · \(v)"; na = [.font: NSFont.monospacedDigitSystemFont(ofSize: 10, weight: .semibold), .foregroundColor: NSColor.labelColor]
+            }
+            (note as NSString).draw(with: NSRect(x: lx, y: y + 2, width: max(0, W - 16 - vw - lx), height: 14), options: [.usesLineFragmentOrigin, .truncatesLastVisibleLine], attributes: na)
+            let ty = y + 19
+            NSColor.labelColor.withAlphaComponent(0.12).setFill()
+            NSBezierPath(roundedRect: NSRect(x: 10, y: ty, width: 86, height: 5), xRadius: 2.5, yRadius: 2.5).fill()
+            let fw = max(min(86 * CGFloat(bar.frac), 86), bar.frac > 0 ? 5 : 0)
+            if fw > 0 { bar.color.setFill(); NSBezierPath(roundedRect: NSRect(x: 10, y: ty, width: fw, height: 5), xRadius: 2.5, yRadius: 2.5).fill() }
+            if let m = bar.mark { NSColor.labelColor.setFill(); NSRect(x: 10 + 86 * CGFloat(min(max(m, 0), 1)) - 1, y: ty - 2, width: 2, height: 9).fill() }
+            if let pts = bar.spark, pts.count >= 2 { drawSpark(pts, rect: sr, color: bar.color, scaleMax: bar.scaleMax) }
         }
     }
     private func drawCards() {
@@ -1514,6 +1640,26 @@ final class AccountBlockView: NSView {
     }
 }
 
+// Le card degli account affiancate: due colonne, le card di una riga alte uguali.
+let gridPad: CGFloat = 14, gridGap: CGFloat = 8
+let gridColW: CGFloat = (blockW - 2 * gridPad - gridGap) / 2
+final class GridView: NSView {
+    override var isFlipped: Bool { true }
+    init(_ views: [NSView], cols: Int = 2) {
+        var y: CGFloat = 3
+        var placed: [(NSView, NSRect)] = []
+        for start in stride(from: 0, to: views.count, by: cols) {
+            let row = Array(views[start..<min(start + cols, views.count)])
+            let h = row.map { $0.frame.height }.max() ?? 0
+            for (j, v) in row.enumerated() { placed.append((v, NSRect(x: gridPad + CGFloat(j) * (gridColW + gridGap), y: y, width: gridColW, height: h))) }
+            y += h + gridGap
+        }
+        super.init(frame: NSRect(x: 0, y: 0, width: blockW, height: y - gridGap + 4))
+        for (v, r) in placed { v.frame = r; addSubview(v) }
+    }
+    required init?(coder: NSCoder) { nil }
+}
+
 func inText(_ epoch: Int, now: Date = Date()) -> String {
     let s = max(Double(epoch) - now.timeIntervalSince1970, 0)
     return s >= 86400 ? "\(Int(s / 86400)) g \(Int(s.truncatingRemainder(dividingBy: 86400) / 3600)) h" : s >= 3600 ? "\(Int(s / 3600)) h \(Int(s.truncatingRemainder(dividingBy: 3600) / 60)) min" : "\(Int(s / 60)) min"
@@ -1544,7 +1690,7 @@ func resumeText(_ w: AccountWait) -> String {
     }
 }
 
-func accountBlock(_ p: Provider, _ a: Account, renewal: Renewal? = nil, credit: CloudCredit? = nil, now: Date = Date()) -> NSMenuItem? {
+func accountBlock(_ p: Provider, _ a: Account, renewal: Renewal? = nil, credit: CloudCredit? = nil, now: Date = Date(), compactW: CGFloat? = nil) -> NSMenuItem? {
     guard let w = a.quotas.first(where: { $0.key.lowercased() == "7d" }) else { return nil }
     let name = "\(p.name) · \(shortLabel(a.label))"
     let icon = providerSym(p.id, pt: 14, color: .labelColor)
@@ -1556,8 +1702,10 @@ func accountBlock(_ p: Provider, _ a: Account, renewal: Renewal? = nil, credit: 
     let tip = "Settimana: quanta quota hai usato; la tacca è dove dovresti essere consumando in modo uniforme. 5 ore: la finestra breve. Oggi: le ultime 24 ore contro la quota giornaliera sostenibile (quello che resta ÷ giorni al reset), tacca a 1×; oltre, il lavoro rimandabile aspetta. Il grafico accanto al numero è l'andamento della stessa misura."
     func make(_ badge: String?, _ bc: NSColor, _ brake: String?, _ bars: [BarSpec], _ single: NSAttributedString?) -> NSMenuItem {
         let it = NSMenuItem()
-        let v = AccountBlockView(icon: icon, name: name, caption: caption, badge: badge, badgeColor: bc, brake: brake, bars: bars, single: single)
-        v.toolTip = tip; it.view = v; it.toolTip = tip
+        let v = AccountBlockView(icon: icon, name: name, caption: caption, badge: badge, badgeColor: bc, brake: brake, bars: bars, single: single, compactW: compactW)
+        // nella card il prezzo e il rinnovo non ci stanno accanto al nome: vanno nel suggerimento
+        let t = compactW != nil && caption != nil ? caption! + "\n" + tip : tip
+        v.toolTip = t; it.view = v; it.toolTip = t
         return it
     }
     if w.usedPct >= 100 {
@@ -1838,7 +1986,7 @@ func liveAgentRows(actionTarget: AnyObject?) -> [NSMenuItem] {
     let all = everyone.filter { ($0.1.depth ?? 0) == 0 }.sorted { $0.1.lastActivity > $1.1.lastActivity }
     let subs = everyone.count - all.count
     var out: [NSMenuItem] = [headRow(all.isEmpty ? ["NESSUN AGENTE AL LAVORO"] : ["AL LAVORO ADESSO · \(all.count)" + (subs > 0 ? " + \(subs) SOTTOAGENTI" : "")], tabs: [])]
-    let tabs: [CGFloat] = [330]
+    let tabs: [CGFloat] = [330, 460]
     // Agenti uguali (stesso progetto, titolo, modello e tipo) in una riga con ×N: 23/10 i 7 Codex di un lotto in /tmp/zgen
     // erano 7 righe identiche «17 cartelle temporanee · K4-P9» e coprivano tutti gli altri progetti.
     var rows: [(pr: LiveProject, g: AgentInfo, n: Int)] = []
@@ -1849,9 +1997,13 @@ func liveAgentRows(actionTarget: AnyObject?) -> [NSMenuItem] {
     for (pr, g, n) in rows.prefix(agentsShown) {
         let name = pr.title ?? pr.name
         let line = NSMutableAttributedString(attributedString: txt(name.count > 30 ? String(name.prefix(29)) + "…" : name, rowFont))
+        // a destra quanto consuma adesso (token nell'ultima ora), poi modello e da quanto; sotto il giro intero
+        if let u = g.use, u.hourTokens > 0 { line.append(txt("\t\(tokText(u.hourTokens))/h", rowNum, .labelColor)) } else { line.append(txt("\t", rowNum)) }
         line.append(txt("\t\(g.model)\(n > 1 ? " ×\(n)" : "") · \(durText(nowMs() - g.startedAt))", rowNum, .secondaryLabelColor))
         let what = [g.title.isEmpty ? nil : g.title, g.kind == "sessione" || name.lowercased().contains(g.kind) ? nil : g.kind].compactMap { $0 }.joined(separator: " · ")
-        let row = richRow(icon: providerSym(g.provider), line, detail: what.isEmpty ? nil : what, tabs: tabs,
+        let useText = g.use.map { u in "\(tokText(u.tokens)) token nel giro" + (u.pct.map { $0 >= 0.05 ? " · " + String(format: "%.1f", $0).replacingOccurrences(of: ".", with: ",") + "% della settimana" : "" } ?? "") }
+        let detail = [useText, what.isEmpty ? nil : what].compactMap { $0 }.joined(separator: " · ")
+        let row = richRow(icon: providerSym(g.provider), line, detail: detail.isEmpty ? nil : detail, tabs: tabs,
                           tip: g.open.map { "Clic per aprirla in \($0.via)" } ?? "Gira in background: non si apre da qui", wrap: 70)
         if let o = g.open {
             row.action = #selector(AppDelegate.openLink(_:)); row.target = actionTarget
@@ -1898,6 +2050,7 @@ func buildMenu(snapshot: Overview?, isOffline: Bool, actionTarget: AnyObject?) -
         var shown = Set<String>()
         var bonusShown = Set<String>()
         let details = NSMenu(); details.autoenablesItems = false
+        var cards: [NSView] = [], afterGrid: [NSMenuItem] = []
         for p in providers {
             let accs = p.accounts ?? []
             let labels = Set(accs.map { $0.label })
@@ -1910,7 +2063,7 @@ func buildMenu(snapshot: Overview?, isOffline: Bool, actionTarget: AnyObject?) -
                     if let m = mine { shown.insert(m.service + "|" + m.account) }
                     let credit = p.id == "claude" ? cmap[a.label] : nil
                     if credit != nil { bonusShown.insert(a.label) }
-                    if let b = accountBlock(p, a, renewal: mine, credit: credit) { menu.addItem(b) }
+                    if let b = accountBlock(p, a, renewal: mine, credit: credit, compactW: gridColW), let v = b.view { b.view = nil; cards.append(v) }
                 }
                 continue
             }
@@ -1918,7 +2071,7 @@ func buildMenu(snapshot: Overview?, isOffline: Bool, actionTarget: AnyObject?) -
             if let err = p.error {
                 // Account presente ma senza percentuale (il mint di Muse a volte la omette): si usa lo stesso, non è un guasto.
                 let unread = !(p.accounts ?? []).isEmpty
-                menu.addItem(richRow(icon: providerSym(p.id, pt: 14, color: .secondaryLabelColor),
+                afterGrid.append(richRow(icon: providerSym(p.id, pt: 14, color: .secondaryLabelColor),
                                      txt(unread ? "\(p.name) · quota non letta" : "\(p.name) non raggiungibile", rowBold),
                                      detail: unread ? "il server non manda la percentuale adesso: il lavoro ci va lo stesso, al limite rifiuta \(p.name)" : "numeri e freno ignoti finché non risponde", tip: err))
             }
@@ -1952,6 +2105,9 @@ func buildMenu(snapshot: Overview?, isOffline: Bool, actionTarget: AnyObject?) -
             let it = richRow(icon: sym("creditcard"), txt("Credito AI", rowFont)); it.submenu = sub
             details.addItem(it)
         }
+        // gli account affiancati in una griglia, una voce sola; le righe di chi non risponde subito sotto
+        if !cards.isEmpty { let g = NSMenuItem(); g.view = GridView(cards); menu.addItem(g) }
+        afterGrid.forEach { menu.addItem($0) }
         details.addItem(.separator())
         for (title, sel, on) in [
             ("Mostra fascia di 5 ore", #selector(AppDelegate.toggleDaily), TrayPrefs.showDaily),
@@ -1965,10 +2121,16 @@ func buildMenu(snapshot: Overview?, isOffline: Bool, actionTarget: AnyObject?) -
         }
         menu.addItem(.separator())
         liveAgentRows(actionTarget: actionTarget).forEach { menu.addItem($0) }
-        if let mr = macRow() {  // sempre: è l'indicatore unico del Mac
-            menu.addItem(.separator()); menu.addItem(mr)
+        if let ms = liveMachines, !ms.isEmpty {
+            // ogni macchina è la stessa card; quella su cui gira la tray ha i processi nel sottomenu
+            for m in ms { menu.addItem(.separator()); menu.addItem(machineItem(m)) }
+            if ms.contains(where: { $0.local }) { menu.addItem(.separator()); macProcs.inlineSection().forEach { menu.addItem($0) } }
+        } else {
+            if let mr = macRow() {  // hub vecchio senza /api/machines: il Mac e il PC come prima
+                menu.addItem(.separator()); menu.addItem(mr)
+            }
+            pcRow().forEach { menu.addItem($0) }
         }
-        pcRow().forEach { menu.addItem($0) }
         menu.addItem(.separator())
         let det = richRow(icon: sym("slider.horizontal.3"), txt("Altri abbonamenti e opzioni", rowFont)); det.submenu = details
         menu.addItem(det)
@@ -2092,7 +2254,8 @@ func fetchOverviewSync() -> Overview? {
 }
 
 func runSnapshotAndExit(path: String) -> Never {
-    _ = NSApplication.shared // font/colori come nella barra, senza runloop
+    _ = NSApplication.shared
+    snapshotMode = true // font/colori come nella barra, senza runloop
     guard let snapshot = fetchOverviewSync() else {
         // Hub spento: il menu offline si disegna lo stesso («Automazioni · ?»), senza barra.
         let menu = buildMenu(snapshot: nil, isOffline: true, actionTarget: nil)

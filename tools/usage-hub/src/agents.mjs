@@ -102,7 +102,7 @@ function claudeSessions(root, now, opts, out, seen) {
       if (!model || model === '<synthetic>') continue; // senza risposte del modello non è un agente al lavoro
       const title = (lastMatch(tl, /"aiTitle":"([^"]+)"/) || [])[1] || (hd.match(/"type":"user"[\s\S]*?"content":"([^"]{5,200})/) || [])[1] || '';
       const started = runStart(tl, st.mtimeMs);
-      out.push({ kind: project === 'openclaw/sottoagenti' ? 'sottoagente' : 'sessione', provider: 'claude', model: modelLabel(model), project, cwd, cliId: path.basename(n, '.jsonl'), title: clip(title), startedAt: started, lastActivity: st.mtimeMs });
+      out.push({ kind: project === 'openclaw/sottoagenti' ? 'sottoagente' : 'sessione', provider: 'claude', model: modelLabel(model), project, cwd, cliId: path.basename(n, '.jsonl'), file: f, title: clip(title), startedAt: started, lastActivity: st.mtimeMs });
     }
     // Sottoagenti di Claude Code: <sessione>/subagents/agent-*.jsonl, e un livello in più per i workflow
     // (subagents/workflows/<wf>/). Si guardano solo le sessioni toccate da poco: la sessione madre aspetta e può non scrivere.
@@ -120,7 +120,7 @@ function claudeSessions(root, now, opts, out, seen) {
         if (meta.finished) continue;
         const tl = tail(f, st), model = (lastMatch(tl, /"model":"([^"<]+)"/) || [])[1];   // 128 KB: con 32 il 6% delle letture a metà lavoro non trovava il modello
         if (!model || model === '<synthetic>') continue;
-        out.push({ kind: wf ? 'workflow' : 'sottoagente', provider: 'claude', model: modelLabel(model), project, cwd, cliId: a.slice(6, -6), parent, workflow: wf, depth: wf ? 2 : 1,
+        out.push({ kind: wf ? 'workflow' : 'sottoagente', provider: 'claude', model: modelLabel(model), project, cwd, cliId: a.slice(6, -6), file: f, parent, workflow: wf, depth: wf ? 2 : 1,
           title: clip(meta.description || meta.agentType || ''), startedAt: runStart(tl, st.mtimeMs), lastActivity: st.mtimeMs });   // un sottoagente ripreso giorni dopo: conta il giro attuale, non la nascita del file
       }
     }
@@ -141,7 +141,7 @@ function codexSessions(root, now, opts, out, seen) {
       markSeen(seen, project, st.mtimeMs, 'codex', cwd);
       if (now - st.mtimeMs > ACTIVE_MS) continue;
       const h = headInfo(f, st, 65536, (hd) => ({ model: (hd.match(/"model":"([^"]+)"/) || [])[1] || '', title: (hd.match(/"type":"user_message"[^}]*?"message":"([^"]{5,200})/) || [])[1] || '', ts: (hd.match(/"timestamp":"([^"]+)"/) || [])[1] || '' }));
-      out.push({ kind: 'codex', provider: 'codex', model: modelLabel(h.model || 'gpt'), project, cwd, title: clip(h.title), startedAt: Date.parse(h.ts) || st.birthtimeMs, lastActivity: st.mtimeMs });
+      out.push({ kind: 'codex', provider: 'codex', model: modelLabel(h.model || 'gpt'), project, cwd, file: f, title: clip(h.title), startedAt: Date.parse(h.ts) || st.birthtimeMs, lastActivity: st.mtimeMs });
     }
   }
 }
@@ -156,7 +156,7 @@ function museSessions(root, now, opts, out, seen) {
       markSeen(seen, project, st.mtimeMs, 'muse', cwd);
       if (now - st.mtimeMs > ACTIVE_MS) continue;
       const h = headInfo(f, st, 262144, (hd) => ({ model: (hd.match(/"model_id":"([^"]+)"/) || [])[1] || '', title: (hd.match(/"refill_blocks":\[\{[^}]*?"text":"([^"]{5,200})/) || [])[1] || '', rec: (hd.match(/"recorded_at":(\d+)/) || [])[1] || '' }));
-      out.push({ kind: project === 'openclaw/sottoagenti' ? 'sottoagente' : 'museagent', provider: 'muse', model: modelLabel(h.model || 'muse'), project, cwd, title: clip(h.title), startedAt: (Number(h.rec) / 1000) || st.birthtimeMs, lastActivity: st.mtimeMs });
+      out.push({ kind: project === 'openclaw/sottoagenti' ? 'sottoagente' : 'museagent', provider: 'muse', model: modelLabel(h.model || 'muse'), project, cwd, file: f, title: clip(h.title), startedAt: (Number(h.rec) / 1000) || st.birthtimeMs, lastActivity: st.mtimeMs });
     }
   }
 }

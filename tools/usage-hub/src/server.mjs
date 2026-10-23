@@ -20,13 +20,15 @@ import { enqueue, cancel, loadQueue, tick, recoverRunning, launchDelegate, creat
 import { newState, scanToday } from './sessions.mjs';
 import { projectSummary, saveProjectSetting, loadLabels, labelFor, explainProjects } from './live.mjs';
 import { scanAgents, summarize, attachOpen, loadDesktopSessions, topicsByProject } from './agents.mjs';
+import { sessionUse } from './session-use.mjs';
+import { macMachine, pcMachine } from './machines.mjs';
 import https from 'node:https';
 import { createMacWatch, attachResources } from './macwatch.mjs';
 import { createShed, createShedDigest } from './shed.mjs';
 import { createTrust, createTrustAlert } from './trust.mjs';
 import { topHogs, processTable } from './mac.mjs';
 import os from 'node:os';
-import { execFile } from 'node:child_process';
+import { execFile, execFileSync } from 'node:child_process';
 import { makeResolver, readCronNames } from './openclaw.mjs';
 import { createAutomations, findRunFile, workflowRunCost } from './automations/index.mjs';
 import { validate as validateFeedback } from './automations/feedback.mjs';
@@ -152,6 +154,8 @@ export function createServer(config, deps = {}) {
     const terminals = await topicsTerminals();
     attachOpen(agents, { desktop: loadDesktopSessions(), topics: terminals.filter((t) => t.source === 'topics') });
     try { attachResources(agents, (await macWatch.snapshot()).trees); } catch { /* senza misure le righe restano senza risorse */ }
+    // quanto consuma ogni sessione: dai tracker che l'hub aggiorna già per i progetti
+    for (const a of agents) { const u = sessionUse(a, trackers, { weights: config.weights, weekShare }); if (u) a.use = u; }
     agentCache = { at: Date.now(), v: { agents, lastSeen: { ...weekSeen.v, ...lastSeen }, topics: topicsByProject(terminals, { groups, ocRoot: path.join(os.homedir(), '.openclaw') }) } };
     return agentCache.v;
   };
@@ -171,6 +175,21 @@ export function createServer(config, deps = {}) {
     dir: row.key.startsWith('cron:') ? path.join(os.homedir(), '.openclaw') : path.join(os.homedir(), '.claude', 'jarvis'),
     project: 'automazioni',
   });
+  // pc-state non sveglia il PC e non lo tiene sveglio; senza risposta in 10 s il PC e' "sconosciuto". Copia di 60 s.
+  const pcState = async () => {
+    if (!pcCache || Date.now() - pcCache.at > 60000) {
+      const data = await new Promise((resolve) => execFile(path.join(os.homedir(), 'bin', 'pc-state'), { timeout: 10000 }, (err, out) => {
+        try { resolve(JSON.parse(String(out))); } catch { resolve({ pc: 'sconosciuto', perche: err ? err.message : 'risposta illeggibile', avviso: false }); }
+      }));
+      pcCache = { at: Date.now(), data };
+    }
+    return pcCache.data;
+  };
+  let compName = null;
+  const computerName = () => {
+    if (compName == null) { try { compName = execFileSync('/usr/sbin/scutil', ['--get', 'ComputerName'], { timeout: 2000 }).toString().trim(); } catch { compName = ''; } }
+    return compName || os.hostname().replace(/\.local$/, '');
+  };
   return http.createServer(async (req, res) => {
     // no-cache: la dashboard si aggiorna con il repo, il browser non deve tenersi app.js vecchi (rivalida, non riscarica).
     const send = (code, type, body) => { res.writeHead(code, { 'content-type': type, 'cache-control': 'no-cache' }); res.end(body); };
@@ -270,14 +289,12 @@ export function createServer(config, deps = {}) {
       if (req.url === '/api/mac') return send(200, 'application/json', JSON.stringify(await macWatch.snapshot()));
       // Per la tray: il PC di casa dorme, e' acceso o lavora, e se il Mac e' carico mentre il PC dorme.
       // pc-state non sveglia il PC e non lo tiene sveglio; senza risposta in 10 s il PC e' "sconosciuto".
-      if (req.url === '/api/pc') {
-        if (!pcCache || Date.now() - pcCache.at > 60000) {
-          const data = await new Promise((resolve) => execFile(path.join(os.homedir(), 'bin', 'pc-state'), { timeout: 10000 }, (err, out) => {
-            try { resolve(JSON.parse(String(out))); } catch { resolve({ pc: 'sconosciuto', perche: err ? err.message : 'risposta illeggibile', avviso: false }); }
-          }));
-          pcCache = { at: Date.now(), data };
-        }
-        return send(200, 'application/json', JSON.stringify(pcCache.data));
+      if (req.url === '/api/pc') return send(200, 'application/json', JSON.stringify(await pcState()));
+      // Le macchine in un elenco uniforme (questo Mac, il PC, domani altre): la tray disegna per ognuna la stessa card.
+      // I nomi vengono dai dati: il nome di questo Mac da macOS, quello del PC da config.pcName.
+      if (req.url === '/api/machines') {
+        const [mac, pc] = await Promise.all([macWatch.snapshot().catch(() => null), pcState()]);
+        return send(200, 'application/json', JSON.stringify([macMachine(mac, { name: computerName() }), pcMachine(pc, { name: config.pcName || 'PC' })].filter(Boolean)));
       }
       // per gli agenti: chi è sospetto e perché (?all=1 anche gli ok). Mai vecchio di 2 minuti; al primo giro si legge adesso.
       if (req.url.startsWith('/api/mac/trust')) { if (!trust.last.at) await trust.scan(); return send(200, 'application/json', JSON.stringify(trust.report({ all: /[?&]all=1/.test(req.url) }))); }
