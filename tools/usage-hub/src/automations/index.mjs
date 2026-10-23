@@ -37,6 +37,16 @@ async function readPlists(dir) {
 }
 const cachedPlutil = (file) => { const c = plistCache.get(file); if (!c || !c.data) throw new Error('plist illeggibile: ' + path.basename(file)); return c.data; };
 
+// Ultima lettura buona delle fonti lente, su disco: un riavvio con la macchina carica non deve svuotarle.
+const LAST_GOOD_SOURCES = ['launchd', 'github', 'pc'];
+const LAST_GOOD_MS = 24 * 3600000;
+function readLastGood(file) {
+  try { const j = JSON.parse(fs.readFileSync(file, 'utf8')); return j && typeof j === 'object' ? j : {}; } catch { return {}; }
+}
+function writeLastGood(file, data) {
+  try { fs.mkdirSync(path.dirname(file), { recursive: true }); fs.writeFileSync(`${file}.tmp`, JSON.stringify(data)); fs.renameSync(`${file}.tmp`, file); } catch { /* senza disco resta in memoria */ }
+}
+
 // Prova esterna di un giro, distinta dal suo log: oggi solo «c'è un commit nel repo dentro la finestra» (private-backup).
 // Finestra = l'ultima già chiusa; se siamo dentro, quella del giorno prima.
 export function proofWindow(window, now) {
@@ -69,6 +79,7 @@ export function createAutomations(opts = {}) {
     readDescriptions: () => JSON.parse(fs.readFileSync(descriptionsFile(), 'utf8')),
     feedbackDir: undefined,
     proofRun: sh,
+    lastGoodFile: path.join(HOME, '.cache/claude-usage-hub/automations-last-good.json'),
     ttlMs: 60000,
     background: true,
     ...opts,
@@ -84,9 +95,22 @@ export function createAutomations(opts = {}) {
   const mark = (name, s) => { if (s && s.ok === false && !s.pending) downSince[name] ||= o.now(); else delete downSince[name]; return s ? { ...s, downSince: downSince[name] || null } : s; };
   let cache = null, lastGood = null, inflight = null;
   const proofCache = new Map();
+  const lastGoodSrc = readLastGood(o.lastGoodFile);
   // Contatori dei giri di launchd: letti al massimo ogni 5 minuti, ricordati per vedere i giri saltati.
   const runMemo = new Map();
   let runCounts = new Map(), runCountsAt = 0;
+
+  // Una fonte che oggi non risponde (carico alto, cache vuota dopo un riavvio) non svuota le sue voci: vale l'ultima buona, segnata come tale.
+  function keepLastGood(sources, now) {
+    let fresh = false;
+    for (const n of LAST_GOOD_SOURCES) {
+      const s = sources[n];
+      if (s.ok && !s.pending) { lastGoodSrc[n] = { at: now, items: s.items, asleep: !!s.asleep }; fresh = true; continue; }
+      const good = lastGoodSrc[n];
+      if (good && now - good.at < LAST_GOOD_MS) sources[n] = { ...s, ok: false, pending: false, items: good.items, asleep: good.asleep, stale: true, staleSince: good.at };
+    }
+    if (fresh) writeLastGood(o.lastGoodFile, lastGoodSrc);
+  }
 
   async function build() {
     const now = o.now();
@@ -127,6 +151,7 @@ export function createAutomations(opts = {}) {
       pc: mark('pc', pc.read()),
       counted,
     };
+    keepLastGood(sources, now);
     const feedback = buildState(readAll({ dir: o.feedbackDir }).rows, { now });
     const model = buildModel({ now, sources, descriptions: desc, feedback, findings, gateway, proofs });
     model.health = findings ? { at: findings.at, stale: findings.stale } : null;
