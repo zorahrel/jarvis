@@ -222,5 +222,17 @@
  "object:backup-quadra": {
   "area": "backup-sicurezza",
   "seSiRompe": "Attilio potrebbe non avere un backup affidabile del database di Quadra."
+ },
+ "launchd:com.jarvis.oc-misura12h": {
+  "area": "jarvis-agenti",
+  "seSiRompe": "Se si rompe, la misura di 12 ore sulla memoria del gateway OpenClaw non produce l'esito e l'avviso per deriva non parte."
+ },
+ "launchd:com.jarvis.tmpdir-sweep-27-10-a": {
+  "area": "manutenzione",
+  "seSiRompe": "Se si rompe, le cartelle temporanee vecchie restano sul disco: nessun file si perde, lo spazio non si libera."
+ },
+ "launchd:com.jarvis.tmpdir-sweep-27-10-b": {
+  "area": "manutenzione",
+  "seSiRompe": "Se si rompe, le cartelle temporanee vecchie restano sul disco: nessun file si perde, lo spazio non si libera."
  }
 }
