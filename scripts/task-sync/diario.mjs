@@ -33,7 +33,10 @@ export function diario(events, { source = 'task-sync', dir = DIARIO_DIR, now = D
 
 function main() {
   const [text, ...rest] = process.argv.slice(2);
-  if (!text) { console.error('uso: diario.mjs "testo" [--source job] [--kind tipo] [--outcome ok|error|skipped] [--ref id] [--link url]'); process.exit(64); }
+  const uso = 'uso: diario.mjs "testo" [--source job] [--kind tipo] [--outcome ok|error|skipped] [--ref id] [--link url]';
+  // 24/10: «diario.mjs --help» scriveva «--help» nel Diario vero come se fosse un evento.
+  if (text === '--help' || text === '-h') { console.log(uso); return; }
+  if (!text || text.startsWith('-')) { console.error(uso); process.exit(64); }
   const opt = {};
   for (let i = 0; i < rest.length; i += 2) opt[rest[i].replace(/^--/, '')] = rest[i + 1];
   // --who è il nome di prima, accettato ancora.
