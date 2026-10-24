@@ -108,6 +108,49 @@ def external(reader):
     return reader.startswith(("codex:", "oai:", "muse:", "claude:"))
 
 
+# 24/10 03:00: dieci giurie in parallelo (run-axes.sh) = dieci `codex exec` vivi per minuti, ognuno con i
+# suoi node; Mac a 255 di carico e swap al 95%. La giuria non puo' andare sul PC (chiavi Gemini e NIM,
+# login di Codex: sul PC niente segreti), quindi a Mac carico i lettori che lanciano una CLI (codex,
+# claude, muse) prendono uno di CLI_SLOTS posti condivisi da tutta la macchina; gli altri aspettano.
+# Le letture HTTP (Gemini, oai:) restano libere: pesano poco. Mac sotto soglia: nessuna attesa.
+SLOTS_DIR = Path.home() / ".cache" / "vis-giuria" / "cli-slots"
+CLI_SLOTS = int(os.environ.get("VIS_GIURIA_CLI_SLOTS", "2"))
+
+
+def mac_loaded():
+    try:
+        return os.getloadavg()[0] / (os.cpu_count() or 1) > float(os.environ.get("OFFLOAD_MAX_MAC", "1.5"))
+    except OSError:
+        return False
+
+
+class cli_slot:
+    """a Mac carico: un posto su CLI_SLOTS per tutta la macchina (lock su file, si libera anche se il processo muore)"""
+
+    def __enter__(self):
+        import fcntl
+        self.f = None
+        t0 = time.time()
+        SLOTS_DIR.mkdir(parents=True, exist_ok=True)
+        # al massimo 30 min di attesa, poi si legge comunque: meglio lento che senza il voto
+        while mac_loaded() and time.time() - t0 < 1800:
+            for i in range(CLI_SLOTS):
+                f = open(SLOTS_DIR / f"{i}.lock", "w")
+                try:
+                    fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    self.f = f
+                    return self
+                except OSError:
+                    f.close()
+            time.sleep(5)
+        return self
+
+    def __exit__(self, *exc):
+        if self.f:
+            self.f.close()
+        return False
+
+
 def die(msg, code=64):
     print(f"vis giuria: {msg}", file=sys.stderr)
     sys.exit(code)
@@ -367,7 +410,8 @@ def agent_cli(reader, fr, tmp, q):
             raise Skip("claude non installato")
         # --add-dir e --allowedTools sono variadici: il prompt va prima, o se li mangiano
         args = [exe, "-p", q, "--model", reader[7:], "--allowedTools", "Read", "--add-dir", str(tmp)]
-    p = subprocess.run(args, cwd=tmp, stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=600)
+    with cli_slot():
+        p = subprocess.run(args, cwd=tmp, stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=600)
     if p.returncode != 0 or not p.stdout.strip():
         raise Skip(f"{reader.split(':')[0]} esce {p.returncode}: {(p.stderr or p.stdout or '')[-160:]}")
     return p.stdout
@@ -385,13 +429,17 @@ def read_once(reader, video, options, context, fps, n_frames, key):
             if reader.startswith("codex:"):
                 if not shutil.which("codex"):
                     raise Skip("codex non installato")
-                args = ["codex", "exec", "-m", reader.split(":", 1)[1], "--skip-git-repo-check", "-s", "read-only"]
+                # --ignore-user-config: niente plugin, server MCP del Computer Use e notifica a fine turno
+                # (processi in piu' a ogni lettura); lo sforzo resta quello della config, esplicito
+                args = ["codex", "exec", "--ignore-user-config", "-c", 'model_reasoning_effort="ultra"',
+                        "-m", reader.split(":", 1)[1], "--skip-git-repo-check", "-s", "read-only"]
                 for _, f in fr:
                     args += ["-i", str(f)]
                 out = Path(tmp) / "out.txt"
                 # in una cartella vuota: altrimenti codex va a frugare nel repo da cui lo si chiama
-                p = subprocess.run(args + ["-o", str(out), q], cwd=tmp, stdin=subprocess.DEVNULL,
-                                   capture_output=True, text=True, timeout=600)
+                with cli_slot():
+                    p = subprocess.run(args + ["-o", str(out), q], cwd=tmp, stdin=subprocess.DEVNULL,
+                                       capture_output=True, text=True, timeout=600)
                 if p.returncode != 0 or not out.exists():
                     raise Skip(f"codex esce {p.returncode}: {(p.stderr or '')[-160:]}")
                 return parse(out.read_text())
