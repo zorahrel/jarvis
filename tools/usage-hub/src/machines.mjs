@@ -21,11 +21,21 @@ export function macMachine(s, { name = 'Mac', id = 'local' } = {}) {
     const peak = Math.max(p.pct, ...hist.map((h) => h.v));
     let note = `picco ${Math.round(peak)}%`;
     if (p.key === 'cpu') note = (p.load || 0) >= 1 ? `${num(p.load)} in fila/core` : `${num((p.pct / 100) * s.cores)} di ${s.cores} core`;
-    if (p.key === 'mem' && s.mem) note = `${gb(s.mem.usedGB)} di ${gb(s.mem.totalGB)}`;
+    // la RAM «occupata» è sempre quasi piena su macOS e non dice niente: conta la pressione, e lo swap accanto (24/10: «RAM 66%»
+    // con lo swap a 15 su 16 GB e il Mac fermo)
+    if (p.key === 'mem') note = `pressione · swap ${gb(s.swapUsedGB || 0)} di ${gb(s.swapTotalGB || 0)}` + (s.swapSustained ? ', rilegge da disco' : '');
     if (p.key === 'gpu') note = `picco 24 h ${Math.round(peak)}%`;
     if (p.key === 'disk' && s.disk) note = `${gb(s.disk.freeGB)} liberi`;
-    return { key: p.key, name: p.key === 'mem' ? 'RAM' : cap(p.name), pct: p.pct, level: p.level, limit: MAC_LIMITS[p.key] ?? null, note, history: hist };
+    return { key: p.key, name: p.key === 'mem' ? 'Memoria' : cap(p.name), pct: p.pct, level: p.level, limit: MAC_LIMITS[p.key] ?? null, note, history: hist };
   });
+  // Lo swap come misura sua, subito dopo la memoria: rosso quando è quasi pieno e il Mac ci rilegge
+  if (s.swapTotalGB > 0) {
+    const pct = Math.round((s.swapUsedGB / s.swapTotalGB) * 100);
+    const level = pct >= 90 && s.swapSustained ? 2 : pct >= 75 ? 1 : 0;
+    const i = metrics.findIndex((m) => m.key === 'mem');
+    metrics.splice(i < 0 ? metrics.length : i + 1, 0, { key: 'swap', name: 'Swap', pct, level, limit: 75, value: `${num(s.swapUsedGB)}/${Number.isInteger(s.swapTotalGB) ? s.swapTotalGB : num(s.swapTotalGB)} GB`,
+      note: s.swapSustained ? 'il Mac rilegge dal disco: tutto rallenta' : 'memoria scaricata su disco', history: [] });
+  }
   const lines = [];
   if (e.level > 0) lines.push((e.why ? cap(e.why) + ' · ' : '') + 'pesa di più: ' + (s.hogs || []).slice(0, 3).map((h) => `${h.name} ${h.memMB >= 1024 ? gb(h.memMB / 1024) : Math.round(h.memMB) + ' MB'}`).join(', '));
   if ((s.paused || []).length) lines.push('In pausa finché respira: ' + s.paused.map((p) => p.label).join(', '));

@@ -65,7 +65,7 @@
  "test/launchd-steps.test.mjs": 1,
  "test/lines.test.mjs": 2,
  "test/live.test.mjs": 11,
- "test/machines.test.mjs": 6,
+ "test/machines.test.mjs": 7,
  "test/machistory.test.mjs": 2,
  "test/muse-attribution.test.mjs": 3,
  "test/muse-pace.test.mjs": 2,

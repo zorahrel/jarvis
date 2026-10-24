@@ -26,7 +26,7 @@ test('macMachine: stessa forma del PC, note con le quantità', () => {
     mem: { totalGB: 32, usedGB: 26.4, appGB: 8, wiredGB: 7, compressedGB: 10, cachedGB: 4, freeGB: 1 }, hogs: [{ name: 'node', memMB: 2765 }], paused: [], history: { cpu: [{ t: 1, v: 90 }] } });
   assert.deepEqual(Object.keys(m).sort(), Object.keys(pcMachine({ pc: 'dorme' })).sort());
   assert.equal(m.metrics[0].note, '1,2 in fila/core');
-  assert.equal(m.metrics[1].name, 'RAM');
+  assert.equal(m.metrics[1].name, 'Memoria');
   assert.match(m.lines[0], /^Memoria piena · pesa di più: node 2,7 GB/);
   assert.equal(macMachine({}), null);
 });
@@ -78,4 +78,13 @@ test('pcWhy: ogni motivo di wf-autosleep diventa una frase, mai il testo grezzo'
   assert.deepEqual(pcWhy('inattivo da 7 min (soglia 20; ultimo input 12:40)'), ['Senza lavoro da 7 minuti: dorme fra 13']);
   assert.deepEqual(pcWhy('richiesta di alimentazione: [DRIVER] NVIDIA High Definition Audio (HDAUDIO\\FUNC_01&VEN_10DE\\5&1037f640)'), ['Il driver NVIDIA High Definition Audio lo tiene sveglio']);
   assert.deepEqual(pcWhy('qualcosa di nuovo e strano'), [], 'quello che non si sa dire non si mostra grezzo');
+});
+
+test('macMachine: lo swap è una misura sua e diventa rossa quasi piena; la memoria è la pressione, non i GB occupati', async () => {
+  const { macMachine } = await import('../src/machines.mjs');
+  const m = macMachine({ cores: 12, effort: { level: 2, label: 'sotto sforzo', why: '', parts: [{ key: 'cpu', name: 'CPU', pct: 67, level: 2, load: 2.5 }, { key: 'mem', name: 'memoria', pct: 51, level: 2 }] },
+    mem: { totalGB: 32, usedGB: 28, appGB: 12, wiredGB: 7, compressedGB: 8, cachedGB: 3, freeGB: 1 }, swapUsedGB: 15.1, swapTotalGB: 16, swapSustained: true, hogs: [] });
+  assert.deepEqual(m.metrics.map((x) => [x.key, x.name, x.level]), [['cpu', 'CPU', 2], ['mem', 'Memoria', 2], ['swap', 'Swap', 2]]);
+  assert.equal(m.metrics[2].value, '15,1/16 GB');
+  assert.ok(!m.metrics[1].note.includes('di 32'), 'non i GB occupati');
 });
