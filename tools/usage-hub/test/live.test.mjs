@@ -121,3 +121,18 @@ test('openclawLabel: i bucket di OpenClaw si leggono come Jarvis · canale', asy
   assert.equal(openclawLabel('jarvis'), null);
   assert.equal(labelFor('openclaw/altro').label, 'Jarvis · altro');
 });
+
+test('displayNames: un worktree prende il nome del repo, una cartella temporanea il lavoro, mai la cartella grezza', async () => {
+  const { displayNames } = await import('../src/live.mjs');
+  const fs = await import('node:fs'); const os = await import('node:os'); const path = await import('node:path');
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'dn-')); const repo = path.join(root, 'topics-app'); const wt = path.join(root, 'altrove', 'gc-t9-002a07');
+  fs.mkdirSync(wt, { recursive: true }); fs.writeFileSync(path.join(wt, '.git'), `gitdir: ${repo}/.git/worktrees/gc-t9-002a07\n`);
+  const out = displayNames([
+    { name: 'topics-app', title: 'Topics', _abs: repo },
+    { name: 'gc-t9-002a07', title: 'gc-t9-002a07', _abs: wt },
+    { name: 'wonderful-brattain-df6b9b', title: 'wonderful-brattain-df6b9b', _abs: `${root}/topics-app/.claude/worktrees/wonderful-brattain-df6b9b` },
+    { name: 'scratch-2026-10-22-30b95d', title: 'Prova del 22/10', what: 'Cartella temporanea di una sessione Claude', agents: { list: [{ work: 'Topics: token giusti', startedAt: 2 }, { work: 'Regia sessioni', startedAt: 1 }] } },
+    { name: 'jarvis', title: 'jarvis', _abs: '/x/jarvis' },
+  ]);
+  assert.deepEqual(out.map((p) => p.display), ['Topics', 'Topics', 'Topics', 'Regia sessioni', 'jarvis']);
+});

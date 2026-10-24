@@ -19,7 +19,7 @@ import { buildPace, carryLastReading, gate, CLASSES, providerStates, projectStat
 import { route } from './route.mjs';
 import { enqueue, cancel, loadQueue, tick, recoverRunning, launchDelegate, createNotifier, sendWhatsApp } from './queue.mjs';
 import { newState, scanToday } from './sessions.mjs';
-import { projectSummary, saveProjectSetting, loadLabels, labelFor, explainProjects } from './live.mjs';
+import { projectSummary, saveProjectSetting, loadLabels, labelFor, explainProjects, displayNames } from './live.mjs';
 import { scanAgents, summarize, attachOpen, loadDesktopSessions, topicsByProject } from './agents.mjs';
 import { attachSessionUse, shareFromReport } from './session-use.mjs';
 import { demoVdm } from './demo-vdm.mjs';
@@ -310,6 +310,7 @@ export function createServer(config, deps = {}) {
           dead: !sum[p.name] && (missing(p.name) || ((!lastSeen[p.name] || nowMs - lastSeen[p.name].at > week) && !(p.total > 0))),
           topics: topics[p.name] || [], lastJob: (lastJob(p.name) && { task: lastJob(p.name).task.slice(0, 60), status: lastJob(p.name).status, endedAt: lastJob(p.name).endedAt }) || null }));
         projects = explainProjects(projects, (p) => sum[p.name]?.list.find((a) => a.cwd)?.cwd || lastSeen[p.name]?.cwd);
+        projects = displayNames(projects, { labels: loadLabels() });
         // Il riepilogo tiene tutti i progetti: tagliarlo ai primi 8 faceva rientrare a zero quelli con agenti vivi
         // (l'hub stesso al 2,4% compariva con «–»). Si mostrano i primi 8 per consumo più chi ha agenti o un budget.
         const top = new Set([...projects].sort((a, b) => b.total - a.total).slice(0, 8).map((p) => p.name));

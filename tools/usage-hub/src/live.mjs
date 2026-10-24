@@ -116,6 +116,26 @@ const tempTop = (dir) => {
   return pre && norm(dir) === `${m[1]}/${m[2]}` ? `${m[1]}/${pre[1]}-*` : `${m[1]}/${m[2]}`;
 };
 
+// Il nome da mostrare (24/10, «i nomi dicono il lavoro»): quello dell'elenco Progetti. Un worktree prende il nome del suo repo
+// (git common dir: il file .git del worktree punta a <repo>/.git/worktrees/<nome>), una cartella temporanea il lavoro della sessione.
+export function mainRepoOf(abs) {
+  if (!abs) return null;
+  try { const g = fs.readFileSync(path.join(abs, '.git'), 'utf8'); const m = /^gitdir:\s*(.+?)\/\.git\/worktrees\//m.exec(g); if (m) return m[1]; } catch { /* non è un worktree */ }
+  const r = /^(.*)\/\.claude\/worktrees\/[^/]+/.exec(abs);
+  return r ? r[1] : null;
+}
+export function displayNames(projects, { labels = {}, home = os.homedir() } = {}) {
+  const byAbs = new Map(projects.filter((p) => p._abs).map((p) => [p._abs, p]));
+  return projects.map((p) => {
+    let display = p.title || p.name;
+    const main = mainRepoOf(p._abs || (p.dir && p.dir.replace(/^~/, home)));
+    if (main) { const base = path.basename(main); display = byAbs.get(main)?.title || labelFor(base, labels).label || base; }
+    else if (/^Cartella temporanea/.test(p.what || '')) { // la sessione partita per prima è quella che ha aperto la cartella: le altre ci sono nate dentro
+      const w = (p.agents?.list || []).filter((a) => a.work && !a.depth).sort((x, y) => (x.startedAt || 0) - (y.startedAt || 0))[0]?.work; if (w) display = w; }
+    return { ...p, display };
+  });
+}
+
 // Un nome come «Y8-K31» non dice niente: ogni progetto porta la sua cartella, e senza descrizione la cartella fa da descrizione.
 // Le cartelle temporanee che stanno sotto la stessa cartella di /tmp (una prova a coppie ne apre decine, su più livelli)
 // diventano una riga sola, con dentro un sottogruppo per cartella madre.
