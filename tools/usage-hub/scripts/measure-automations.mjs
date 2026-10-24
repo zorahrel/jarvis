@@ -45,6 +45,12 @@ try {
     if (a.ms >= 3000) fail.push(`prima richiesta ${Math.round(a.ms)} ms (soglia 3000)`);
     if (b.ms >= 300) fail.push(`seconda richiesta ${Math.round(b.ms)} ms (soglia 300)`);
     if (missing.length) fail.push('senza titolo o esito: ' + missing.join(', '));
+    // P05: la tabella dei progetti mostra il consumo vero della settimana. Il serve --no-live non lo calcola,
+    // quindi si legge dal :3360 vivo, solo in GET: almeno 3 progetti vivi con una percentuale sopra zero.
+    const live = await fetch('http://127.0.0.1:3360/api/live', { signal: AbortSignal.timeout(60000) }).then((r) => r.json()).catch(() => null);
+    const withUse = ((live && live.projects) || []).filter((p) => !p.dead && (p.total || 0) > 0);
+    console.log(`progetti vivi con consumo della settimana: ${withUse.length} (${withUse.slice(0, 3).map((p) => p.name + ' ' + p.total + '%').join(', ')})`);
+    if (withUse.length < 3) fail.push(`solo ${withUse.length} progetti vivi con consumo nella tabella (minimo 3)`);
   }
 } catch (e) { fail.push(e.message); }
 child.kill();

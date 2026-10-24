@@ -235,3 +235,14 @@ test('Diario esterno: righe JSONL per giorno, righe rotte saltate, esito e link 
   assert.deepEqual(items.map((e) => e.outcome), ['ok', 'skipped']);
   assert.deepEqual(readDiary({ dir: path.join(dir, 'non-esiste'), now: NOW }), []);
 });
+
+test('Consumo per sessione: token e quota della settimana in parole, niente quando manca', () => {
+  assert.equal(P.tokWords(143176016), '143,2 M token');
+  assert.equal(P.tokWords(2000000), '2 M token');
+  assert.equal(P.tokWords(22687), '23 k token');
+  assert.equal(P.tokWords(0), '');
+  assert.equal(P.useWords({ tokens: 957593, pct: 0.01 }), '958 k token, meno dello 0,1% della settimana');
+  assert.equal(P.useWords({ tokens: 9412227, pct: 2.34 }), '9,4 M token, 2,3% della settimana');
+  assert.equal(P.useWords({ tokens: 9412227, pct: null }), '9,4 M token');
+  assert.equal(P.useWords(null), '');
+});

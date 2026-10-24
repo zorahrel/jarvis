@@ -105,7 +105,7 @@ function agentsHtml(p) {
     const link = g.open ? ` <a href="${esc(g.open.url)}" title="Si apre in ${esc(g.open.via)}">apri</a>` : '';
     // sottoagenti rientrati sotto la sessione che li ha lanciati (depth 1), gli agenti di workflow un gradino in più
     const d = g.depth || 0;
-    return `<div class="agent"${d ? ` style="margin-left:${d * 18}px"` : ''}>${d ? '<span class="mut">↳</span> ' : ''}<span>${provIcon(g.provider)}</span> <b>${esc(g.model)}</b> <span class="mut">${esc(g.kind)} · da ${dur(Date.now() - g.startedAt)} · ${ago(g.lastActivity)}</span>${link}<span class="t">${esc(g.title)}</span></div>`;
+    return `<div class="agent"${d ? ` style="margin-left:${d * 18}px"` : ''}>${d ? '<span class="mut">↳</span> ' : ''}<span>${provIcon(g.provider)}</span> <b>${esc(g.model)}</b> <span class="mut">${esc(g.kind)} · da ${dur(Date.now() - g.startedAt)} · ${ago(g.lastActivity)}${PagesView.useWords(g.use) ? ' · ' + PagesView.useWords(g.use) : ''}</span>${link}<span class="t">${esc(g.title)}</span></div>`;
   }).join('');
   const opus = p.agents.opus > 0 && (p.claude >= 10 || p.agents.opusMs >= 2 * 3600000) ? `<div class="warnline">${p.agents.opus} Opus da ${dur(p.agents.opusMs)} su un progetto al ${pct(p.claude)} della settimana Claude: valuta Sonnet</div>` : '';
   const chats = p.topics && p.topics.length ? `<div class="small mut">Topics: ${p.topics.map((c) => `<a href="${esc(c.url)}">${esc(c.title || 'chat')}</a>`).join(' · ')}</div>` : '';

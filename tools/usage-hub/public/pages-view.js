@@ -44,6 +44,20 @@
     return '<span class="sti ' + s[2] + '" title="' + s[1] + '">' + ic(s[0]) + '<span class="sr">' + s[1] + '</span></span>';
   }
 
+  // Consumo di una sessione: token letti dai suoi log e, dove l'hub la sa, la quota della settimana che pesa.
+  function tokWords(n) {
+    if (!(n > 0)) return '';
+    if (n >= 1e6) return String(Math.round(n / 1e5) / 10).replace('.', ',').replace(/,0$/, '') + ' M token';
+    if (n >= 1e3) return Math.round(n / 1e3) + ' k token';
+    return n + ' token';
+  }
+  function useWords(u) {
+    if (!u) return '';
+    var t = tokWords(u.tokens);
+    var p = u.pct > 0 ? (u.pct < 0.1 ? 'meno dello 0,1%' : String(Math.round(u.pct * 10) / 10).replace('.', ',') + '%') + ' della settimana' : '';
+    return [t, p].filter(Boolean).join(', ');
+  }
+
   // «Scrivi a Jarvis»: WhatsApp (o Discord) con il messaggio già scritto. Senza link in config, niente bottone.
   function jarvisHref(cfg, text) {
     var j = (cfg && cfg.jarvis) || {};
@@ -184,7 +198,7 @@
       top + checks + docBox + con + '<div class="stack">' + lists + skills + '</div>' + dup + old;
   }
 
-  var api = { attesaHtml: attesaHtml, journalHtml: journalHtml, contextHtml: contextHtml, jarvisHref: jarvisHref, jarvisBtn: jarvisBtn, stIcon: stIcon, dayLabel: dayLabel };
+  var api = { useWords: useWords, tokWords: tokWords, attesaHtml: attesaHtml, journalHtml: journalHtml, contextHtml: contextHtml, jarvisHref: jarvisHref, jarvisBtn: jarvisBtn, stIcon: stIcon, dayLabel: dayLabel };
   root.PagesView = api;
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
 })(globalThis);
