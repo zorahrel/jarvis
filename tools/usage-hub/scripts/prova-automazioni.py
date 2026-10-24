@@ -102,15 +102,20 @@ def main():
             report['375-aperto'] = audit(pg, '375 px, tutto aperto')
             pg.close()
 
-            # 4. Video: «Da cambiare» con la nota, Invio, ricarico la pagina e il voto è ancora lì.
+            # 4. Video: dal pannello della voce «Da cambiare» con la nota, Invio, ricarico e il voto è ancora lì.
+            # (dal ridisegno a tabella i pulsanti del voto stanno nel pannello che apre la riga)
             vdir = TMP / 'video-fb'
             ctx = b.new_context(viewport={'width': 1100, 'height': 760}, record_video_dir=str(vdir), record_video_size={'width': 1100, 'height': 760})
             pg = ctx.new_page()
             open_tab(pg, pb_url)
-            card = pg.locator('#t-automations [data-sec="needs"] article.au-card').first
-            title = card.locator('h4').inner_text().strip()
+            row = pg.locator('#t-automations .fx-t[data-cx]').first
+            key = row.get_attribute('data-cx')
+            row.click()
+            pg.wait_for_selector('.cx-panel article.au-card')
+            title = pg.locator('.cx-panel #cx-pt').inner_text().strip()
             pg.wait_for_timeout(800)
-            card.locator('[data-fb="cambia"]').click()
+            pg.locator('.cx-panel [data-fb="cambia"]').click()
+            pg.wait_for_selector('form.au-form textarea')
             pg.wait_for_timeout(400)
             pg.keyboard.type('Avvisami solo se fallisce due volte di fila', delay=35)
             pg.keyboard.press('Enter')
@@ -119,8 +124,10 @@ def main():
             pg.wait_for_timeout(1500)
             pg.reload()
             pg.wait_for_selector('#t-automations [data-sec="footer"]')
-            again = pg.locator('#t-automations article.au-card', has=pg.locator('h4', has_text=title)).first
-            check('Hai detto: da cambiare' in again.inner_text(), 'video: dopo il ricarico la card dice «Hai detto: da cambiare»')
+            pg.locator(f'#t-automations [data-cx="{key}"]').first.click()
+            pg.wait_for_selector('.cx-panel article.au-card')
+            again = pg.locator('.cx-panel').inner_text()
+            check(title in again and 'Hai detto: da cambiare' in again, f'video: dopo il ricarico il pannello di «{title}» dice «Hai detto: da cambiare»')
             pg.wait_for_timeout(1500)
             ctx.close()
             shutil.move(str(next(vdir.glob('*.webm'))), DOCS / 'automations-feedback.webm')
@@ -132,31 +139,36 @@ def main():
             qi = queue[-1] if queue else {}
             check(qi.get('project') == 'automazioni' and last.get('id', '?') in qi.get('task', ''), 'coda: un lavoro per gli agenti con il riferimento della richiesta')
 
-            # 5. Video: ripasso di 3 card solo con la tastiera (Tab fino a «Ripassale», Invio, poi v v v).
+            # 5. Video: 3 voti «Va bene» solo con la tastiera: Tab fino a una riga, Invio apre, v vota, Esc torna
+            # alla riga, freccia giù alla prossima. (Il vecchio «Ripassale» non è più nella pagina dal ridisegno.)
             vdir = TMP / 'video-rip'
             ctx = b.new_context(viewport={'width': 1100, 'height': 760}, record_video_dir=str(vdir), record_video_size={'width': 1100, 'height': 760})
             pg = ctx.new_page()
             open_tab(pg, ok_url)
             pg.wait_for_timeout(600)
             for _ in range(200):
-                if pg.evaluate("document.activeElement && document.activeElement.dataset.review === 'start'"):
+                if pg.evaluate("!!(document.activeElement && document.activeElement.dataset && document.activeElement.dataset.cx)"):
                     break
                 pg.keyboard.press('Alt+Tab')  # in WebKit, come in Safari, Tab da solo salta i pulsanti
-            check(pg.evaluate("document.activeElement.dataset.review === 'start'"), 'ripasso: «Ripassale» raggiunto con la tastiera')
-            pg.keyboard.press('Enter')
-            pg.wait_for_selector('.au-rev-now article.au-card')
-            start = pg.locator('.au-rev-now .small.mut').first.inner_text()
-            for _ in range(3):
-                pg.wait_for_timeout(900)
+            check(pg.evaluate("!!document.activeElement.dataset.cx"), 'tastiera: una riga raggiunta con Tab')
+            voted = []
+            for i in range(3):
+                if i: pg.keyboard.press('ArrowDown')
+                voted.append(pg.evaluate("document.activeElement.dataset.cx"))
+                pg.keyboard.press('Enter')
+                pg.wait_for_selector('.cx-panel article.au-card')
+                pg.wait_for_timeout(700)
                 pg.keyboard.press('v')
-            pg.wait_for_timeout(1200)
-            end = pg.locator('.au-rev-now .small.mut').first.inner_text()
+                pg.wait_for_selector('.cx-panel [data-fb="ok"][aria-pressed="true"]')
+                pg.wait_for_timeout(500)
+                pg.keyboard.press('Escape')
+                pg.wait_for_timeout(300)
+            pg.wait_for_timeout(800)
             ctx.close()
             shutil.move(str(next(vdir.glob('*.webm'))), DOCS / 'automations-ripasso.webm')
             votes = [json.loads(l) for f in sorted((ok_dir / 'feedback').glob('*.jsonl')) for l in f.read_text().splitlines() if l.strip()]
-            n0, n1 = int(start.split('/')[0]), int(end.split('/')[0])
-            check(n1 == n0 + 3 and len([v for v in votes if v.get('kind') == 'vote' and v.get('v') == 'ok']) == 3,
-                  f'ripasso: da {start} a {end} con 3 voti salvati')
+            ok_votes = [v for v in votes if v.get('kind') == 'vote' and v.get('v') == 'ok']
+            check(len(set(voted)) == 3 and len(ok_votes) == 3, f'tastiera: 3 voci diverse, 3 voti «Va bene» salvati ({len(set(voted))} voci, {len(ok_votes)} voti)')
             b.close()
     finally:
         # SIGTERM: la demo toglie la sua cartella (SIGKILL ne lasciava 2 a giro in $TMPDIR)
