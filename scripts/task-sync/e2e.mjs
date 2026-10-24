@@ -6,6 +6,7 @@
 //   node scripts/task-sync/e2e.mjs
 import { execFileSync, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { topicsSide, remindersSide, BOARD, HOME, STATE_DIR } from './task-sync.mjs';
@@ -18,8 +19,11 @@ const topics = topicsSide({ token }), rem = remindersSide();
 let fails = 0;
 const ok = (cond, msg) => { console.log(`${cond ? 'OK  ' : 'FAIL'} ${msg}`); if (!cond) fails++; };
 
+// Diario e WhatsApp restano fuori dalla prova: il 24/10 venti righe «[prova task-sync]» erano finite nel Diario vero
+// dell'hub, sotto gli occhi di Attilio.
+const diarioProva = fs.mkdtempSync(path.join(os.tmpdir(), 'task-sync-e2e-diario-'));
 function giro(env = {}) {
-  const r = spawnSync('node', [path.join(here, 'task-sync.mjs')], { encoding: 'utf8', env: { ...process.env, ...env } });
+  const r = spawnSync('node', [path.join(here, 'task-sync.mjs')], { encoding: 'utf8', env: { ...process.env, DIARIO_DIR: diarioProva, TASK_SYNC_WA: '', ...env } });
   return { code: r.status, out: (r.stdout || '') + (r.stderr || '') };
 }
 const boardCards = async () => (await topics.read(BOARD, [])).cards;
@@ -91,6 +95,7 @@ try {
   for (const id of madeCards) {
     try { await fetchArchive(id); } catch (e) { console.log(`pulizia: card ${id.slice(0, 8)} non archiviata: ${e.message}`); }
   }
+  fs.rmSync(diarioProva, { recursive: true, force: true });
 }
 console.log(fails ? `\n${fails} controlli falliti` : '\ntutti i controlli passano');
 process.exit(fails ? 1 : 0);
