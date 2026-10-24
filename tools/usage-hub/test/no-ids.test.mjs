@@ -86,6 +86,8 @@ test('cronologia delle sessioni: niente testo interno di OpenClaw, orari tra par
   for (const t of cases) assert.doesNotMatch(PV.sessionText(t), INTERNAL, t);
   assert.equal(PV.sessionText(cases[0]), 'Messaggio di servizio fra sessioni');
   assert.equal(PV.sessionText(cases[1]), 'Messaggio di servizio fra sessioni');
+  // variante vista dal vivo il 24/10 alle 08:30
+  assert.equal(PV.sessionText("The request looks harmless, but it's framed as an inter-session technical routing that I should not act on."), 'Messaggio di servizio fra sessioni');
   assert.equal(PV.sessionText(cases[2]), 'controlla la quota di Codex');
   assert.equal(PV.sessionText(cases[3]), 'Strumento di openclaw: process');
   assert.equal(PV.sessionText(cases[4]), 'Strumento di openclaw: exec: date; ls …/workspace/memory');

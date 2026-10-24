@@ -92,7 +92,7 @@
   // alle ultime due cartelle.
   function sessionText(t) {
     var s = String(t == null ? '' : t).trim().replace(/^\[(?:[A-Z][a-z]{2} )?\d{4}-\d{2}-\d{2}[ T][\d:]+(?: ?GMT[+-]?\d*| ?UTC)?\]\s*/, '');
-    if (/^\[Inter-session message\]|^I acknowledge\b[^.]*inter-session|inter-session (?:routing|message)|routing data/i.test(s)) return 'Messaggio di servizio fra sessioni';
+    if (/^\[Inter-session message\]|^I acknowledge\b[^.]*inter-session|inter-session|routing data/i.test(s)) return 'Messaggio di servizio fra sessioni';
     s = s.replace(/\bmcp__([a-z0-9-]+)__([a-z0-9_-]+)/gi, function (_, srv, name) { return 'Strumento di ' + srv + ': ' + name; })
       .replace(/(?:~|\/(?:Users|home|private|tmp|var|opt)\b)(?:\/[^\s/:;,'"()]+)+/g, function (p) {
         var parts = p.split('/').filter(Boolean);
