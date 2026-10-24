@@ -54,3 +54,16 @@ export function seedDemoDiary(root, now = Date.now()) {
   ].map((r) => JSON.stringify(r)).join('\n') + '\n');
   return dir;
 }
+
+// Per la demo dell'hub (non per i test): tante cartelle piccole, così Consumi ha «Altri N», e un nome lungo,
+// così a 375 px si vede se una riga esce dalla card.
+export function addDemoCrowd(root, now = Date.now()) {
+  const names = ['cartella_di_prova_con_un_nome_davvero_molto_lungo_e_senza_spazi_per_il_telefono', ...Array.from({ length: 19 }, (_, i) => `esperimento-${i + 1}`)];
+  names.forEach((name, i) => {
+    const dir = path.join(root, `-work-${name}`); fs.mkdirSync(dir, { recursive: true });
+    const lines = Array.from({ length: 3 + i }, (_, k) => JSON.stringify({ timestamp: new Date(now - 7200000 - k * 1000).toISOString(), cwd: `/work/${name}`,
+      message: { id: `c${i}-${k}`, usage: { input_tokens: 10, output_tokens: 40, cache_creation_input_tokens: 100, cache_read_input_tokens: 2000 } } }));
+    fs.writeFileSync(path.join(dir, 's.jsonl'), lines.join('\n') + '\n');
+  });
+  return root;
+}

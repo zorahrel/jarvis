@@ -4,7 +4,7 @@ import { loadConfig } from '../src/config.mjs';
 import { buildReport } from '../src/projects.mjs';
 import { runAlerts } from '../src/alerts.mjs';
 import { createServer } from '../src/server.mjs';
-import { makeDemoRoot, removeOnExit, seedDemoAttesa, seedDemoDiary } from '../src/demo.mjs';
+import { makeDemoRoot, addDemoCrowd, removeOnExit, seedDemoAttesa, seedDemoDiary } from '../src/demo.mjs';
 import { defaultPolicies, evaluatePolicies, applyBlocks } from '../src/policy.mjs';
 import { loadBudgets, loadMuseBudget } from '../src/budgets.mjs';
 import { buildStatus, writeStatus } from '../src/status.mjs';
@@ -24,7 +24,7 @@ if (rest.includes('--demo')) {
   // Dati finti per screenshot e prove: nessun log letto, nessuna tray necessaria.
   const now = Date.now();
   config.quotaSource = { type: 'manual', label: 'demo', weekPct: 62, weekResetsAt: now + 3 * 86400000, fiveHourPct: 35 };
-  config.root = removeOnExit(makeDemoRoot());
+  config.root = removeOnExit(addDemoCrowd(makeDemoRoot()));
   config.port = 3351;
   // «Da cambiare» in demo mette in coda un agente: la coda di prova sta accanto ai log finti, mai in quella vera dell'hub
   // e non parte da sola (noQueue nel server): resta lì per essere letta dalla prova.

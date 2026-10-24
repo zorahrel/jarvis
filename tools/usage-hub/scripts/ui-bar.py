@@ -220,7 +220,7 @@ def main():
                     check(not v, f'{w}px axe su {len(AXE_TABS)} tab in scuro: nessuna violazione seria {v[:4]}')
                     pd.context.close()
             # 6. badge dentro il bottone dove la nav è una griglia
-            for w in (600, 900):
+            for w in (700, 820):   # a 700 e 820 la griglia della nav stringe i bottoni sotto 150 px
                 pg = b.new_context(viewport={'width': w, 'height': 900}).new_page()
                 pg.goto(url + '/#overview', wait_until='domcontentloaded')
                 pg.wait_for_selector('#nwait:not([hidden])', timeout=60000)
@@ -231,11 +231,9 @@ def main():
             # 7. Panoramica lenta: la barra deve aspettare la pagina vera, non fotografare il segnaposto
             pg = b.new_context(viewport={'width': 1440, 'height': 900}).new_page()
             pg.set_default_timeout(90000)
-            def slow(route, ms):
-                time.sleep(ms / 1000)
-                route.continue_()
-            pg.route('**/api/attesa', lambda r: slow(r, 6000))
-            pg.route('**/api/live', lambda r: slow(r, 12000))
+            # ritardo nella pagina, non in Python: un route che dorme blocca Playwright e la barra guarderebbe a dati arrivati
+            pg.add_init_script("(() => { const f = window.fetch; window.fetch = (u, o) => { const s = String(u), ms = s.includes('/api/attesa') ? 6000 : s.includes('/api/live') ? 12000 : 0;"
+                               " return ms ? new Promise((r) => setTimeout(r, ms)).then(() => f(u, o)) : f(u, o); }; })()")
             pg.goto(url + '/#overview', wait_until='domcontentloaded')
             done = wait_loaded(pg, 60)
             real = pg.evaluate("!!document.querySelector('#t-overview section.status') && !/Carico quote/.test(document.getElementById('t-overview').innerText)")

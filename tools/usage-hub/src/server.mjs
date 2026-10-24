@@ -57,6 +57,8 @@ export function createServer(config, deps = {}) {
     catch (err) { live = { ...live, error: err.message, computing: false }; }
   };
   if (runsLive) { setImmediate(refreshLive); setInterval(refreshLive, (config.liveEveryMin || 5) * 60000).unref(); }
+  // la demo calcola i suoi progetti finti una volta, così la tabella dei progetti ha i numeri (e la barra UI li controlla)
+  else if (deps.demo) setImmediate(refreshLive);
   let cache = null;
   let svcCache = null; // scheda Servizi: calcolata a richiesta, valida un minuto
   let pcCache = null;  // PC di casa (~/bin/pc-state): valido un minuto, ogni lettura e' un nc e al piu' un ssh di pochi ms
