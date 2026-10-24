@@ -72,7 +72,7 @@ elif [[ -z ${used:-} ]]; then
 fi
 
 # Codex solo se il pacing lo lascia passare (18/10); contatore giu' = passa, frenato (exit 10) = si salta.
-codex_ok() { node "$HOME/Projects/claude-usage-hub/bin/usage-hub.mjs" gate massivo --provider codex >/dev/null 2>&1; [[ $? -ne 10 ]]; }
+codex_ok() { node "$HOME/.claude/jarvis/tools/usage-hub/bin/usage-hub.mjs" gate massivo --provider codex >/dev/null 2>&1; [[ $? -ne 10 ]]; }
 if [[ -z ${used:-} ]] && codex_ok; then
   # modello esplicito: col login ChatGPT i gpt-6-* danno 400 (provato 04/10), il default
   # gpt-6.1-sol di ~/.codex/config.toml compreso; effort medio perche il default e ultra
