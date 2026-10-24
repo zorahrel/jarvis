@@ -206,12 +206,17 @@ def whatsapp_listening_after(ts):
 
 def restart():
     old, t0 = gateway_pid(), time.time()
-    r = subprocess.run(["openclaw", "gateway", "restart", "--force", "--json"], capture_output=True, text=True, timeout=180)
-    if r.returncode:
-        # esce 1 anche quando il riavvio c'e' stato: la sua sonda da 3 s scade su un gateway che
-        # sta ancora salendo (15/10). Decide il pid nuovo qui sotto, non questo exit code.
-        print(f"restart --force: exit {r.returncode}, controllo il pid")
-    end, pid = t0 + UP_S, None
+    try:
+        r = subprocess.run(["openclaw", "gateway", "restart", "--force", "--json"], capture_output=True, text=True, timeout=180)
+        if r.returncode:
+            # esce 1 anche quando il riavvio c'e' stato: la sua sonda da 3 s scade su un gateway che
+            # sta ancora salendo (15/10). Decide il pid nuovo qui sotto, non questo exit code.
+            print(f"restart --force: exit {r.returncode}, controllo il pid")
+    except subprocess.TimeoutExpired:
+        # 24/10 02:48, Mac a 4-8 per core: il comando ha superato i 180 s ma il gateway era ripartito.
+        # Prima lo script cadeva qui e saltava la ripresa dei sottoagenti interrotti.
+        print("restart --force: oltre 180 s, controllo il pid")
+    end, pid = time.time() + UP_S, None
     while time.time() < end:
         time.sleep(3)
         pid = gateway_pid()
