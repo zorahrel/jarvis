@@ -31,6 +31,8 @@ def token():
 
 def api(method, path, body=None):
     ctx = ssl.create_default_context(cafile=CA) if os.path.exists(CA) else None
+    if ctx:  # Python 3.13+ rifiuta la CA di Topics (manca keyUsage): resta pinnata, senza il controllo strict (come ledger.py)
+        ctx.verify_flags &= ~ssl.VERIFY_X509_STRICT
     req = urllib.request.Request(BASE + path, method=method, data=json.dumps(body).encode() if body is not None else None,
                                  headers={"x-agent-token": token(), "content-type": "application/json"})
     with urllib.request.urlopen(req, context=ctx, timeout=15) as r:
