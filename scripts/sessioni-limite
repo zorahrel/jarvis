@@ -4,10 +4,11 @@
   sessioni-limite [--dry-run]
 
 Diversa da ~/bin/sessioni-ferme (le sessioni che aspettano una RISPOSTA di Attilio): qui l'ultimo messaggio è un
-errore di limite e la sessione da 20 minuti non si muove. Misura del 24/10: in una settimana 7 sessioni del desktop
-ferme così, tutte con «weekly limit resets Oct 25 at 9am» nel testo: non serve una spesa, serve riprenderle dopo il
-reset, o subito se nel frattempo un'altra sessione del desktop ha di nuovo risposto (account cambiato o quota tornata).
-  · con un'ora di reset → elenco per la Regia, «riprendibile ora» o «dalle <ora>»: le riprende lei con un messaggio
+errore di limite e la sessione da 20 minuti non si muove. Il desktop si legge dai file delle sue sessioni
+(claude-code-sessions/<account>/…: errore, titolo, attività pianificata), il terminale dalla coda del transcript.
+Quando si riprende lo dice SOLO il testo del limite, mai le risposte di altre sessioni (possono stare su un altro
+account): «weekly limit resets Oct 25 at 9am» → «dopo il reset del 25/10 alle 09:00», poi «ora (reset passato)».
+  · con un reset → elenco per la Regia, che decide se servono ancora e le riprende con un messaggio
   · limite di spesa senza reset → una voce «Ti aspetta» (tipo spesa): è una spesa, decide Attilio; si chiude da sola
 Le sessioni dell'Agent SDK (OpenClaw, delegate, cron) non c'entrano: ripiego e ripresa li gestisce chi le lancia.
 Elenco in <note della Regia>/sessioni-limite.md, riga nel diario quando qualcosa diventa riprendibile, stato in
@@ -17,6 +18,7 @@ import datetime as dt, glob, json, os, re, subprocess, sys, time, urllib.request
 
 H = os.path.expanduser("~")
 ROOT = os.path.join(H, ".claude", "projects")
+DESKTOP = os.environ.get("SESSIONI_DESKTOP", os.path.join(H, "Library/Application Support/Claude/claude-code-sessions"))
 STATE = os.environ.get("SESSIONI_LIMITE_STATE", os.path.join(H, ".claude", "jarvis", "state", "sessioni-limite.json"))
 REGIA = os.environ.get("REGIA_NOTES", os.path.join(H, "Library/Application Support/Claude/side-session-notes/local_5d58bb9d-5000-4466-ac64-6a505dba24a6"))
 HUB = "http://127.0.0.1:3360/api/attesa"
@@ -78,39 +80,61 @@ def ts(e):
         return 0
 
 
-def giro(now):
-    ferme, ultimo_ok = [], 0
+def stato_da(testo_limite, stop, now):
+    """Quando si può riprendere, dal solo testo del limite: un'altra sessione che risponde non prova niente,
+    può essere su un altro account (24/10: le 5 «riprendibili» erano tutte sull'account esaurito)."""
+    r = reset_at(testo_limite, stop)
+    if r and r <= now:
+        return r, "ora (reset passato)"
+    if r:
+        return r, "dopo il reset del " + time.strftime("%d/%m alle %H:%M", time.localtime(r))
+    return None, "dopo una spesa"  # limite di spesa senza reset: decide Attilio
+
+
+def desktop(now):
+    """Sessioni del desktop dai loro file: account (la cartella), titolo, attività pianificata, errore e quando."""
+    out = []
+    for f in glob.glob(os.path.join(DESKTOP, "*", "*", "local_*.json")):
+        try:
+            d = json.load(open(f))
+        except (ValueError, OSError):
+            continue  # file in scrittura
+        err, at = d.get("error") or "", (d.get("errorAt") or 0) / 1000
+        if d.get("isArchived") or not LIMITE.search(err) or now - at > 48 * 3600 or now - at < 20 * 60:
+            continue
+        if (d.get("lastActivityAt") or 0) / 1000 - at > 60:
+            continue  # dopo l'errore ha ripreso a lavorare
+        reset, quando = stato_da(err, at, now)
+        out.append({"sessione": d.get("sessionId") or "", "cli": d.get("cliSessionId") or "", "titolo": d.get("title") or "",
+                    "cwd": d.get("cwd") or "", "account": os.path.relpath(f, DESKTOP).split(os.sep)[0][:8], "entrypoint": "desktop",
+                    "stop": int(at), "reset": reset, "quando": quando, "pianificata": d.get("scheduledTaskId") or None})
+    return out
+
+
+def terminale(now):
+    """Sessioni da terminale (entrypoint cli) dalla coda del transcript: l'account non si sa, il testo del limite sì."""
+    out = []
     for f in glob.glob(os.path.join(ROOT, "*", "*.jsonl")):
         idle = now - os.stat(f).st_mtime
-        if idle > 48 * 3600:
+        if idle > 48 * 3600 or idle < 20 * 60:
             continue
         msgs = coda(f)
-        if not msgs or (msgs[0].get("entrypoint") or "") == "sdk-cli":
-            continue
+        if not msgs or (msgs[0].get("entrypoint") or "") != "cli":
+            continue  # desktop: dai suoi file; sdk-cli: ripiego e ripresa li gestisce chi le lancia
         e = msgs[0]
-        # l'ultima risposta buona del desktop o del terminale dice se adesso l'account risponde
-        ok = next((m for m in msgs if m.get("type") == "assistant" and not m.get("isApiErrorMessage")), None)
-        if ok:
-            ultimo_ok = max(ultimo_ok, ts(ok))
         t = testo(e)
-        if idle < 20 * 60 or e.get("type") != "assistant" or not e.get("isApiErrorMessage") or not LIMITE.search(t):
+        if e.get("type") != "assistant" or not e.get("isApiErrorMessage") or not LIMITE.search(t):
             continue
         stop = ts(e) or os.stat(f).st_mtime
-        with open(f, "rb") as fh:  # il primo prompt sta in testa al file, spesso fuori dalla coda letta sopra
-            pianificata = b"<scheduled-task name=" in fh.read(20000)
-        ferme.append({"sessione": os.path.basename(f)[:-6], "cwd": e.get("cwd") or "", "entrypoint": e.get("entrypoint") or "?",
-                      "stop": int(stop), "reset": reset_at(t, stop), "spesa": bool(SPESA.search(t)),
-                      "pianificata": pianificata})
-    for x in ferme:
-        if x["reset"] and x["reset"] <= now:
-            x["quando"] = "ora (reset passato)"
-        elif ultimo_ok > x["stop"]:
-            x["quando"] = "ora (un'altra sessione ha già risposto dopo)"
-        elif x["reset"]:
-            x["quando"] = "dalle " + time.strftime("%d/%m %H:%M", time.localtime(x["reset"]))
-        else:
-            x["quando"] = "dopo una spesa"  # limite di spesa senza reset: decide Attilio
-    return sorted(ferme, key=lambda x: x["stop"])
+        reset, quando = stato_da(t, stop, now)
+        out.append({"sessione": os.path.basename(f)[:-6], "cli": os.path.basename(f)[:-6], "titolo": "", "cwd": e.get("cwd") or "",
+                    "account": "terminale", "entrypoint": "terminale", "stop": int(stop), "reset": reset, "quando": quando,
+                    "pianificata": None})
+    return out
+
+
+def giro(now):
+    return sorted(desktop(now) + terminale(now), key=lambda x: x["stop"])
 
 
 def attesa(body):
@@ -143,11 +167,12 @@ def main():
         if xs:
             righe = ["# Sessioni di Claude Code ferme su un limite", "",
                      f"Aggiornato {time.strftime('%d/%m %H:%M')} da ~/.claude/jarvis/scripts/sessioni-limite, ogni 30 minuti. "
-                     "«Riprendibile ora»: un messaggio «continua» alla sessione (le pianificate le rifà il prossimo giro, di solito basta "
-                     "quello). «Dopo una spesa»: decide Attilio, è in Ti aspetta.", ""]
+                     "Lo stato viene dal testo del limite e dall'account della cartella. "
+                     "Prima di riprenderne una guarda se serve ancora; «dopo una spesa» decide Attilio, è in Ti aspetta.", ""]
             for x in xs:
-                righe.append(f"- riprendibile {x['quando']} · ferma dal {time.strftime('%d/%m %H:%M', time.localtime(x['stop']))} · "
-                             f"{x['entrypoint']}{' · pianificata' if x['pianificata'] else ''} · {x['cwd'] or '?'} · sessione {x['sessione']}")
+                righe.append(f"- {x['quando']} · account {x['account']} · ferma dal {time.strftime('%d/%m %H:%M', time.localtime(x['stop']))}"
+                             f"{' · pianificata (' + x['pianificata'] + '), la rifà il prossimo giro' if x['pianificata'] else ''}"
+                             f" · {x['titolo'] or x['cwd'] or '?'} · sessione {x['sessione']}")
             open(nota, "w").write("\n".join(righe) + "\n")
         elif os.path.exists(nota):
             os.remove(nota)  # niente di fermo: una nota vecchia direbbe il falso
