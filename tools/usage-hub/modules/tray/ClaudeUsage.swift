@@ -103,14 +103,16 @@ struct Renewal: Codable {
 // Ritmo settimanale totale (18/10): somma delle % usate contro somma delle % di settimana
 // trascorse, sugli account con quota 7D ancora viva (gli esauriti a parte). 1,00× = in linea.
 // Progetti della settimana dall'hub (:3360/api/live, ricalcolati in background ogni 5 min, zero token).
-struct LiveProject: Codable { let name: String; let claude: Double; let codex: Double; let muse: Double; let total: Double; let budgetPct: Double?; let priority: String; let label: String?; let title: String?; let what: String?; let state: String?; let why: String?
+struct LiveProject: Codable { let name: String; let claude: Double; let codex: Double; let muse: Double; let total: Double; let budgetPct: Double?; let priority: String; let label: String?; let title: String?; let display: String?; let what: String?; let state: String?; let why: String?
     let agents: AgentSummary?; let lastSeen: LastSeen?; let lastJob: LastJob?; let dead: Bool?; let dirMissing: Bool?; let topics: [TopicsChat]?
     let dir: String?; let members: [String]?; let subgroups: [SubGroup]? }
 struct LastSeen: Codable { let at: Double; let provider: String }
 struct TopicsChat: Codable { let title: String; let busy: Bool; let url: String }
 struct AgentOpen: Codable { let url: String; let via: String }
 struct AgentInfo: Codable { let kind: String; let provider: String; let model: String; let title: String; let startedAt: Double; let lastActivity: Double; let open: AgentOpen?; let `where`: String?; let res: AgentRes?
-    let depth: Int?; let use: AgentUse? }
+    let depth: Int?; let use: AgentUse?
+    let work: String?
+    let headless: Bool? }   // claude -p, delegate, Codex e Muse da terminale: contano come sottoagenti, mai una riga loro   // il lavoro in parole, ripulito dall'hub (niente id, percorsi, comandi)
 // Consumo della sessione dall'hub: token nuovi del giro attuale e dell'ultima ora; per Claude anche la % della settimana.
 struct AgentUse: Codable { let tokens: Double; let hourTokens: Double; let pct: Double?; let hourPct: Double? }
 func tokText(_ t: Double) -> String { t >= 1_000_000 ? String(format: "%.1f M", t / 1_000_000).replacingOccurrences(of: ".", with: ",") : t >= 1000 ? "\(Int((t / 1000).rounded())) k" : "\(Int(t))" }
@@ -1086,6 +1088,18 @@ func richRow(icon: NSImage?, _ line1: NSAttributedString, detail: String? = nil,
     it.toolTip = tip
     return it
 }
+// Un testo del menu principale sta in una riga (24/10): oltre la larghezza si taglia a parola con «…», il resto va nel sottomenu.
+let lineMax: CGFloat = 360
+func fitLine(_ s: String, _ font: NSFont = rowSmall, width: CGFloat = lineMax) -> String {
+    let w = { (x: String) in (x as NSString).size(withAttributes: [.font: font]).width }
+    var t = s.replacingOccurrences(of: "\n", with: " · ")
+    guard w(t) > width else { return t }
+    while t.count > 3 && w(t + "…") > width {
+        if let sp = t.lastIndex(of: " "), t.distance(from: sp, to: t.endIndex) < 14 { t = String(t[..<sp]) } else { t = String(t.dropLast()) }
+        t = t.trimmingCharacters(in: CharacterSet(charactersIn: " ·,:;"))
+    }
+    return t + "…"
+}
 func wrapText(_ s: String, _ width: Int) -> String {
     var lines: [String] = [], cur = ""
     for w in s.split(separator: " ") {
@@ -1175,8 +1189,12 @@ func machineText(_ lines: [String], jobs: Int) -> String {
 }
 func machineItem(_ m: Machine) -> NSMenuItem {
     let tone: (Int) -> NSColor = { $0 == 0 ? toneOK : $0 == 1 ? toneWarn : toneBad }
-    var lines = m.lines
-    if m.local, let g = liveTrust?.items.filter({ $0.level == "grave" }), !g.isEmpty { lines.append("Processi sospetti: " + g.prefix(3).map { $0.name }.joined(separator: ", ") + " (passa qui per i motivi)") }
+    if !m.local { return remoteMachineItem(m, tone: tone) }
+    // nella card una riga: il primo motivo («Troppi processi in fila: 2,7 per core»); chi pesa e la RAM per esteso nel sottomenu
+    var lines = m.lines.first.map { [String($0.components(separatedBy: " · ")[0])] } ?? []
+    if let g = liveTrust?.items.filter({ $0.level == "grave" }), !g.isEmpty { lines.append("\(g.count) process\(g.count == 1 ? "o sospetto" : "i sospetti")") }
+    lines = lines.isEmpty ? [] : [fitLine(lines.joined(separator: " · "), AccountBlockView.brakeFont)]
+    macProcs.detail = m.lines + (m.foot.map { [$0] } ?? [])
     let bars = m.metrics.map { x in
         BarSpec(label: x.name, frac: Double(x.pct) / 100, mark: x.limit.map { $0 / 100 }, color: tone(x.level), value: "\(x.pct)%",
                 spark: (x.history?.count ?? 0) > 1 ? x.history : nil, note: x.note)
@@ -1187,14 +1205,38 @@ func machineItem(_ m: Machine) -> NSMenuItem {
                              badge: m.state, badgeColor: quiet && m.level == 0 ? .secondaryLabelColor : tone(m.level),
                              brake: lines.isEmpty ? nil : machineText(lines, jobs: m.offload ?? 0), bars: bars,
                              single: quiet ? txt(m.caption ?? "nessuna misura adesso", rowSmall, .secondaryLabelColor) : nil)
-    if !quiet { v.foot = m.foot; v.vertical = true }
+    if !quiet { v.vertical = true }
     let it = NSMenuItem()
     let tip = "Conta la misura più vicina alla sua soglia (la tacca). Sotto sforzo, gli agenti in background di priorità bassa vanno in pausa e ripartono da soli; le sessioni aperte non si fermano mai."
     v.toolTip = tip; it.view = v; it.toolTip = tip
     v.autoresizingMask = [.width]   // larga quanto il menu, allineata alla griglia degli account
-    if m.local { it.submenu = macProcs.newMenu() }   // al passaggio: chi pesa adesso, per CPU e per memoria
+    it.submenu = macProcs.newMenu()   // al passaggio: chi pesa adesso, per CPU e per memoria
     return it
 }
+
+// Il PC in una riga (24/10, «sembra inutile così lunga»): stato nel badge, cosa fa e da quanto accanto; motivi e misure nel sottomenu.
+func remoteMachineItem(_ m: Machine, tone: (Int) -> NSColor) -> NSMenuItem {
+    let jobs = m.offload ?? 0
+    // «I test di usage-hub per «Tray…», da 12 minuti» → «I test di usage-hub · 12 min»: per chi lavora sta nel sottomenu
+    var what = m.lines.first ?? m.caption ?? "nessuna misura adesso"
+    what = what.replacingOccurrences(of: #" per («[^»]*»|[^,]+), da "#, with: " · ", options: .regularExpression)
+        .replacingOccurrences(of: #"(\d+) minuti?$"#, with: "$1 min", options: .regularExpression)
+        .replacingOccurrences(of: "meno di un minuto", with: "da poco")
+    if jobs > 1 { what += " (+\(jobs - 1))" }
+    // una riga sola: nome, stato nel badge, cosa fa e da quanto accanto al nome
+    let v = AccountBlockView(icon: sym("desktopcomputer", pt: 14, color: .labelColor), name: m.name, caption: fitLine(what, rowSmall, width: 300),
+                             badge: m.state, badgeColor: m.metrics.isEmpty && m.level == 0 && jobs == 0 ? .secondaryLabelColor : jobs > 0 ? toneOK : tone(m.level),
+                             brake: nil, bars: [], single: nil)
+    v.autoresizingMask = [.width]
+    let it = NSMenuItem(); it.view = v
+    let sub = NSMenu(); sub.autoenablesItems = false
+    for l in m.lines { sub.addItem(noteRow(l)) }
+    for x in m.metrics { sub.addItem(noteRow("\(x.name) \(x.pct)%" + (x.note.isEmpty ? "" : " · \(x.note)"))) }
+    if let c = m.caption { sub.addItem(noteRow(cap1(c))) }
+    it.submenu = sub
+    return it
+}
+func cap1(_ s: String) -> String { s.prefix(1).uppercased() + s.dropFirst() }
 
 // Il PC di casa in una riga sotto il Mac: verde quando lavora, grigio quando dorme o è fermo, arancio quando
 // il Mac è carico e il PC dorme (lì il lavoro pesante andrebbe con `offload`, che lo sveglia da solo).
@@ -1305,6 +1347,7 @@ final class MacProcMenu: NSObject, NSMenuDelegate {
         Perf.phase = "sottomenu processi"; defer { Perf.phase = "menu" }
         // Il main non aspetta mai: la lettura va sulla sua coda e il sottomenu si riempie quando arriva.
         // Dal prime almeno mezzo secondo, sennò la CPU è rumore: l'attesa la fa la coda, non il menu.
+        if snapshotMode { fill(m, rows: benchSample()); return }   // lo snapshot non ha un giro di eventi che aspetti la coda
         guard filled[ObjectIdentifier(m)] != primedAt else { return }
         filled[ObjectIdentifier(m)] = primedAt
         let wait = max(0, 0.5 - Date().timeIntervalSince(primedAt))
@@ -1314,6 +1357,7 @@ final class MacProcMenu: NSObject, NSMenuDelegate {
         }
     }
     private var filled: [ObjectIdentifier: Date] = [:]
+    var detail: [String] = []   // le righe della card del Mac per esteso (motivo, chi pesa, RAM): stanno qui, non nel menu principale
     // per la barra: la lettura fuori dal tempo misurato, il riempimento (che in tray arriva sul main) dentro
     func benchSample() -> [ProcRow] { prime(); Thread.sleep(forTimeInterval: 0.5); return queue.sync { sampler.sample() } }
     private var lastRows: [ProcRow] = []
@@ -1322,8 +1366,13 @@ final class MacProcMenu: NSObject, NSMenuDelegate {
     // Una riga processo (o app con i suoi helper): CPU e memoria in colonna, e al passaggio il suo sottomenu
     // con cosa è, i processi che la compongono e i comandi per chiuderla. Tutto dalla tray, senza finestre.
     private func procItem(_ r: ProcRow, members: [ProcRow], depth: Int = 0) -> NSMenuItem {
-        let n = r.name.count > 30 ? r.name.prefix(29) + "…" : r.name   // oltre, entra nella colonna CPU
-        let l = NSMutableAttributedString(attributedString: txt(n + (r.count > 1 ? "  ×\(r.count)" : ""), r.system ? rowFont : rowBold, r.system ? .secondaryLabelColor : .labelColor))
+        // il nome si accorcia a misura: a caratteri contati «claude · scratch-2026-10-22-3… ×12» finiva sopra la CPU (24/10)
+        let font = r.system ? rowFont : rowBold
+        let suffix = r.count > 1 ? "  ×\(r.count)" : ""
+        let room = tabs[0] - ("00,0 core" as NSString).size(withAttributes: [.font: rowNum]).width - 12
+        var n = r.name
+        while n.count > 4 && ((n + suffix) as NSString).size(withAttributes: [.font: font]).width > room { n = String(n.dropLast(n.hasSuffix("…") ? 2 : 1)) + "…" }
+        let l = NSMutableAttributedString(attributedString: txt(n + suffix, font, r.system ? .secondaryLabelColor : .labelColor))
         l.append(txt("\t" + cpuText(r.cpu), rowNum, r.cpu >= 80 ? toneWarn : .secondaryLabelColor))
         l.append(txt("\t" + bytesText(r.mem), rowNum, r.mem >= 2_000_000_000 ? toneWarn : .secondaryLabelColor))
         let flags = trustOf(members.map { $0.pid } + [r.pid])
@@ -1362,6 +1411,12 @@ final class MacProcMenu: NSObject, NSMenuDelegate {
         let apps = groupByApp(rows, all: rows)
         let membersOf = { (g: ProcRow) in rows.filter { g.pids.contains($0.pid) } }
         m.removeAllItems()
+        for l in detail { m.addItem(noteRow(l)) }
+        if !detail.isEmpty { m.addItem(.separator()) }
+        // chi pesa di più adesso (CPU + memoria) in testa: prima stava nel menu principale (24/10, «va nella tendina del computer»)
+        m.addItem(headRow(["PESANO DI PIÙ ADESSO", "CPU", "memoria"], tabs: tabs))
+        apps.sorted { ($0.cpu / 100 + $0.mem / 2e9) > ($1.cpu / 100 + $1.mem / 2e9) }.prefix(5).forEach { m.addItem(procItem($0, members: membersOf($0))) }
+        m.addItem(.separator())
         if let t = liveTrust {
             let bad = t.items.filter { $0.level != "ok" }
             let g = t.counts["grave"] ?? 0, a = t.counts["attenzione"] ?? 0
@@ -1800,8 +1855,8 @@ final class AccountBlockView: NSView {
     }
 }
 
-// Le card degli account affiancate: tre colonne, le card di una riga alte uguali. La griglia prende la larghezza vera
-// del menu (AppKit allarga le viste con .width), margini uguali ai due lati; una card rimasta sola occupa tutta la riga.
+// Le card degli account affiancate: tre colonne fisse, le card di una riga alte uguali e con le stesse righe. La griglia
+// prende la larghezza vera del menu (AppKit allarga le viste con .width), margini uguali ai due lati.
 let gridPad: CGFloat = 14, gridGap: CGFloat = 8
 let gridCols = 3
 let gridColW: CGFloat = (blockW - 2 * gridPad - gridGap * CGFloat(gridCols - 1)) / CGFloat(gridCols)
@@ -1839,8 +1894,10 @@ final class GridView: NSView {
         var y: CGFloat = 3
         for start in stride(from: 0, to: cards.count, by: cols) {
             let row = Array(cards[start..<min(start + cols, cards.count)])
+            align(row.compactMap { $0 as? AccountBlockView }.filter { $0.single == nil })
             let h = row.map { $0.frame.height }.max() ?? 0
-            let w = (inner - gridGap * CGFloat(row.count - 1)) / CGFloat(row.count)
+            // colonne fisse: anche nell'ultima riga una card resta larga una colonna, così i bordi coincidono su tutte le righe
+            let w = (inner - gridGap * CGFloat(cols - 1)) / CGFloat(cols)
             for (j, v) in row.enumerated() { v.frame = NSRect(x: gridPad + CGFloat(j) * (w + gridGap), y: y, width: w, height: h); v.needsDisplay = true }
             y += h + gridGap
         }
@@ -1866,6 +1923,17 @@ func accountWait(_ p: Provider, _ a: Account) -> AccountWait? {
     return st.accounts?.first { $0.account == a.label }
 }
 // Perché aspetta e a quale condizione riparte, detto per esteso: «frenato» da solo non dice cosa sbloccherà.
+// Nella card una riga: quando riparte e perché in una parola (24/10, «testi troppo lunghi»). Per esteso nel suggerimento.
+func resumeShort(_ w: AccountWait) -> String {
+    let at = w.until.map { hhmmText(Int($0 / 1000)) } ?? "?"
+    switch w.kind {
+    case "5h": return "Fermo fino alle \(at) · 5 ore piene"
+    case "riserva": return "Fermo fino al reset, \(at) · riserva tua"
+    case "ritmo": return "Fermo fino alle \(at) · troppo veloce"
+    case "giorno": return "Fermo fino alle \(at) · troppo oggi"
+    default: return "Fermo · \(w.why)"
+    }
+}
 func resumeText(_ w: AccountWait) -> String {
     let at = w.until.map { hhmmText(Int($0 / 1000)) } ?? "?"
     let t = Int((w.target ?? 0).rounded())
@@ -1887,7 +1955,7 @@ func accountBlock(_ p: Provider, _ a: Account, renewal: Renewal? = nil, credit: 
     if let r = renewal { capParts.append(r.amount + (r.cycle == "mensile" ? "/mese" : r.cycle == "annuale" ? "/anno" : "")); if let d = r.renewsAt { capParts.append("rinnovo " + dayMonth(d)) } }
     if let n = a.resetCredits?.available, n > 0 { capParts.append("\(n) reset manual\(n == 1 ? "e" : "i")") }
     let caption = capParts.isEmpty ? nil : capParts.joined(separator: " · ")
-    let tip = "Settimana: quanta quota hai usato; la tacca è dove dovresti essere consumando in modo uniforme. 5 ore: la finestra breve. Oggi: le ultime 24 ore contro la quota giornaliera sostenibile (quello che resta ÷ giorni al reset), tacca a 1×; oltre, il lavoro rimandabile aspetta. Il grafico accanto al numero è l'andamento della stessa misura."
+    var tip = "Settimana: quanta quota hai usato; la tacca è dove dovresti essere consumando in modo uniforme. 5 ore: la finestra breve. Oggi: le ultime 24 ore contro la quota giornaliera sostenibile (quello che resta ÷ giorni al reset), tacca a 1×; oltre, il lavoro rimandabile aspetta. Il grafico accanto al numero è l'andamento della stessa misura."
     func make(_ badge: String?, _ bc: NSColor, _ brake: String?, _ bars: [BarSpec], _ single: NSAttributedString?) -> NSMenuItem {
         let it = NSMenuItem()
         let v = AccountBlockView(icon: icon, name: name, caption: caption, badge: badge, badgeColor: bc, brake: brake, bars: bars, single: single, compactW: compactW)
@@ -1910,7 +1978,11 @@ func accountBlock(_ p: Provider, _ a: Account, renewal: Renewal? = nil, credit: 
     let old = w.status == "stale"
     let badge: String? = empty ? "esaurito" : braked ? "frenato" + (until.map { " fino alle " + hhmmText($0) } ?? "") : old ? "dato vecchio" : gate != nil ? "libero" : nil
     let bcol: NSColor = empty ? toneBad : braked ? toneWarn : old ? .secondaryLabelColor : toneOK
-    let brakeLine = wait.map(resumeText) ?? (old ? "\(p.name) adesso non manda la quota: questa è l'ultima lettura (\(w.resetText)), il freno usa lei" : nil)
+    // una riga nella card: se il perché non ci sta resta solo quando riparte
+    let room = (compactW ?? AccountBlockView.brakeW + 20) - 20
+    let fits = { (x: String) in (x as NSString).size(withAttributes: [.font: AccountBlockView.brakeFont]).width <= room }
+    let brakeLine = (wait.map(resumeShort) ?? (old ? "Quota non aggiornata" : nil)).map { b in fits(b) ? b : fitLine(String(b.components(separatedBy: " · ")[0]), AccountBlockView.brakeFont, width: room) }
+    if let w2 = wait { tip = resumeText(w2) + "\n\n" + tip } else if old { tip = "\(p.name) adesso non manda la quota: questa è l'ultima lettura (\(w.resetText)), il freno usa lei.\n\n" + tip }
     var bars: [BarSpec] = []
     var expected: Double?
     if let r = w.resetsAt { expected = min(max(1 - (Double(r) - now.timeIntervalSince1970) / (7 * 86400), 0), 1) * 100 }
@@ -2171,50 +2243,112 @@ func projectsMenuItem(actionTarget: AnyObject?) -> NSMenuItem? {
         for pr in dead { all.addItem(projectRow(pr, actionTarget: actionTarget, dim: true)) }
     }
     let braked = alive.filter { $0.state == "frenato" }.count
-    let it = richRow(icon: sym("folder"), txt("Progetti, budget e priorità", rowFont), detail: "\(alive.count) attivi" + (braked > 0 ? " · \(braked) frenati" : ""))
+    let it = richRow(icon: sym("folder"), txt("Tutti i progetti, budget e priorità", rowFont), detail: "\(alive.count) attivi" + (braked > 0 ? " · \(braked) frenati" : ""))
     it.submenu = all
     return it
 }
 
 // MARK: chi lavora adesso: gli agenti vivi di tutti i progetti in una lista sola
 
-let agentsShown = 5
+let projectsShown = 5
+// Il nome che si vede: quello dell'elenco Progetti dato dall'hub (un worktree → il suo repo, una cartella temporanea → il lavoro)
+func projName(_ pr: LiveProject) -> String {
+    #if TRAY_NAME_MUTATE
+    return pr.name   // mutazione della barra: il nome della cartella rimesso
+    #else
+    return pr.display ?? pr.title ?? pr.name
+    #endif
+}
+// Le righe di «Al lavoro»: solo le sessioni di qualcuno. Sottoagenti e processi headless contano nel «+N sottoagenti».
+func shownAgents() -> [(LiveProject, AgentInfo)] {
+    liveProjects.flatMap { pr in (pr.agents?.list ?? []).map { (pr, $0) } }
+        .filter { a in
+            #if TRAY_HEADLESS_MUTATE
+            return (a.1.depth ?? 0) == 0   // mutazione della barra: i processi headless tornano righe
+            #else
+            return (a.1.depth ?? 0) == 0 && a.1.headless != true
+            #endif
+        }
+        .sorted { $0.1.lastActivity > $1.1.lastActivity }
+}
+// Una sessione nata in una cartella che non è un progetto (temporanea) ma col titolo «Topics: …» sta sotto Topics
+func homeProject(_ pr: LiveProject, _ g: AgentInfo) -> (LiveProject, String) {
+    if (pr.what ?? "").hasPrefix("Cartella temporanea"), let w = g.work, let c = w.range(of: ": ") {
+        let head = String(w[..<c.lowerBound])
+        if let t = liveProjects.first(where: { projName($0) == head && !($0.what ?? "").hasPrefix("Cartella temporanea") }) { return (t, head) }
+    }
+    return (pr, projName(pr))
+}
+// Una riga di lavoro: il lavoro in parole a sinistra, consumo dell'ultima ora, modello e da quanto a destra; sotto il giro intero.
+// dentro il gruppo «Topics» il lavoro «Topics: token giusti» si legge «Token giusti»
+func workIn(_ group: String, _ w: String?) -> String? {
+    guard let w, !w.isEmpty else { return nil }
+    guard w.hasPrefix(group + ": ") else { return w }
+    return cap1(String(w.dropFirst(group.count + 2)))
+}
+func agentWorkRow(_ pr: LiveProject, _ g: AgentInfo, n: Int, group: String, actionTarget: AnyObject?) -> NSMenuItem {
+    let name = pr.title ?? pr.name
+    let work = workIn(group, g.work)
+    let head = work ?? (g.kind == "sessione" ? "Sessione ancora senza titolo" : cap1(g.kind))
+    let line = NSMutableAttributedString(attributedString: txt(fitLine(head, rowFont, width: 250), rowFont))
+    // provider frenato: la sessione aperta continua, ma lo si dice sulla riga invece che in un banner
+    let braked = liveGates?.providers?[g.provider]?.state == "frenato"
+    line.append(txt("\t" + (braked ? "frenato" : ""), rowNum, toneWarn))
+    if let u = g.use, u.hourTokens > 0 { line.append(txt((braked ? " · " : "") + "\(tokText(u.hourTokens))/h", rowNum, .labelColor)) }
+    line.append(txt("\t\(g.model)\(n > 1 ? " ×\(n)" : "") · \(durText(nowMs() - g.startedAt))", rowNum, .secondaryLabelColor))
+    let kind = g.kind == "sessione" || name.lowercased().contains(g.kind) ? nil : g.kind
+    let useText = g.use.map { u in "\(tokText(u.tokens)) token nel giro" + (u.pct.map { $0 >= 0.05 ? " · " + String(format: "%.1f", $0).replacingOccurrences(of: ".", with: ",") + "% della settimana" : "" } ?? "") }
+    let detail = [useText, kind].compactMap { $0 }.joined(separator: " · ")
+    let row = richRow(icon: providerSym(g.provider), line, detail: detail.isEmpty ? nil : fitLine(detail), tabs: [300, menuTextMax],
+                      tip: g.open.map { "Clic per aprirla in \($0.via)" } ?? "Gira in background: non si apre da qui", wrap: 200)
+    if let o = g.open {
+        row.action = #selector(AppDelegate.openLink(_:)); row.target = actionTarget
+        row.representedObject = ["url": o.url, "what": "\(pr.name) · \(g.model) \(g.kind)"]
+    }
+    return row
+}
+// Chi lavora adesso, per progetto (24/10: «al lavoro sotto i progetti, e dal lavoro si vede il progetto»).
+// Una riga per progetto: il nome, quanto consuma, e in piccolo i lavori in parole; il sottomenu li elenca uno per uno.
 func liveAgentRows(actionTarget: AnyObject?) -> [NSMenuItem] {
     // qui solo le sessioni: i sottoagenti stanno nel progetto, sotto chi li ha lanciati (contano nel totale)
     let everyone = liveProjects.flatMap { pr in (pr.agents?.list ?? []).map { (pr, $0) } }
-    let all = everyone.filter { ($0.1.depth ?? 0) == 0 }.sorted { $0.1.lastActivity > $1.1.lastActivity }
+    let all = shownAgents()
     let subs = everyone.count - all.count
-    var out: [NSMenuItem] = [headRow(all.isEmpty ? ["NESSUN AGENTE AL LAVORO"] : ["AL LAVORO ADESSO · \(all.count)" + (subs > 0 ? " + \(subs) SOTTOAGENTI" : "")], tabs: [])]
-    let tabs: [CGFloat] = [300, menuTextMax]
-    // Agenti uguali (stesso progetto, titolo, modello e tipo) in una riga con ×N: 23/10 i 7 Codex di un lotto in /tmp/zgen
-    // erano 7 righe identiche «17 cartelle temporanee · K4-P9» e coprivano tutti gli altri progetti.
-    var rows: [(pr: LiveProject, g: AgentInfo, n: Int)] = []
+    // Agenti uguali (stesso lavoro, modello e tipo) in una riga con ×N: 23/10 i 7 Codex di un lotto erano 7 righe identiche
+    // la chiave è il nome che si vede: un worktree e il suo repo («Topics») stanno nella stessa riga
+    var order: [String] = [], by: [String: (pr: LiveProject, rows: [(g: AgentInfo, n: Int)])] = [:]
     for (pr, g) in all {
-        if let i = rows.firstIndex(where: { $0.pr.name == pr.name && $0.g.title == g.title && $0.g.model == g.model && $0.g.kind == g.kind }) { rows[i].n += 1 }
-        else { rows.append((pr, g, 1)) }
+        let (pr, k) = homeProject(pr, g)
+        if by[k] == nil { order.append(k); by[k] = (pr, []) }
+        if let i = by[k]!.rows.firstIndex(where: { ($0.g.work ?? $0.g.title) == (g.work ?? g.title) && $0.g.model == g.model && $0.g.kind == g.kind }) { by[k]!.rows[i].n += 1 }
+        else { by[k]!.rows.append((g, 1)) }
     }
-    for (pr, g, n) in rows.prefix(agentsShown) {
-        let name = pr.title ?? pr.name
-        let line = NSMutableAttributedString(attributedString: txt(name.count > 30 ? String(name.prefix(29)) + "…" : name, rowFont))
-        // a destra quanto consuma adesso (token nell'ultima ora), poi modello e da quanto; sotto il giro intero
-        // provider frenato: la sessione aperta continua, ma lo si dice sulla riga invece che in un banner
-        let braked = liveGates?.providers?[g.provider]?.state == "frenato"
-        line.append(txt("\t" + (braked ? "frenato" : ""), rowNum, toneWarn))
-        if let u = g.use, u.hourTokens > 0 { line.append(txt((braked ? " · " : "") + "\(tokText(u.hourTokens))/h", rowNum, .labelColor)) }
-        line.append(txt("\t\(g.model)\(n > 1 ? " ×\(n)" : "") · \(durText(nowMs() - g.startedAt))", rowNum, .secondaryLabelColor))
-        let what = [g.title.isEmpty ? nil : g.title, g.kind == "sessione" || name.lowercased().contains(g.kind) ? nil : g.kind].compactMap { $0 }.joined(separator: " · ")
-        let useText = g.use.map { u in "\(tokText(u.tokens)) token nel giro" + (u.pct.map { $0 >= 0.05 ? " · " + String(format: "%.1f", $0).replacingOccurrences(of: ".", with: ",") + "% della settimana" : "" } ?? "") }
-        let detail = [useText, what.isEmpty ? nil : what].compactMap { $0 }.joined(separator: " · ")
-        let row = richRow(icon: providerSym(g.provider), line, detail: detail.isEmpty ? nil : detail, tabs: tabs,
-                          tip: g.open.map { "Clic per aprirla in \($0.via)" } ?? "Gira in background: non si apre da qui", wrap: 70)
-        if let o = g.open {
-            row.action = #selector(AppDelegate.openLink(_:)); row.target = actionTarget
-            row.representedObject = ["url": o.url, "what": "\(pr.name) · \(g.model) \(g.kind)"]
+    let np = order.count
+    var out: [NSMenuItem] = [headRow(all.isEmpty ? ["NESSUN AGENTE AL LAVORO"] : ["AL LAVORO ADESSO · \(all.count) IN \(np) PROGETT\(np == 1 ? "O" : "I")" + (subs > 0 ? " · + \(subs) SOTTOAGENTI" : "")], tabs: [])]
+    let tabs: [CGFloat] = [300, menuTextMax]
+    for name in order.prefix(projectsShown) {
+        let (pr, rows) = by[name]!
+        let n = rows.reduce(0) { $0 + $1.n }
+        let hour = rows.reduce(0.0) { $0 + ($1.g.use?.hourTokens ?? 0) * Double($1.n) }
+        let line = NSMutableAttributedString(attributedString: txt(fitLine(name, rowBold, width: 250), rowBold))
+        line.append(txt("\t" + (hour > 0 ? "\(tokText(hour))/h" : ""), rowNum, .labelColor))
+        line.append(txt("\t\(n) al lavoro", rowNum, .secondaryLabelColor))
+        let works = rows.map { r in (workIn(name, r.g.work) ?? (r.g.kind == "sessione" ? "ancora senza titolo" : r.g.kind)) + (r.n > 1 ? " ×\(r.n)" : "") }
+        // «Regia sessioni» con un solo lavoro che si chiama uguale: il dettaglio non ripete il nome
+        let detail = works == [name] ? nil : fitLine(works.joined(separator: " · "))
+        let row = richRow(icon: providerSym(rows[0].g.provider), line, detail: detail, tabs: tabs,
+                          tip: "Passa qui per i lavori uno per uno: clic su un lavoro per aprirlo", wrap: 200)
+        row.submenu = lazyMenu { m in
+            m.addItem(headRow([name.uppercased()], tabs: []))
+            for r in rows { m.addItem(agentWorkRow(pr, r.g, n: r.n, group: name, actionTarget: actionTarget)) }
+            m.addItem(.separator())
+            let d = richRow(icon: sym("folder"), txt("Il progetto: consumi, budget, priorità", rowFont))
+            d.submenu = projectSubmenu(pr, actionTarget: actionTarget)
+            m.addItem(d)
         }
         out.append(row)
     }
-    let rest = all.count - rows.prefix(agentsShown).reduce(0) { $0 + $1.n }
-    if rest > 0 { out.append(noteRow("e altri \(rest): tutti in Progetti o nella dashboard")) }
+    if np > projectsShown { out.append(noteRow(np - projectsShown == 1 ? "e un altro progetto al lavoro, in «Tutti i progetti»" : "e altri \(np - projectsShown) progetti al lavoro, in «Tutti i progetti»")) }
     return out
 }
 
@@ -2224,8 +2358,8 @@ func brakeMenuItem(actionTarget: AnyObject?) -> NSMenuItem {
     let ov = liveGates?.overrides ?? []
     let hold = ov.first { $0.hold == true }
     let detail = braked.isEmpty ? (hold != nil ? "lavori nuovi fermi fino alle " + hhmmText(Int(hold!.until / 1000)) : "nessun freno")
-        : braked.map { id in pName(id) + (liveGates?.providers?[id]?.waitUntil.map { " fino alle " + hhmmText(Int($0 / 1000)) } ?? "") }.joined(separator: " · ") + (braked.count > 1 ? " frenati" : " frenato")
-    let it = richRow(icon: sym("hand.raised", color: braked.isEmpty ? nil : toneWarn), txt("Freno", rowFont), detail: detail)
+        : braked.map { id in pName(id) + " fermo" + (liveGates?.providers?[id]?.waitUntil.map { " fino alle " + hhmmText(Int($0 / 1000)) } ?? "") }.joined(separator: " · ")
+    let it = richRow(icon: sym("hand.raised", color: braked.isEmpty ? nil : toneWarn), txt("Freno", rowFont), detail: fitLine(detail), wrap: 200)
     let sub = NSMenu(); sub.autoenablesItems = false
     func act(_ title: String, _ path: String, _ method: String, _ body: [String: Any]) {
         let m = NSMenuItem(title: title, action: #selector(AppDelegate.brakeAction(_:)), keyEquivalent: "")
@@ -2352,11 +2486,12 @@ func buildMenu(snapshot: Overview?, isOffline: Bool, actionTarget: AnyObject?) -
             details.addItem(it)
         }
         menu.addItem(.separator())
+        // il lavoro in corso raggruppato per progetto, subito sopra la voce con tutti i progetti (24/10)
         liveAgentRows(actionTarget: actionTarget).forEach { menu.addItem($0) }
+        if let pj = projectsMenuItem(actionTarget: actionTarget) { menu.addItem(pj) }
         if let ms = liveMachines, !ms.isEmpty {
-            // ogni macchina è la stessa card; quella su cui gira la tray ha i processi nel sottomenu
+            // ogni macchina è la stessa card; quella su cui gira la tray ha i processi (e chi pesa di più) nel sottomenu
             for m in ms { menu.addItem(.separator()); menu.addItem(machineItem(m)) }
-            if ms.contains(where: { $0.local }) { menu.addItem(.separator()); macProcs.inlineSection().forEach { menu.addItem($0) } }
         } else {
             if let mr = macRow() {  // hub vecchio senza /api/machines: il Mac e il PC come prima
                 menu.addItem(.separator()); menu.addItem(mr)
@@ -2367,7 +2502,6 @@ func buildMenu(snapshot: Overview?, isOffline: Bool, actionTarget: AnyObject?) -
         let det = richRow(icon: sym("slider.horizontal.3"), txt("Altri abbonamenti e opzioni", rowFont)); det.submenu = details
         menu.addItem(det)
         menu.addItem(brakeMenuItem(actionTarget: actionTarget))
-        if let pj = projectsMenuItem(actionTarget: actionTarget) { menu.addItem(pj) }
     }
     // con l'hub giù il blocco Mac non c'è: la finestra Processi legge tutto in locale e resta raggiungibile
     if isOffline || macRow() == nil {
@@ -2404,10 +2538,20 @@ func snapshotMenu(_ menu: NSMenu, path: String) -> Bool {
     let titledFont = NSFont.systemFont(ofSize: 13)
     // Il menu è a livelli: sotto ogni voce con sottomenu si disegna il suo primo livello, rientrato.
     let indent: CGFloat = 28
+    // SNAPSHOT_OPEN=testo apre solo la voce del primo livello che lo contiene (il nome di un progetto, «Mac»): un fotogramma per voce
+    let open = ProcessInfo.processInfo.environment["SNAPSHOT_OPEN"].flatMap { $0.isEmpty ? nil : $0 }
+    func expand(_ it: NSMenuItem, _ d: Int) -> Bool {
+        guard it.submenu != nil else { return false }
+        if d < snapshotDepth { return true }
+        guard let o = open, d == 0 else { return false }
+        let t = String((it.attributedTitle?.string ?? it.title).split(whereSeparator: { $0 == "\t" || $0 == "\n" }).first ?? "")
+        return t.contains(o) || ((it.view as? AccountBlockView)?.name.contains(o) ?? false)
+    }
     func flat(_ m: NSMenu, _ d: Int) -> [(NSMenuItem, Int)] {
         m.items.flatMap { it -> [(NSMenuItem, Int)] in
-            if let sm = it.submenu, d < snapshotDepth { sm.delegate?.menuNeedsUpdate?(sm) }   // i sottomenu riempiti al passaggio (processi del Mac)
-            return [(it, d)] + ((it.submenu != nil && d < snapshotDepth) ? flat(it.submenu!, d + 1) : [])
+            let ex = expand(it, d)
+            if let sm = it.submenu, ex { sm.delegate?.menuNeedsUpdate?(sm) }   // i sottomenu riempiti al passaggio (processi del Mac)
+            return [(it, d)] + (ex ? flat(it.submenu!, d + 1) : [])
         }
     }
     let canvasW: CGFloat = 600
@@ -2763,6 +2907,71 @@ func runPerfBenchAndExit(rounds: Int) -> Never {
         win.close()
         warmup = false
     }
+    // colonne: ogni card della griglia deve cominciare su uno dei bordi di colonna, e in una riga la stessa misura alla stessa altezza
+    var misaligned: [String] = []
+    if let menu = Optional(buildMenu(snapshot: snapshot, isOffline: false, actionTarget: nil)),
+       let grid = menu.items.compactMap({ $0.view as? GridView }).first {
+        grid.setFrameSize(NSSize(width: blockW, height: grid.frame.height))
+        let cards = grid.subviews.compactMap { $0 as? AccountBlockView }
+        let xs = Set(cards.map { Int($0.frame.minX.rounded()) }), ws = Set(cards.map { Int($0.frame.width.rounded()) })
+        if xs.count > gridCols || ws.count > 1 { misaligned.append("bordi x \(xs.sorted()) larghezze \(ws.sorted())") }
+        for row in Dictionary(grouping: cards, by: { Int($0.frame.minY) }).values {
+            var at: [String: Set<Int>] = [:]
+            for c in row { for (i, b) in c.bars.enumerated() { at[b.label, default: []].insert(Int(c.cY(i))) } }
+            for (l, ys) in at where ys.count > 1 { misaligned.append("«\(l)» a altezze \(ys.sorted())") }
+        }
+        print("colonne: \(cards.count) card, bordi x \(xs.sorted()), " + (misaligned.isEmpty ? "allineate" : "NON allineate: " + misaligned.joined(separator: "; ")))
+    }
+    // tendina del 24/10: ogni testo del menu principale in una riga (a 360 pt), «Pesano di più» solo nel sottomenu del Mac,
+    // il lavoro raggruppato per progetto
+    var layout: [String] = []
+    let main = buildMenu(snapshot: snapshot, isOffline: false, actionTarget: nil)
+    func blocks(_ v: NSView) -> [AccountBlockView] { (v as? AccountBlockView).map { [$0] } ?? v.subviews.flatMap(blocks) }
+    for it in main.items {
+        if let v = it.view {
+            for b in blocks(v) {
+                if let br = b.brake {
+                    let room = (b.compactW ?? AccountBlockView.brakeW + 20) - 20
+                    let w = (br as NSString).size(withAttributes: [.font: AccountBlockView.brakeFont]).width
+                    if br.contains("\n") || w > room + 0.5 { layout.append("card «\(b.name)»: «\(br)» \(Int(w)) pt su \(Int(room))") }
+                }
+                if let one = b.single, one.size().width > min(lineMax, blockW - 20) + 0.5 { layout.append("card «\(b.name)»: riga \(Int(one.size().width)) pt") }
+            }
+            continue
+        }
+        guard let t = it.attributedTitle else { continue }
+        let parts = t.string.components(separatedBy: "\n")
+        if parts.count > 2 { layout.append("«\(parts[0])»: \(parts.count - 1) righe sotto") }
+        var at = 0
+        for (k, line) in parts.enumerated() {
+            let head = k == 0 ? String(line.split(separator: "\t", omittingEmptySubsequences: false).first ?? "") : line
+            let w = t.attributedSubstring(from: NSRange(location: at, length: (head as NSString).length)).size().width
+            if w > lineMax + 0.5 { layout.append("«\(head)» \(Int(w)) pt") }
+            at += (line as NSString).length + 1
+        }
+        if t.string.contains("PESANO DI PIÙ") { layout.append("«Pesano di più» nel menu principale") }
+    }
+    // i progetti al lavoro si chiamano come nell'elenco Progetti: mai un pezzo esadecimale da 6 o un worktree
+    var inWork = false
+    let rawName = try! NSRegularExpression(pattern: #"\b(?=[0-9a-f]*[0-9])[0-9a-f]{6,}\b|\.claude/worktrees|^scratch-"#)
+    for it in main.items {
+        let s = it.attributedTitle?.string ?? ""
+        if s.hasPrefix("AL LAVORO ADESSO") { inWork = true; continue }
+        if s.hasPrefix("Tutti i progetti") { inWork = false }
+        guard inWork, it.submenu != nil else { continue }
+        let name = String(s.split(separator: "\t", omittingEmptySubsequences: false).first ?? "")
+        if rawName.firstMatch(in: name, range: NSRange(name.startIndex..., in: name)) != nil { layout.append("progetto col nome della cartella: «\(name)»") }
+    }
+    let headless = shownAgents().filter { $0.1.headless == true }
+    if !headless.isEmpty { layout.append("\(headless.count) righe di «Al lavoro» da processi headless (claude -p, delegate)") }
+    for k in Set(shownAgents().map { homeProject($0.0, $0.1).1 }) {
+        if let raw = liveProjects.first(where: { $0.name == k }), let label = raw.title, label != raw.name { layout.append("progetto «\(k)» col nome della cartella invece di «\(label)»") }
+    }
+    let macSub = macProcs.newMenu(); macProcs.fill(macSub, rows: rows)
+    if !macSub.items.contains(where: { ($0.attributedTitle?.string ?? "").contains("PESANO DI PIÙ") }) { layout.append("«Pesano di più» manca nel sottomenu del Mac") }
+    let headWork = main.items.first { ($0.attributedTitle?.string ?? "").hasPrefix("AL LAVORO ADESSO") }?.attributedTitle?.string
+    if let h = headWork, !h.contains(" PROGETT") { layout.append("lavoro non raggruppato per progetto: «\(h)»") }
+    print("tendina: " + (layout.isEmpty ? "testi in una riga, «Pesano di più» nel sottomenu del Mac, lavoro per progetto" : "NO: " + layout.joined(separator: "; ")))
     let med = { (a: [Double]) in a.isEmpty ? 0 : a.sorted()[a.count / 2] }
     let mx = { (a: [Double]) in a.max() ?? 0 }
     var l = [Double](repeating: 0, count: 3); getloadavg(&l, 1)
@@ -2770,6 +2979,6 @@ func runPerfBenchAndExit(rounds: Int) -> Never {
     print(String(format: "apertura: a muro mediana %.0f ms, max %.0f · CPU max %.0f ms (soglia 150 su mediana e CPU)", med(opens), mx(opens), mx(openCPU)))
     print(String(format: "hover %d eventi: a muro mediana %.1f ms, max %.0f · CPU max %.1f ms (soglia 50 su CPU)", hovers.count, med(hovers), mx(hovers), mx(hoverCPU)))
     print(String(format: "sottomenu processi: a muro max %.0f ms · CPU max %.0f ms (soglia 50 su CPU)", mx(fills), mx(fillCPU)))
-    exit(med(opens) > 150 || mx(openCPU) > 150 || mx(hoverCPU) > 50 || mx(fillCPU) > 50 ? 1 : 0)
+    exit(med(opens) > 150 || mx(openCPU) > 150 || mx(hoverCPU) > 50 || mx(fillCPU) > 50 || !misaligned.isEmpty || !layout.isEmpty ? 1 : 0)
 }
 final class FlippedView: NSView { override var isFlipped: Bool { true } }
