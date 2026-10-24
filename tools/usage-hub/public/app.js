@@ -113,12 +113,14 @@ function agentsHtml(p) {
   return `<details><summary>${esc(mix)}</summary>${subs}${list}${opus}${chats}</details>`;
 }
 function projectRows(live, items) {
+  const ps = (live && live.projects) || [], alive = ps.filter((p) => !p.dead), dead = ps.filter((p) => p.dead);
+  // Una colonna di soli «–» non dice niente: si mostra solo il provider che ha consumo su almeno un progetto.
+  const cols = ['claude', 'codex', 'muse'].filter((k) => ps.some((p) => p[k] > 0));
   const row = (p, dim) => { const s = stateOf(p, items), r = reason(p);
     return `<tr class="${dim ? 'dim' : ''}"><td><b>${esc(p.title || p.name)}</b>${p.priority && p.priority !== 'normale' ? ` <span class="pill ${p.priority === 'alta' ? 'warn' : 'mut'}">priorità ${esc(p.priority)}</span>` : ''}<div class="small mut">${esc(p.what || '')}</div>${agentsHtml(p)}</td>` +
-      [p.claude, p.codex, p.muse].map((v) => `<td class="num ${v > 0 ? '' : 'mut'}">${pct(v)}</td>`).join('') +
+      cols.map((k) => `<td class="num ${p[k] > 0 ? '' : 'mut'}">${pct(p[k])}</td>`).join('') +
       `<td class="state ${s.cls}" title="${esc(r)}">${IC[s.icon]} ${esc(s.text)}</td></tr>`; };
-  const ps = (live && live.projects) || [], alive = ps.filter((p) => !p.dead), dead = ps.filter((p) => p.dead);
-  return `<table class="proj"><thead><tr><th>Progetto · % della settimana</th><th class="num">${IC.claude}</th><th class="num">${IC.codex}</th><th class="num">${IC.muse}</th><th>Stato</th></tr></thead><tbody>${alive.map((p) => row(p, false)).join('')}</tbody></table>` +
+  return `<table class="proj"><thead><tr><th>Progetto${cols.length ? ' · % della settimana' : ''}</th>${cols.map((k) => `<th class="num">${IC[k]}</th>`).join('')}<th>Stato</th></tr></thead><tbody>${alive.map((p) => row(p, false)).join('')}</tbody></table>` +
     (dead.length ? `<details><summary>Nascosti dal menu (${dead.length}): fermi da 7 giorni o cartella sparita</summary><table class="proj"><tbody>${dead.map((p) => row(p, true)).join('')}</tbody></table></details>` : '');
 }
 
@@ -157,7 +159,7 @@ async function renderOverview() {
   // «Ti aspetta» compare subito; quote, Mac e progetti (lenti sotto carico) arrivano dopo, sotto.
   let done = false;
   const waitP = attesaSection();
-  waitP.then((w) => { if (!done && !$('t-overview').querySelector('[data-sec=wait]')) $('t-overview').innerHTML = w + '<p class="mut small">Carico quote, agenti e Mac…</p>'; });
+  waitP.then((w) => { if (!done && !$('t-overview').querySelector('[data-sec=wait]')) $('t-overview').innerHTML = w + '<p class="mut small" data-loading>Carico quote, agenti e Mac…</p>'; });
   let [wait, live, gates, queue, pace, heavy, alerts, mac] = await Promise.all([waitP, ...['/api/live', '/api/gates', '/api/queue', '/api/pace', '/api/heavy', '/api/alerts', '/api/mac'].map((u) => j(u, { signal: AbortSignal.timeout(u === '/api/gates' ? 8000 : 20000) }))]);
   done = true;
   // Sotto carico il freno può metterci 30 s: la Panoramica non lo aspetta oltre 8 s, il resto non oltre 20.
@@ -181,7 +183,7 @@ async function renderOverview() {
     const s = (gates && gates.providers && gates.providers[a.provider]) || {}, ex = a.used >= 100;
     // Frenato = questo account ha un motivo suo; l'ora è la sua, non quella del provider.
     const w = s.state === 'frenato' ? (s.accounts || []).find((x) => x.account === a.account) : null;
-    const badge = ex ? '<span class="pill bad">esaurito</span>' : w ? `<span class="pill warn">frenato${w.until ? ' fino alle ' + untilShort(w.until) : ''}</span>` : s.override ? `<span class="pill ok" title="${esc('override di ' + s.override.by + ': ' + s.override.reason)}">libero fino alle ${hhmm(s.override.until)}</span>` : '<span class="pill ok">libero</span>';
+    const badge = ex ? '<span class="pill bad">esaurito</span>' : w ? `<span class="pill warn">frenato${w.until ? ' fino alle ' + untilShort(w.until) : ''}</span>` : s.override ? `<span class="pill ok" title="${esc('override di ' + s.override.by + ': ' + s.override.reason)}">libero fino alle ${hhmm(s.override.until)}</span>` : a.used >= 90 ? `<span class="pill warn" title="Il provider è libero, ma questo account ha quasi finito la settimana: il lavoro va sugli altri">quasi finito</span>` : '<span class="pill ok">libero</span>';
     const body = ex ? `<div class="small bad" style="margin-left:26px">esaurito · torna ${wk(a.resetsAt)}</div>`
       : a.unknown ? '<div class="small mut" style="margin-left:26px">quota non letta adesso: il lavoro ci va lo stesso, al limite rifiuta il provider</div>'
       : bars(a);

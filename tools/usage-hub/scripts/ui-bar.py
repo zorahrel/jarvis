@@ -77,6 +77,17 @@ NAV_JS = """() => {
   return bad;
 }"""
 
+# Una tab ancora sullo scheletro non è una prova: si aspetta che sparisca, e se non sparisce è rosso.
+LOADING_JS = "!!document.querySelector('.tab.on .au-skl, .tab.on [aria-busy=true], .tab.on [data-loading]')"
+
+
+def wait_loaded(pg, secs=40):
+    for _ in range(secs * 4):
+        if not pg.evaluate(LOADING_JS):
+            return True
+        pg.wait_for_timeout(250)
+    return False
+
 
 def main():
     shots = None
@@ -115,14 +126,17 @@ def main():
                         navbad.append(t + ': attiva ' + str(on))
                 check(not navbad, f'{w}px header: nav intera su {len(TABS)} tab, avanti e indietro {navbad[:4]}')
                 # 2. tagli e scroll orizzontale su tutte le tab
-                cuts = []
+                cuts, stuck = [], []
                 for t in TABS:
                     pg.evaluate(f"location.hash='{t}'")
-                    pg.wait_for_timeout(1200)
+                    pg.wait_for_timeout(300)
+                    if not wait_loaded(pg):
+                        stuck.append(t)
                     pg.add_script_tag(content=CLIP_JS)
                     cuts += [t + ':' + x['k'] + ' ' + x['s'] for x in pg.evaluate('__clip()')]
                     if pg.evaluate('document.documentElement.scrollWidth > innerWidth'):
                         cuts.append(t + ': scroll orizzontale')
+                check(not stuck, f'{w}px ogni tab finisce di caricare entro 40 s {stuck}')
                 check(not cuts, f'{w}px nessun testo tagliato su {len(TABS)} tab {cuts[:4]}')
                 # 3-4. Automazioni chiusa e col pannello aperto
                 pg.evaluate("location.hash='automations'")

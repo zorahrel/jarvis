@@ -113,8 +113,11 @@ def external(reader):
 # login di Codex: sul PC niente segreti), quindi a Mac carico i lettori che lanciano una CLI (codex,
 # claude, muse) prendono uno di CLI_SLOTS posti condivisi da tutta la macchina; gli altri aspettano.
 # Le letture HTTP (Gemini, oai:) restano libere: pesano poco. Mac sotto soglia: nessuna attesa.
-SLOTS_DIR = Path.home() / ".cache" / "vis-giuria" / "cli-slots"
+# 03:20: dopo il tetto sui lettori, 10 giurie preparavano i fotogrammi insieme (30 magick + 9 ffmpeg vivi,
+# swap 18/19 GB): anche ogni ffmpeg/ffprobe/magick prende un posto, da PREP_SLOTS per tutta la macchina.
+SLOTS_DIR = Path.home() / ".cache" / "vis-giuria"
 CLI_SLOTS = int(os.environ.get("VIS_GIURIA_CLI_SLOTS", "2"))
+PREP_SLOTS = int(os.environ.get("VIS_GIURIA_PREP_SLOTS", "2"))
 
 
 def mac_loaded():
@@ -124,31 +127,44 @@ def mac_loaded():
         return False
 
 
-class cli_slot:
-    """a Mac carico: un posto su CLI_SLOTS per tutta la macchina (lock su file, si libera anche se il processo muore)"""
+class machine_slot:
+    """a Mac carico: un posto su n del gruppo per tutta la macchina (lock su file, si libera anche se il processo muore)"""
+
+    def __init__(self, pool, n, poll):
+        self.dir, self.n, self.poll = SLOTS_DIR / f"{pool}-slots", n, poll
 
     def __enter__(self):
         import fcntl
         self.f = None
         t0 = time.time()
-        SLOTS_DIR.mkdir(parents=True, exist_ok=True)
-        # al massimo 30 min di attesa, poi si legge comunque: meglio lento che senza il voto
+        self.dir.mkdir(parents=True, exist_ok=True)
+        # al massimo 30 min di attesa, poi si va comunque: meglio lento che senza il voto
         while mac_loaded() and time.time() - t0 < 1800:
-            for i in range(CLI_SLOTS):
-                f = open(SLOTS_DIR / f"{i}.lock", "w")
+            for i in range(self.n):
+                f = open(self.dir / f"{i}.lock", "w")
                 try:
                     fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
                     self.f = f
                     return self
                 except OSError:
                     f.close()
-            time.sleep(5)
+            time.sleep(self.poll)
         return self
 
     def __exit__(self, *exc):
         if self.f:
             self.f.close()
         return False
+
+
+def cli_slot():
+    return machine_slot("cli", CLI_SLOTS, 5)
+
+
+def prep(args, **kw):
+    """ffmpeg, ffprobe e magick della preparazione: un posto del gruppo prep a Mac carico"""
+    with machine_slot("prep", PREP_SLOTS, 0.2):
+        return subprocess.run(args, **kw)
 
 
 def die(msg, code=64):
@@ -192,7 +208,7 @@ def mark_exhausted(reader):
 
 # --- il video e i fotogrammi ---
 def duration(path):
-    out = subprocess.run(["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", path],
+    out = prep(["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", path],
                          capture_output=True, text=True).stdout.strip()
     try:
         return float(out)
@@ -202,7 +218,7 @@ def duration(path):
 
 def motion(path):
     """quanto cambia al massimo un fotogramma dal primo, in livelli di grigio medi (0-255) a 64x64"""
-    raw = subprocess.run(["ffmpeg", "-loglevel", "error", "-i", path, "-vf", "scale=64:64,format=gray", "-f", "rawvideo", "-"],
+    raw = prep(["ffmpeg", "-loglevel", "error", "-i", path, "-vf", "scale=64:64,format=gray", "-f", "rawvideo", "-"],
                          capture_output=True, stdin=subprocess.DEVNULL).stdout
     n = 64 * 64
     if len(raw) < 2 * n:
@@ -218,12 +234,12 @@ def frames(path, n, tmp):
     for i in range(n):
         t = round(d * (i + 0.5) / n, 2)
         f = Path(tmp) / f"f{i:02d}.png"
-        subprocess.run(["ffmpeg", "-loglevel", "error", "-y", "-ss", str(t), "-i", path, "-frames:v", "1",
+        prep(["ffmpeg", "-loglevel", "error", "-y", "-ss", str(t), "-i", path, "-frames:v", "1",
                         "-vf", "scale='max(448,iw)':-2:flags=lanczos", str(f)], stdin=subprocess.DEVNULL)
         if not f.exists():
             continue
         # l'ora aiuta a leggere il movimento; senza font il fotogramma va lo stesso
-        subprocess.run(["magick", str(f), "-font", "/System/Library/Fonts/Supplemental/Arial.ttf", "-gravity", "NorthWest",
+        prep(["magick", str(f), "-font", "/System/Library/Fonts/Supplemental/Arial.ttf", "-gravity", "NorthWest",
                         "-fill", "yellow", "-undercolor", "black", "-pointsize", "18", "-annotate", "+4+4", f"t={t}s", str(f)],
                        stderr=subprocess.DEVNULL)
         files.append((t, f))
@@ -377,7 +393,7 @@ def small(fr, tmp, width=640):
     out = []
     for t, f in fr:
         g = Path(tmp) / (f.stem + ".jpg")
-        p = subprocess.run(["magick", str(f), "-resize", f"{width}x", "-quality", "85", str(g)],
+        p = prep(["magick", str(f), "-resize", f"{width}x", "-quality", "85", str(g)],
                            capture_output=True, stdin=subprocess.DEVNULL)
         out.append(g if p.returncode == 0 and g.exists() else f)
     return out
@@ -387,7 +403,7 @@ def sheet(fr, tmp):
     """tutti i fotogrammi in un foglio unico (per chi accetta una sola immagine)"""
     out = Path(tmp) / "foglio.jpg"
     cols = 4 if len(fr) > 9 else 3
-    p = subprocess.run(["magick", "montage"] + [str(f) for _, f in fr] + ["-font", FONT, "-tile", f"{cols}x", "-geometry", "448x+3+3",
+    p = prep(["magick", "montage"] + [str(f) for _, f in fr] + ["-font", FONT, "-tile", f"{cols}x", "-geometry", "448x+3+3",
                         "-background", "black", "-quality", "85", str(out)], capture_output=True, stdin=subprocess.DEVNULL)
     if p.returncode != 0 or not out.exists():
         raise Skip("montage fallito")
