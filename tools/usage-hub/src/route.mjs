@@ -114,15 +114,17 @@ export async function classifyChain(task) {
   }
 }
 
-export const CLAUDE_MODEL_ID = { opus: 'claude-opus-5-5', sonnet: 'claude-sonnet-5-5' };
+export const CLAUDE_MODEL_ID = { opus: 'claude-opus-5-5', sonnet: 'claude-sonnet-5-5', haiku: 'claude-haiku-5-5' };
 
 // Quale modello Claude per un compito che va su Claude. Il gusto parte da Opus quando Claude ha margine per quel progetto:
 // il gate è passato e il ritmo dell'account è ≤ 1, oppure il progetto ha priorità alta (corre di più per scelta di Attilio).
-// Frenato (ritmo > 1 su priorità normale o bassa) o in riserva → Sonnet. Il meccanico resta Sonnet.
-export function modelFor(g, cls, rows, projectInfo) {
+// Frenato (ritmo > 1 su priorità normale o bassa) o in riserva → Sonnet.
+// Il meccanico va su Haiku 5.5 (24/10, Attilio: «su Claude hai anche Haiku»): accetta l'effort e costa circa un
+// ventesimo di Sonnet (tools/effort.md, misura del 23/10). Effort medium con strumenti (refactor, test), low senza.
+export function modelFor(g, cls, rows, projectInfo, tools = true) {
   if (!g.go) return { model: null, modelReason: '' };
   if (g.provider !== 'claude') return { model: g.provider, modelReason: '' };
-  if (cls !== 'taste') return { model: 'sonnet', modelReason: 'lavoro meccanico: Sonnet' };
+  if (cls !== 'taste') return { model: 'haiku', effort: tools ? 'medium' : 'low', modelReason: `lavoro meccanico: Haiku a effort ${tools ? 'medium' : 'low'} (un ventesimo di Sonnet)` };
   const row = rows.find((r) => r.provider === 'claude' && r.account === g.account);
   const pace = row && row.pace != null ? row.pace : 0;
   const priority = (projectInfo && projectInfo.priority) || 'normale';
@@ -145,5 +147,5 @@ export async function route(rows, task, { project = '', projectInfo = null, clas
   const skip = priv || c.tools ? ['free'] : [];
   // Gli override valgono anche qui: prima del 22/10 li vedevano solo la tray e il comando, la delega no.
   const g = gate(rows, gateClass, { project: projectInfo, skip, overrides });
-  return { ...g, ...modelFor(g, c.cls, rows, projectInfo), cls: c.cls, tools: c.tools, by: c.by, gateClass };
+  return { ...g, ...modelFor(g, c.cls, rows, projectInfo, c.tools), cls: c.cls, tools: c.tools, by: c.by, gateClass };
 }

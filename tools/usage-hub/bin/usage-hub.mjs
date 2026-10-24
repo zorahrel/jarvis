@@ -9,6 +9,7 @@ import { defaultPolicies, evaluatePolicies, applyBlocks } from '../src/policy.mj
 import { loadBudgets, loadMuseBudget } from '../src/budgets.mjs';
 import { buildStatus, writeStatus } from '../src/status.mjs';
 import { buildPace, gate } from '../src/pacing.mjs';
+import { modelFor } from '../src/route.mjs';
 import { loadOverrides, activeOverrides, addOverride, revokeOverride } from '../src/overrides.mjs';
 import { readAll, buildState, openItems } from '../src/automations/feedback.mjs';
 import { createDemoAutomations } from '../src/automations/demo.mjs';
@@ -112,10 +113,16 @@ if (cmd === 'serve') {
     if (r.unknown) { console.log(`${`${r.provider}/${r.account}`.padEnd(30)} quota non letta`); continue; }
     console.log(`${`${r.provider}/${r.account}`.padEnd(30)} ${String(r.used).padStart(4)}%  settimana ${String(r.elapsedPct).padStart(3)}%  ritmo ${r.pace ?? '-'}  ${r.perDay}%/g  reset ${hhmm(r.resetsAt)}  ${r.status}${r.provider === 'claude' && r.active ? '  attivo' : ''}${r.stale ? '  (lettura vecchia)' : ''}`);
   }
-  // Chi prende un lavoro nuovo, per classe: lo stesso gate di delegate e della coda.
+  // Chi prende un lavoro nuovo, per classe: lo stesso gate di delegate e della coda; su Claude anche il modello
+  // (modelFor di src/route.mjs: Opus/Sonnet per il gusto, Haiku per il meccanico). L'interattivo è Attilio dal vivo.
   const ov = activeOverrides(loadOverrides());
-  const pick = (cls, opts = {}) => { const g = gate(rows, cls, { overrides: ov, ...opts }); return g.go ? `${g.provider}${g.account && g.provider === 'claude' ? `/${g.account}` : ''}` : 'aspetta'; };
-  console.log(`\nlavoro nuovo: interattivo → ${pick('interattivo')} · gusto → ${pick('gusto')} · meccanico con strumenti → ${pick('massivo', { skip: ['free'] })} · differibile → ${pick('batch', { skip: ['free'] })}`);
+  const pick = (cls, opts = {}, work = null) => {
+    const g = gate(rows, cls, { overrides: ov, ...opts });
+    if (!g.go) return 'aspetta';
+    const m = work && g.provider === 'claude' ? modelFor(g, work, rows, null, true) : null;
+    return `${g.provider}${g.account && g.provider === 'claude' ? `/${g.account}` : ''}${m ? ` ${m.model}${m.effort ? ` ${m.effort}` : ''}` : ''}`;
+  };
+  console.log(`\nlavoro nuovo: interattivo → ${pick('interattivo')} · gusto → ${pick('gusto', {}, 'taste')} · meccanico con strumenti → ${pick('massivo', { skip: ['free'] }, 'mechanical')} · differibile → ${pick('batch', { skip: ['free'] }, 'mechanical')}`);
   for (const o of ov) console.log(`override: ${o.provider}${o.class ? `/${o.class}` : ''} fino a ${hhmm(o.until)}, da ${o.by}: ${o.reason}`);
 } else if (cmd === 'allow') {
   // allow <provider> [--hours N] [--class X] --by CHI --reason PERCHÉ | --list | --revoke <provider>

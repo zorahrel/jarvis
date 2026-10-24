@@ -114,3 +114,24 @@ test('modello: meccanico resta com\'è, gli altri provider portano il loro nome'
   const c = await route(rows, 'Trova i call site di gate()', { classify: jev('mechanical', true), cls: 'mechanical', projectInfo: null });
   assert.equal(c.model, 'muse');
 });
+
+// Haiku 5.5 (24/10, Attilio: «su Claude hai anche Haiku»): accetta l'effort e costa circa un ventesimo di Sonnet.
+// Il meccanico che resta su Claude va su Haiku; Sonnet e Opus solo per gusto e giudizio.
+test('modello: meccanico che resta su Claude → Haiku, effort medium con strumenti', async () => {
+  const r = await route([row('claude')], 'Trova i call site di gate() e contali', { classify: jev('mechanical', true) });
+  assert.deepEqual([r.provider, r.model, r.effort], ['claude', 'haiku', 'medium']);
+  assert.match(r.modelReason, /Haiku/);
+});
+
+test('modello: testo privato senza strumenti su Claude → Haiku a effort low', async () => {
+  const r = await route([row('claude')], 'Riassumi questa mail di mario@example.com', { classify: never });
+  assert.deepEqual([r.provider, r.model, r.effort], ['claude', 'haiku', 'low']);
+});
+
+test('modello: il gusto non scende mai a Haiku', async () => {
+  for (const used of [40, 70]) {
+    const r = await route(withUsed(used), 'Rifai la hero più elegante', { classify: jev('taste', true), projectInfo: { name: 'x', priority: 'normale' } });
+    assert.notEqual(r.model, 'haiku');
+    assert.equal(r.effort, undefined);
+  }
+});

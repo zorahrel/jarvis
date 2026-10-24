@@ -2,7 +2,7 @@
 # Porta unica per delegare un compito: chi chiama non sceglie modello né abbonamento.
 #   delegate [-C dir] [--class taste|mechanical] [--dry-run] "compito"
 # Il hub (:3360/api/route) fa classificare il compito a Jev e chiede al gate del pacing chi può lavorare.
-# Esegue: free → canali gratis (free-router) · muse → museagent · codex → codex exec · claude → claude -p (Opus per il gusto con margine, Sonnet altrimenti).
+# Esegue: free → canali gratis (free-router) · muse → museagent · codex → codex exec · claude → claude -p (Opus per il gusto con margine, Sonnet per il gusto frenato, Haiku per il meccanico).
 # Frenato: il lavoro entra nella coda del hub (:3360/api/queue), che lo rilancia da solo; stampa id e ora stimata, exit 11.
 # Con --no-queue niente coda: exit 10 = frenato, riprova più tardi. Hub giù → museagent, come il freno di prima.
 dir="$PWD"; cls=""; dry=0; queue=1
@@ -27,7 +27,7 @@ go=$(jq -r '.go' <<<"$r" 2>/dev/null)
 if [ -z "$go" ] || [ "$go" = null ]; then
   provider=muse; r='{"provider":"muse","by":"hub giù","reason":"hub non raggiungibile, passo a museagent"}'
 fi
-echo "delegate: $(jq -r '"\(.cls // "?") (\(.by // "-"), strumenti \(.tools | tostring)) → \(.provider // "nessuno")\(if .model and .provider == "claude" then " " + .model else "" end) · \(.reason // "")\(if .modelReason != null and .modelReason != "" then " · " + .modelReason else "" end)"' <<<"$r") · progetto $project" >&2
+echo "delegate: $(jq -r '"\(.cls // "?") (\(.by // "-"), strumenti \(.tools | tostring)) → \(.provider // "nessuno")\(if .model and .provider == "claude" then " " + .model + (if .effort then " " + .effort else "" end) else "" end) · \(.reason // "")\(if .modelReason != null and .modelReason != "" then " · " + .modelReason else "" end)"' <<<"$r") · progetto $project" >&2
 if [ "$go" = false ]; then
   eta=$(jq -r '.waitUntil // empty | . / 1000 | strftime("%a %d %H:%M")' <<<"$r")
   if [ $queue -eq 1 ]; then
@@ -54,8 +54,9 @@ case "$provider" in
     exec "$HOME/bin/museagent" -C "$dir" "$task" ;;
   muse)   exec "$HOME/bin/museagent" -C "$dir" "$task" ;;
   codex)  exec /opt/homebrew/bin/codex exec -m gpt-6-luna --skip-git-repo-check "$task" </dev/null ;;
-  claude) # il modello lo decide il hub: Opus per il gusto con margine, Sonnet altrimenti
-    case "$(jq -r '.model // "sonnet"' <<<"$r" 2>/dev/null)" in opus) cmodel=claude-opus-5-5 ;; *) cmodel=claude-sonnet-5-5 ;; esac
-    exec "$HOME/.local/bin/claude" -p --model "$cmodel" --dangerously-skip-permissions "$task" </dev/null ;;
+  claude) # modello ed effort li decide il hub: Opus/Sonnet per il gusto, Haiku per il meccanico (effort medium o low)
+    case "$(jq -r '.model // "sonnet"' <<<"$r" 2>/dev/null)" in opus) cmodel=claude-opus-5-5 ;; haiku) cmodel=claude-haiku-5-5 ;; *) cmodel=claude-sonnet-5-5 ;; esac
+    effort=$(jq -r '.effort // empty' <<<"$r" 2>/dev/null)
+    exec "$HOME/.local/bin/claude" -p --model "$cmodel" ${effort:+--effort "$effort"} --dangerously-skip-permissions "$task" </dev/null ;;
   *) echo "delegate: esecutore sconosciuto «$provider»" >&2; exit 2 ;;
 esac
