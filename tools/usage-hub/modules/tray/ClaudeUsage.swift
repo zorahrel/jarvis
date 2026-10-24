@@ -1774,7 +1774,7 @@ func accountBlock(_ p: Provider, _ a: Account, renewal: Renewal? = nil, credit: 
     return make(badge, bcol, brakeLine, bars, nil)
 }
 
-// Pagina dei consumi del servizio: Muse non ne ha una nota, niente link inventati
+// Pagina dei consumi del servizio (Codex: link «usage dashboard» di developers.openai.com/codex/pricing). Muse non ne ha una nota, niente link inventati
 let serviceURL: [String: String] = ["claude": "https://claude.ai/settings/usage", "codex": "https://chatgpt.com/codex/settings/usage"]
 
 func hhmmText(_ epoch: Int) -> String {
