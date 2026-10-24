@@ -476,14 +476,15 @@
   function techHtml(c) {
     var t = c.tech || {};
     var rows = [];
-    rows.push('<dt>Chiave</dt><dd>' + esc(c.key) + '</dd>');
+    // niente chiavi né uuid in pagina: il sistema per nome, le fonti per sistema
+    rows.push('<dt>Sistema</dt><dd>' + esc(SYS[c.provider] || c.provider || '–') + '</dd>');
     if (t.schedule) rows.push('<dt>Quando</dt><dd>' + esc(String(t.schedule)) + '</dd>');
     if (t.exit != null) rows.push('<dt>Uscita</dt><dd>codice ' + esc(String(t.exit)) + '</dd>');
     var srcs = c.sources || [];
-    if (srcs.length > 1) rows.push('<dt>Fonti</dt><dd>' + srcs.map(function (s) { return esc(s.key); }).join('<br>') + '</dd>');
+    if (srcs.length > 1) rows.push('<dt>Fonti</dt><dd>' + srcs.map(function (s) { return esc(SYS[s.provider] || s.provider || 'altra fonte'); }).join('<br>') + '</dd>');
     var cmd = t.command || t.prompt;
     return '<details class="tech"><summary>Dettagli tecnici</summary><dl class="cx-dl">' + rows.join('') + '</dl>' +
-      (cmd ? '<pre>' + esc(cmd) + '</pre>' : '') + (t.url && c.provider === 'github' ? '<a href="' + esc(t.url) + '" target="_blank" rel="noopener">Vedi il giro su GitHub</a>' : '') + '</details>';
+      (cmd ? '<pre>' + esc(String(cmd).replace(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi, '…')) + '</pre>' : '') + (t.url && c.provider === 'github' ? '<a href="' + esc(t.url) + '" target="_blank" rel="noopener">Vedi il giro su GitHub</a>' : '') + '</details>';
   }
 
   // ---- Chi risponde: il nodo modello raccontato in parole ----

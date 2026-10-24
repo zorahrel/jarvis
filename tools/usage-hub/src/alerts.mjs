@@ -1,6 +1,11 @@
 // Regole di avviso a soglia: ognuna scatta una volta per settimana, poi tace fino al reset.
 import fs from 'node:fs';
 import { spawn } from 'node:child_process';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+// I comandi di notifica partono dalla cartella dell'hub: «node scripts/notify-diario.mjs» vale da qualunque cwd.
+const HUB_ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 
 const WEEK_MS = 7 * 86400000;
 
@@ -32,6 +37,7 @@ function musePaceAlert(report) {
   return {
     id: 'muse:pace',
     subject: 'Muse pace',
+    source: 'ritmo-muse', kind: 'ritmo',
     value: used,
     expectedPct: shownExpected,
     threshold,
@@ -68,7 +74,7 @@ export function paceAlerts(report) {
     const daysEarly = (r.resetsAt - now) / 86400000;
     const reset = new Intl.DateTimeFormat('it-IT', { timeZone: 'Europe/Rome', weekday: 'short', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }).format(new Date(r.resetsAt));
     if (r.status === 'esaurito' && daysEarly > 1) {
-      out.push({ id: `empty:${r.provider}/${r.account}`, subject: `${r.provider} esaurito`, value: r.used, threshold: 100, week: r.resetsAt,
+      out.push({ id: `empty:${r.provider}/${r.account}`, subject: `${r.provider} esaurito`, source: 'abbonamenti', kind: 'esaurito', value: r.used, threshold: 100, week: r.resetsAt,
         message: `${r.provider} (${r.account}) è esaurito con ${formatPct(daysEarly)} giorni d'anticipo, torna ${reset}.` });
       continue;
     }
@@ -76,7 +82,7 @@ export function paceAlerts(report) {
     const rise = riseLast2h(r.history, r.used, now);
     const calm = rows.find((o) => o.provider === 'claude' && o !== r && !o.unknown && o.used < 90 && o.pace != null && o.pace <= 1);
     if (rise == null || rise < BYPASS_RISE || !calm) continue;
-    out.push({ id: `bypass:claude/${r.account}`, subject: 'claude fuori dal proxy', value: r.used, threshold: r.elapsedPct, week: r.resetsAt,
+    out.push({ id: `bypass:claude/${r.account}`, subject: 'claude fuori dal proxy', source: 'fuori-proxy', kind: 'ritmo', value: r.used, threshold: r.elapsedPct, week: r.resetsAt,
       message: `Claude ${r.account} consuma ${formatPct(r.pace)} volte il ritmo e nelle ultime 2 ore è salito di altri ${formatPct(rise)} punti, mentre ${calm.account} è in linea (ritmo ${formatPct(calm.pace)}). Il proxy non lo sceglie più: lo usa qualcuno che non passa da lì, di solito il desktop, che resta sull'account dell'accesso. Accedi al desktop con ${calm.account}.` });
   }
   return out;
@@ -108,6 +114,8 @@ export function evaluateRules(report, rules = []) {
     events.push({
       id: r.id || `${r.scope}:${r.project || r.metric || '7d'}`,
       subject,
+      // nel diario ogni tipo ha la sua voce: le soglie di un progetto non vanno sotto quelle degli abbonamenti
+      source: r.scope === 'project' ? 'soglia-progetto' : 'soglia-account', kind: 'soglia',
       value,
       threshold: r.threshold,
       week,
@@ -147,8 +155,9 @@ export async function notify(event, notifyCfg = {}, fetchImpl = fetch) {
     jobs.push(new Promise((resolve, reject) => {
       const child = spawn(notifyCfg.command, {
         shell: true,
+        cwd: HUB_ROOT,
         stdio: ['pipe', 'inherit', 'inherit'],
-        env: { ...process.env, USAGE_HUB_MESSAGE: event.message, USAGE_HUB_ID: event.id, USAGE_HUB_VALUE: String(event.value) },
+        env: { ...process.env, USAGE_HUB_MESSAGE: event.message, USAGE_HUB_ID: event.id, USAGE_HUB_VALUE: String(event.value), USAGE_HUB_SOURCE: event.source || '', USAGE_HUB_KIND: event.kind || '' },
       });
       child.on('error', reject);
       child.on('close', (code) => (code ? reject(new Error(`notify command exited ${code}`)) : resolve()));

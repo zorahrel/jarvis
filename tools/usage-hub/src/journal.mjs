@@ -26,7 +26,9 @@ const mask = (s) => String(s || '').replace(/\+?\d[\d ]{8,}\d/g, '…').replace(
 // Diario scritto da altri (sync dei task e simili): una riga JSONL per evento in <dir>/YYYY-MM-DD.jsonl,
 // {ts, source, text, kind?, ref?, outcome?, link?}. Si leggono solo i file dei giorni chiesti; una riga rotta si salta.
 export const DIARY_DIR = process.env.USAGE_HUB_DIARIO || path.join(os.homedir(), '.claude/jarvis/state/diario');
-const SRC = { 'task-sync': 'Task Topics ↔ Promemoria', delega: 'Coda delega', 'freno-mac': 'Freno del Mac', 'controllo-processi': 'Processi sospetti', 'quota-guard': 'Budget dei progetti', 'usage-hub-check': 'Soglie per progetto' };
+const SRC = { 'task-sync': 'Task Topics ↔ Promemoria', delega: 'Coda delega', 'freno-mac': 'Freno del Mac', 'controllo-processi': 'Processi sospetti', 'quota-guard': 'Budget dei progetti',
+  // avvisi di `usage-hub check`, uno per tipo (scripts/notify-diario.mjs); usage-hub-check è il nome di prima, senza tipo
+  'soglia-progetto': 'Soglie per progetto', 'soglia-account': 'Soglie degli abbonamenti', 'ritmo-muse': 'Ritmo Muse', abbonamenti: 'Abbonamenti', 'fuori-proxy': 'Claude fuori dal proxy', 'usage-hub-check': 'Avvisi dell\'hub' };
 const OUTCOMES = new Set(['ok', 'error', 'skipped']);
 // Scrive righe nello stesso formato che scrivono gli altri (scripts/task-sync/diario.mjs): file del giorno a Roma, append.
 const romeDay = (ts) => new Intl.DateTimeFormat('sv-SE', { timeZone: 'Europe/Rome', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(ts));

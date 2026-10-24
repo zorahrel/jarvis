@@ -40,9 +40,14 @@ import { fixTask } from './fix.mjs';
 import { readAll as readFeedback } from './automations/feedback.mjs';
 import { localConfig } from './local-config.mjs';
 
+// Giri che toccano il mondo (coda che lancia agenti, avvisi WhatsApp, riavvio del gateway, pausa dei processi, diario):
+// solo nell'hub vero. Test, --no-live e --demo non devono poter scrivere ad Attilio né fermare un processo.
+export const liveJobs = (deps = {}) => !deps.noLive && !deps.inProcess && !deps.demo;
+
 export function createServer(config, deps = {}) {
   // Nei test (fetch finto o root di prova) il report si calcola nel processo, come prima.
   deps = { ...deps, inProcess: deps.inProcess ?? !!(deps.fetchImpl || deps.root) };
+  const runsLive = liveJobs(deps);
   // Progetti per la tray: ricalcolo in background ogni 5 minuti (CPU, zero token), la richiesta legge la copia.
   let live = { at: 0, projects: [], computing: false };
   const refreshLive = async () => {
@@ -51,7 +56,7 @@ export function createServer(config, deps = {}) {
     try { cache = deps.inProcess ? await buildReport(config, deps) : await buildReport(config, { ...deps, root: config.root, trackers, fetchImpl: hubFetch }); live = { at: cache.at, projects: projectSummary(cache, loadBudgets(), { labels: loadLabels(), top: Infinity }), computing: false }; }
     catch (err) { live = { ...live, error: err.message, computing: false }; }
   };
-  if (!deps.noLive && !deps.inProcess) { setImmediate(refreshLive); setInterval(refreshLive, (config.liveEveryMin || 5) * 60000).unref(); }
+  if (runsLive) { setImmediate(refreshLive); setInterval(refreshLive, (config.liveEveryMin || 5) * 60000).unref(); }
   let cache = null;
   let svcCache = null; // scheda Servizi: calcolata a richiesta, valida un minuto
   let pcCache = null;  // PC di casa (~/bin/pc-state): valido un minuto, ogni lettura e' un nc e al piu' un ssh di pochi ms
@@ -84,7 +89,7 @@ export function createServer(config, deps = {}) {
   const fetchRows = () => (paceInflight ||= hubFetch(`${(config.tray && config.tray.url) || 'http://127.0.0.1:3360'}/api/overview`, { signal: AbortSignal.timeout(20000) })
     .then((r) => r.json()).then((o) => { paceCache = { at: Date.now(), rows: carryLastReading(buildPace(o), paceCache && paceCache.rows) }; return paceCache.rows; })
     .finally(() => { paceInflight = null; }));
-  if (!deps.noLive && !deps.inProcess) setImmediate(() => fetchRows().catch(() => {}));
+  if (runsLive) setImmediate(() => fetchRows().catch(() => {}));
   async function paceRows() {
     if (!paceCache) return fetchRows();
     if (Date.now() - paceCache.at > 60000) fetchRows().catch(() => {});
@@ -92,7 +97,7 @@ export function createServer(config, deps = {}) {
   }
   // Coda dei lavori frenati: riprova ogni 5 minuti, avvisi WhatsApp raggruppati (max uno ogni 15).
   // Diario dell'hub: dettagli di coda, freno e processi sospetti. In test e demo non si scrive niente su disco.
-  const diary = deps.writeDiary || (deps.inProcess || deps.noLive ? () => {} : (r) => appendDiary(r));
+  const diary = deps.writeDiary || (runsLive ? (r) => appendDiary(r) : () => {});
   const notifier = createNotifier({ diary });
   const queueTick = () => tick({
     routeFn: async (item) => {
@@ -104,7 +109,7 @@ export function createServer(config, deps = {}) {
     notify: (line) => notifier.push(line),
   }).then(() => notifier.flush()).catch(() => {});
   // noQueue: in demo la coda è di prova e nessuno deve lanciarne i lavori
-  if (!deps.noLive && !deps.inProcess && !deps.noQueue) {
+  if (runsLive && !deps.noQueue) {
     recoverRunning();
     setInterval(queueTick, (config.queueEveryMin || 5) * 60000).unref();
     setInterval(() => notifier.flush(), 60000).unref();
@@ -112,7 +117,7 @@ export function createServer(config, deps = {}) {
   // Sessioni che hanno consumato di più oggi: scansione incrementale dei transcript ogni 5 minuti.
   const sessState = newState(); let heavySessions = [];
   const scanSessions = () => scanToday(sessState).then((r) => { heavySessions = r; }).catch(() => {});
-  if (!deps.noLive && !deps.inProcess) { setImmediate(scanSessions); setInterval(scanSessions, 5 * 60000).unref(); }
+  if (runsLive) { setImmediate(scanSessions); setInterval(scanSessions, 5 * 60000).unref(); }
   // Mac sotto sforzo: misura ogni 30 s; se serve ferma gli agenti in background (mai le sessioni aperte) e li riprende da solo.
   const priorityOf = (name) => ((live.projects || []).find((p) => p.name === name) || {}).priority || 'normale';
   let macShed = null;
@@ -129,9 +134,9 @@ export function createServer(config, deps = {}) {
   const macWatch = createMacWatch({ groups: config.groups || [], priorityOf, getShed: () => macShed, openclawResolve });
   // Attendibilità dei processi: un giro ogni 2 minuti (≈0,1 s con le firme in cache), i gravi su WhatsApp una volta al giorno
   const trust = createTrust({ allow: (config.trust && config.trust.allow) || [] });
-  const trustAlert = createTrustAlert({ send: deps.sendNotice || sendWhatsApp, diary, file: deps.inProcess || deps.noLive ? null : path.join(os.homedir(), '.cache', 'claude-usage-hub', 'trust-alerts.json') });
+  const trustAlert = createTrustAlert({ send: deps.sendNotice || sendWhatsApp, diary, file: !runsLive ? null : path.join(os.homedir(), '.cache', 'claude-usage-hub', 'trust-alerts.json') });
   const trustTick = () => trust.scan().then((r) => trustAlert(r.items)).then((n) => { if (n) console.log(`[trust] avviso WhatsApp: ${n} processi sospetti`); }).catch(() => {});
-  if (!deps.noLive && !deps.inProcess) { setTimeout(trustTick, 15000).unref(); setInterval(trustTick, 120000).unref(); }
+  if (runsLive) { setTimeout(trustTick, 15000).unref(); setInterval(trustTick, 120000).unref(); }
   const shedDigest = createShedDigest({
     send: deps.sendNotice || sendWhatsApp, diary, log: (l) => console.log('[shed] ' + l), hogs: async () => topHogs(await processTable(), 5),
     // i giri di `offload` finiti sul PC (una riga per giro in ~/.cache/offload/runs.jsonl, la scrive offload stesso)
@@ -154,7 +159,7 @@ export function createServer(config, deps = {}) {
   // La pausa degli agenti è spenta salvo `shed.enabled: true` (24/10): il 23/10 13 pause su 13 hanno colpito agenti che
   // non pesavano, e chi bloccava (server TypeScript 3 GB, wigolo 5,9 GB, gateway OpenClaw) non è un agente fermabile.
   // Resta la misura: il riepilogo dice chi blocca e perché.
-  if (!deps.noLive && !deps.inProcess) {
+  if (runsLive) {
     macShed.thawAll('avvio del hub').catch(() => {});
     const shedTick = () => macShed.tick().then((st) => shedDigest.tick(st)).catch(() => {});
     setInterval(shedTick, 30000).unref(); setInterval(() => shedDigest.flush().catch(() => {}), 60000).unref(); setTimeout(shedTick, 2000).unref();
@@ -173,6 +178,7 @@ export function createServer(config, deps = {}) {
   });
   let agentCache = { at: 0, v: { agents: [], lastSeen: {}, topics: {} } }; let weekSeen = { at: 0, v: {} };
   const liveAgents = async (queue) => {
+    if (deps.demoAgents) return { agents: deps.demoAgents(), lastSeen: {}, topics: {} };
     if (Date.now() - agentCache.at < 45000) return agentCache.v;
     agentCache = { ...agentCache, at: Date.now() }; // niente scansioni parallele se due menu si aprono insieme
     const groups = config.groups || [];
@@ -190,8 +196,8 @@ export function createServer(config, deps = {}) {
   // Automazioni: fonti lette a richiesta con copia di 60 s; GitHub e PC solo in background (mai nel percorso della richiesta).
   // Nei test e in --demo si crea alla prima richiesta; nell'hub vivo subito, così GitHub e PC partono col primo giro dietro.
   let autoApi = null;
-  const auto = () => (autoApi ||= deps.automations || createAutomations({ background: !deps.noLive && !deps.inProcess }));
-  if (!deps.noLive && !deps.inProcess) auto();
+  const auto = () => (autoApi ||= deps.automations || createAutomations({ background: runsLive }));
+  if (runsLive) auto();
   // Quota settimanale di un costo pesato, come per i progetti: share dei token pesati della settimana × % dell'account.
   // Quota della settimana di una sessione, con la stessa divisione dei progetti: token pesati della sessione sul totale
   // pesato della settimana di quel provider, per la % usata dell'abbonamento. Muse conta i token riportati dal servizio.
@@ -369,7 +375,7 @@ export function createServer(config, deps = {}) {
         const days = Math.min(30, Math.max(1, Number(new URL(req.url, 'http://x').searchParams.get('days')) || 7));
         let model = null; try { model = await auto().model(); } catch { /* il diario mostra il resto */ }
         let fb = []; try { fb = readFeedback(deps.feedbackDir ? { dir: deps.feedbackDir } : {}).rows; } catch { /* registro illeggibile */ }
-        return send(200, 'application/json', JSON.stringify({ at: Date.now(), days, items: journal({ model, queue: loadQueue(), feedback: fb, diary: readDiary({ days }), days }) }));
+        return send(200, 'application/json', JSON.stringify({ at: Date.now(), days, items: journal({ model, queue: loadQueue(), feedback: fb, diary: readDiary({ days, ...(deps.diaryDir ? { dir: deps.diaryDir } : {}) }), days }) }));
       }
       // Risolvi tu: {key} → un lavoro in coda con il contesto della voce; parte subito se freno e ritmo lo permettono.
       if (req.url === '/api/fix' && req.method === 'POST') {
@@ -380,7 +386,7 @@ export function createServer(config, deps = {}) {
         if (busy) return send(200, 'application/json', JSON.stringify({ ok: true, item: busy, already: true }));
         const item = enqueue(fixTask(card));
         notifier.push(`Risolvi tu ${item.id}: ${card.title}`);
-        if (!deps.noLive && !deps.inProcess && !deps.noQueue) setImmediate(queueTick);
+        if (runsLive && !deps.noQueue) setImmediate(queueTick);
         return send(200, 'application/json', JSON.stringify({ ok: true, item }));
       }
       // Impostazioni della pagina che stanno nella config locale (fuori dal repo): i link per scrivere a Jarvis.
@@ -390,6 +396,7 @@ export function createServer(config, deps = {}) {
       }
       // Contesto: cosa leggono gli agenti. Sola lettura, copia di 60 s (il doctor ci mette qualche secondo).
       if (req.url === '/api/contesto') {
+        if (deps.demoContext) return send(200, 'application/json', JSON.stringify({ ...deps.demoContext(), contradictions: { at: null, items: [] } }));
         if (!ctxCache || Date.now() - ctxCache.at > 60000) {
           const { contextReport } = await import('./context.mjs');
           const res = await doctorCached();
@@ -410,12 +417,14 @@ export function createServer(config, deps = {}) {
         return send(200, 'application/json', JSON.stringify({ ok: true }));
       }
       if (req.url === '/api/services') {
+        if (deps.demoServices) return send(200, 'application/json', JSON.stringify(deps.demoServices()));
         if (!svcCache || Date.now() - svcCache.at > 60000) svcCache = await servicesSnapshot();
         return send(200, 'application/json', JSON.stringify(svcCache));
       }
-      if (req.url === '/api/mac') return send(200, 'application/json', JSON.stringify(await macWatch.snapshot()));
+      if (req.url === '/api/mac') return send(200, 'application/json', JSON.stringify(deps.demoMac ? deps.demoMac() : await macWatch.snapshot()));
       // Per la tray: il PC di casa dorme, e' acceso o lavora, e se il Mac e' carico mentre il PC dorme.
       // pc-state non sveglia il PC e non lo tiene sveglio; senza risposta in 10 s il PC e' "sconosciuto".
+      if (deps.demo && (req.url === '/api/pc' || req.url === '/api/machines' || req.url.startsWith('/api/mac/trust'))) return send(200, 'application/json', JSON.stringify(req.url === '/api/machines' ? [] : { demo: true, items: [] }));
       if (req.url === '/api/pc') return send(200, 'application/json', JSON.stringify(await pcState()));
       // Le macchine in un elenco uniforme (questo Mac, il PC, domani altre): la tray disegna per ognuna la stessa card.
       // I nomi vengono dai dati: il nome di questo Mac da macOS, quello del PC da config.pcName.

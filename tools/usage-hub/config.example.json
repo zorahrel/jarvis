@@ -33,7 +33,7 @@
       }
     ],
     "notify": {
-      "command": "node scripts/notify-stdout.mjs",
+      "command": "node scripts/notify-diario.mjs",
       "webhook": null
     }
   },

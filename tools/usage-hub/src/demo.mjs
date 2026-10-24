@@ -32,3 +32,25 @@ export function removeOnExit(root) {
   for (const sig of ['SIGINT', 'SIGTERM', 'SIGHUP']) process.once(sig, () => process.exit(0));
   return root;
 }
+
+// Due voci di «Ti aspetta» e qualche riga di diario, inventate, per la demo.
+export function seedDemoAttesa(root, now = Date.now()) {
+  const f = path.join(root, 'ti-aspetta.jsonl');
+  fs.writeFileSync(f, [
+    { kind: 'apri', id: 'es1', tipo: 'spesa', title: 'Rinnovare un piano a pagamento', why: 'Spesa di prova: 19 dollari al mese.', from: 'demo', at: now - 3 * 3600000 },
+    { kind: 'apri', id: 'es2', tipo: 'vista', title: 'Guarda una pagina nuova', why: 'Ok a vista di prova.', link: '#journal', from: 'demo', at: now - 40 * 60000 },
+  ].map((r) => JSON.stringify(r)).join('\n') + '\n');
+  return f;
+}
+
+export function seedDemoDiary(root, now = Date.now()) {
+  const dir = path.join(root, 'diario');
+  fs.mkdirSync(dir, { recursive: true });
+  const day = new Intl.DateTimeFormat('sv-SE', { timeZone: 'Europe/Rome', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(now));
+  fs.writeFileSync(path.join(dir, day + '.jsonl'), [
+    { ts: now - 50 * 60000, source: 'task-sync', text: 'nuova in Promemoria: preparare la demo per il cliente', outcome: 'ok' },
+    { ts: now - 30 * 60000, source: 'freno-mac', text: 'Mac sotto sforzo per 12 minuti: nessun agente fermato', outcome: 'ok' },
+    { ts: now - 10 * 60000, source: 'delega', text: 'lavoro di prova non riuscito: test rossi su billing-api', outcome: 'error' },
+  ].map((r) => JSON.stringify(r)).join('\n') + '\n');
+  return dir;
+}

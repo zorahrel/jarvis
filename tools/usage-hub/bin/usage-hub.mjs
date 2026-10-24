@@ -4,7 +4,7 @@ import { loadConfig } from '../src/config.mjs';
 import { buildReport } from '../src/projects.mjs';
 import { runAlerts } from '../src/alerts.mjs';
 import { createServer } from '../src/server.mjs';
-import { makeDemoRoot, removeOnExit } from '../src/demo.mjs';
+import { makeDemoRoot, removeOnExit, seedDemoAttesa, seedDemoDiary } from '../src/demo.mjs';
 import { defaultPolicies, evaluatePolicies, applyBlocks } from '../src/policy.mjs';
 import { loadBudgets, loadMuseBudget } from '../src/budgets.mjs';
 import { buildStatus, writeStatus } from '../src/status.mjs';
@@ -13,6 +13,7 @@ import { modelFor } from '../src/route.mjs';
 import { loadOverrides, activeOverrides, addOverride, revokeOverride } from '../src/overrides.mjs';
 import { readAll, buildState, openItems } from '../src/automations/feedback.mjs';
 import { createDemoAutomations } from '../src/automations/demo.mjs';
+import { demoOverview, demoMac, demoAgents, demoContext, demoServices } from '../src/demo-live.mjs';
 
 const trayOverview = async () => (await fetch(`${(config.tray && config.tray.url) || 'http://127.0.0.1:3360'}/api/overview`, { signal: AbortSignal.timeout(20000) })).json();
 const hhmm = (ms) => new Date(ms).toLocaleString('it-IT', { weekday: 'short', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
@@ -30,6 +31,13 @@ if (rest.includes('--demo')) {
   process.env.USAGE_HUB_QUEUE ||= `${config.root}/queue.json`;
   process.env.USAGE_HUB_QUEUE_LOG ||= `${config.root}/queue.log`;
   config.alerts = { rules: [{ scope: 'project', project: 'billing-api', threshold: 15 }, { scope: 'account', metric: '7d', threshold: 80 }] };
+  // Niente fonti vere nei consumi: proxy VDM, canali gratis, OpenClaw e gruppi di progetti sono di questo Mac
+  Object.assign(config, { vdm: false, free: false, openclaw: null, groups: [], pcName: 'PC di esempio' });
+  // «Ti aspetta», feedback e override veri non si leggono né si scrivono dalla demo
+  process.env.USAGE_HUB_ATTESA ||= seedDemoAttesa(config.root);
+  process.env.USAGE_HUB_FEEDBACK_DIR ||= `${config.root}/feedback`;
+  process.env.USAGE_HUB_OVERRIDES ||= `${config.root}/overrides.json`;
+  process.env.USAGE_HUB_BUDGETS ||= `${config.root}/budgets.json`;
 }
 
 if (cmd === 'serve') {
@@ -41,7 +49,10 @@ if (cmd === 'serve') {
   // la scheda Automazioni con le fonti vere su un'altra porta senza fare un secondo hub.
   const noLive = rest.includes('--no-live');
   if (noLive) config.compatPort = false;
-  const server = createServer(config, { root: config.root, ...(noLive ? { noLive: true } : {}), ...(demoAuto ? { automations: demoAuto, noQueue: true, demo: true } : {}) });
+  // --demo è tutta di prova: quote, Mac, agenti, contesto, servizi, «Ti aspetta» e diario finti, e nessun giro vivo (noLive).
+  const server = createServer(config, { root: config.root, ...(noLive ? { noLive: true } : {}),
+    ...(demoAuto ? { diaryDir: process.env.USAGE_HUB_DIARIO || seedDemoDiary(config.root), museRoot: `${config.root}/muse`, codexRoot: `${config.root}/codex` } : {}),
+    ...(demoAuto ? { automations: demoAuto, noQueue: true, noLive: true, demo: true, overview: async () => demoOverview(), demoMac: () => demoMac(), demoAgents: () => demoAgents(), demoContext: () => demoContext(), demoServices: () => demoServices() } : {}) });
   server.listen(config.port, '127.0.0.1', () => console.error(`usage-hub on http://127.0.0.1:${config.port}`));
   // :3337 era il vecchio usage-server, ora dentro il hub: resta in ascolto per gli script che lo leggono ancora
   // (todo-recap, desk_quota, muse-resume). Stesse risposte, stesso processo.

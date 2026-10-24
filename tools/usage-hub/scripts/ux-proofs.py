@@ -4,7 +4,7 @@
   python3 scripts/ux-proofs.py OUTDIR [--video]
 
 Pagine vere dal hub che gira (:3360, solo GET), alle tre larghezze e nei due temi; poi la Panoramica e il
-giro in video su un serve --demo a parte, dove l'hub stesso mette la fascia «ESEMPIO» su ogni vista.
+giro in video su un serve --demo --no-live a parte, con HOME finto: dati tutti inventati e fascia «ESEMPIO» su ogni vista.
 Esce 1 se una pagina resta sullo scheletro di caricamento (oltre 60 s nelle foto, oltre 4 s nel video).
 """
 import json, os, pathlib, shutil, socket, subprocess, sys, tempfile, time, urllib.request
@@ -28,14 +28,12 @@ def wait_loaded(pg, name, secs):
 
 def demo_server(d):
     s = socket.socket(); s.bind(('127.0.0.1', 0)); port = s.getsockname()[1]; s.close()
-    now = int(time.time() * 1000)
-    with open(d / 'attesa.jsonl', 'w') as f:
-        f.write(json.dumps({'kind': 'apri', 'id': 'es1', 'tipo': 'spesa', 'title': 'Rinnovare un piano a pagamento', 'why': 'Spesa di prova: 19 dollari al mese.', 'from': 'demo', 'at': now - 3 * 3600000}) + '\n')
-        f.write(json.dumps({'kind': 'apri', 'id': 'es2', 'tipo': 'vista', 'title': 'Guarda una pagina nuova', 'why': 'Ok a vista di prova.', 'link': '#journal', 'from': 'demo', 'at': now - 40 * 60000}) + '\n')
-    env = dict(os.environ, USAGE_HUB_DEMO_AUTOMATIONS='problemi', USAGE_HUB_FEEDBACK_DIR=str(d / 'fb'), USAGE_HUB_QUEUE=str(d / 'q.json'),
-               USAGE_HUB_QUEUE_LOG=str(d / 'q.log'), USAGE_HUB_ATTESA=str(d / 'attesa.jsonl'), USAGE_HUB_CONTEXT_CHECK=str(d / 'c.json'),
-               USAGE_HUB_DIARIO=str(d / 'diario'))
-    p = subprocess.Popen(['node', 'bin/usage-hub.mjs', 'serve', '--demo', '--port', str(port)], cwd=ROOT, env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    # HOME finto e --no-live: la prova non può scrivere ad Attilio, toccare il gateway o leggere dati di questo Mac.
+    # «Ti aspetta», diario, quote, Mac e contesto li inventa la demo stessa (src/demo-live.mjs).
+    home = d / 'home'; home.mkdir(exist_ok=True)
+    env = {k: v for k, v in os.environ.items() if not k.startswith('USAGE_HUB_')}
+    env.update(HOME=str(home), USAGE_HUB_DEMO_AUTOMATIONS='problemi', USAGE_HUB_CONTEXT_CHECK=str(d / 'c.json'))
+    p = subprocess.Popen(['node', 'bin/usage-hub.mjs', 'serve', '--demo', '--no-live', '--port', str(port)], cwd=ROOT, env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     url = f'http://127.0.0.1:{port}'
     for _ in range(150):
         try: urllib.request.urlopen(url + '/api/automations', timeout=2); break

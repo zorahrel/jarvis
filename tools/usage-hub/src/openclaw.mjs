@@ -64,6 +64,9 @@ export function sniffFirstMessage(text) {
 }
 
 const tail = (s) => String(s).replace(/[^0-9a-z]/gi, '').slice(-4);
+// Un nome che è in realtà un id (JID WhatsApp, uuid, numero) non deve arrivare a una vista: diventa «gruppo-xxxx».
+const looksId = (s) => /@g\.us|@s\.whatsapp|@lid\b|^whatsapp:g-|^\+?\d{6,}$|[0-9a-f]{8}-[0-9a-f]{4}-/i.test(String(s || ''));
+const human = (v, ref, prefix) => (v && !looksId(v) ? v : `${prefix}-${tail(ref || v || '')}`);
 
 // Nome del bucket. Le etichette leggibili stanno nel config locale (labels: ref -> nome).
 export function bucketName(desc, ctx = {}) {
@@ -74,13 +77,17 @@ export function bucketName(desc, ctx = {}) {
   switch (desc.kind) {
     case 'heartbeat': return 'openclaw/heartbeat';
     case 'wa-direct': return `openclaw/${pick('wa-direct', 'whatsapp-diretta')}`;
-    case 'wa-group': return `openclaw/wa:${pick(desc.ref, desc.subject || `gruppo-${tail(desc.ref)}`)}`;
-    case 'discord': return `openclaw/discord:${pick(desc.ref, desc.subject || (desc.ref ? `canale-${tail(desc.ref)}` : 'senza-canale'))}`;
+    case 'wa-group': return `openclaw/wa:${human(pick(desc.ref, desc.subject), desc.ref, 'gruppo')}`;
+    case 'discord': return `openclaw/discord:${desc.ref || desc.subject ? human(pick(desc.ref, desc.subject), desc.ref, 'canale') : 'senza-canale'}`;
     case 'cron': {
       const name = (ctx.cronNames || {})[desc.ref];
-      return /^heartbeat/.test(name || '') ? 'openclaw/heartbeat' : `openclaw/cron:${pick(desc.ref, name || desc.ref.slice(0, 8))}`;
+      // senza nome (la CLI non ha risposto e non c'è copia) niente pezzo di uuid: «automazione senza nome»
+      return /^heartbeat/.test(name || '') ? 'openclaw/heartbeat' : `openclaw/cron:${pick(desc.ref, name || 'automazione senza nome')}`;
     }
-    case 'sub': return `openclaw/sub:${String(desc.ref || 'senza-etichetta').slice(0, 40)}`;
+    case 'sub': { // etichette con marcatori interni (<<<END_OPENCLAW_INTERNAL_CONTEXT>>>) o id: senza etichetta
+      const l = String(desc.ref || '').replace(/<<<[^>]*>>>/g, '').trim();
+      return `openclaw/sub:${(l && !looksId(l) ? l : 'senza-etichetta').slice(0, 40)}`;
+    }
     case 'handoff': return 'openclaw/passaggi-da-altri-agenti';
     case 'test': return 'openclaw/test-e-prove';
     case 'resume': return 'openclaw/riprese-sessione';
@@ -134,12 +141,19 @@ export async function readSessionRows(db) {
 // `openclaw cron list` costa ~1,3 s di CLI: si chiede in modo asincrono e si tiene 10 minuti
 // (i cron cambiano di rado; un nome nuovo nel frattempo finisce al più in "altro" per un giro).
 let cronCache = null;
-export function readCronNames({ maxAgeMs = 10 * 60000 } = {}) {
+// Copia su disco dell'ultima lettura buona: col Mac carico la CLI va in timeout e i cron restavano pezzi di uuid.
+export const cronNamesFile = () => process.env.USAGE_HUB_CRON_NAMES || path.join(os.homedir(), '.cache', 'claude-usage-hub', 'cron-names.json');
+export function readCronNames({ maxAgeMs = 10 * 60000, file = cronNamesFile(), run = execFile } = {}) {
   if (cronCache && Date.now() - cronCache.at < maxAgeMs) return cronCache.names;
+  const saved = () => { try { return JSON.parse(fs.readFileSync(file, 'utf8')); } catch { return {}; } };
   const names = new Promise((resolve) => {
-    execFile('openclaw', ['cron', 'list', '--all', '--json'], { encoding: 'utf8', timeout: 15000 }, (err, out) => {
-      if (err) { cronCache = null; return resolve({}); } // OpenClaw giù: si riprova al giro dopo
-      try { resolve(Object.fromEntries((JSON.parse(out).jobs || []).map((j) => [j.id, j.name]))); } catch { resolve({}); }
+    run('openclaw', ['cron', 'list', '--all', '--json'], { encoding: 'utf8', timeout: 15000 }, (err, out) => {
+      if (err) { cronCache = null; return resolve(saved()); } // OpenClaw giù: l'ultima copia, si riprova al giro dopo
+      try {
+        const got = Object.fromEntries((JSON.parse(out).jobs || []).map((j) => [j.id, j.name]));
+        try { fs.mkdirSync(path.dirname(file), { recursive: true }); fs.writeFileSync(file, JSON.stringify(got)); } catch { /* copia non scritta: pazienza */ }
+        resolve(got);
+      } catch { resolve(saved()); }
     });
   });
   cronCache = { at: Date.now(), names };

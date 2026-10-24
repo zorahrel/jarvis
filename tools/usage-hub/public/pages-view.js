@@ -56,6 +56,27 @@
     s = s.replace(/\b(sourceSession|sessionKey)=\S+/g, '').replace(/\bagent:[\w:-]+/g, '').replace(/\s+/g, ' ').trim();
     return s.length > 90 ? s.slice(0, 89).replace(/\s\S*$/, '') + '…' : s;
   }
+  // Nome di un progetto o di una sessione per chi legge: le chiavi di OpenClaw (openclaw/cron:…, openclaw/wa:…),
+  // le cartelle delle sessioni desktop (local_<uuid>) e ogni uuid diventano parole. Gli id non arrivano mai in pagina.
+  var OC = { heartbeat: 'OpenClaw · battito', altro: 'OpenClaw · altro', 'whatsapp-diretta': 'WhatsApp diretto', 'eventi-di-sistema': 'OpenClaw · eventi di sistema',
+    interattivo: 'OpenClaw · sessioni interattive', 'test-e-prove': 'OpenClaw · test e prove', 'riprese-sessione': 'OpenClaw · riprese di sessione', 'passaggi-da-altri-agenti': 'OpenClaw · passaggi da altri agenti' };
+  var ID = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|@g\.us|@s\.whatsapp|<<<[^>]*>>>/i;
+  function humanProject(n) {
+    var s = String(n || '');
+    if (/^local_[0-9a-f-]{8,}/i.test(s)) return 'Sessione di Claude desktop';
+    var m = /^openclaw\/([a-z-]+)(?::(.*))?$/.exec(s);
+    if (m) {
+      var k = m[1], v = (m[2] || '').trim(), bad = !v || ID.test(v) || /^[0-9a-f]{8}$/i.test(v);
+      if (OC[k] && !m[2]) return OC[k];
+      if (k === 'cron') return bad || v === 'automazione senza nome' ? 'Automazione OpenClaw senza nome' : 'Automazione: ' + v.replace(/[-_]+/g, ' ');
+      if (k === 'sub') return bad || v === 'senza-etichetta' ? 'Sottoagente OpenClaw senza etichetta' : 'Sottoagente: ' + v;
+      if (k === 'wa') return bad || /^whatsapp:g-/.test(v) ? 'Gruppo WhatsApp' + (/^whatsapp:g-/.test(v) && !ID.test(v) ? ': ' + v.slice(11).replace(/-/g, ' ') : '') : 'WhatsApp: ' + v;
+      if (k === 'discord') return 'Discord ' + (bad ? 'senza canale' : v);
+      if (k === 'lavoro') return 'Lavoro OpenClaw: ' + v;
+      return 'OpenClaw · ' + k.replace(/-/g, ' ') + (v && !bad ? ': ' + v : '');
+    }
+    return s.replace(ID, '').trim() || 'senza nome';
+  }
   // Consumo di una sessione: token letti dai suoi log e, dove l'hub la sa, la quota della settimana che pesa.
   function tokWords(n) {
     if (!(n > 0)) return '';
@@ -210,7 +231,7 @@
       top + checks + docBox + con + '<div class="stack">' + lists + skills + '</div>' + dup + old;
   }
 
-  var api = { humanTitle: humanTitle, useWords: useWords, tokWords: tokWords, attesaHtml: attesaHtml, journalHtml: journalHtml, contextHtml: contextHtml, jarvisHref: jarvisHref, jarvisBtn: jarvisBtn, stIcon: stIcon, dayLabel: dayLabel };
+  var api = { humanTitle: humanTitle, humanProject: humanProject, useWords: useWords, tokWords: tokWords, attesaHtml: attesaHtml, journalHtml: journalHtml, contextHtml: contextHtml, jarvisHref: jarvisHref, jarvisBtn: jarvisBtn, stIcon: stIcon, dayLabel: dayLabel };
   root.PagesView = api;
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
 })(globalThis);
