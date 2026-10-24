@@ -1181,36 +1181,21 @@ func macRow() -> NSMenuItem? {
 
 // Una macchina come card: stato a parole nel badge, una misura per riquadro col grafico 24 h quando c'è, sotto cosa pesa.
 // Senza misure (spenta, addormentata) una riga sola. La macchina su cui gira la tray ha i processi nel sottomenu.
-// I lavori nostri sulla macchina (offload) uno per riga, in testa; il resto in una riga come prima
-func machineText(_ lines: [String], jobs: Int) -> String {
-    guard jobs > 0 else { return lines.joined(separator: " · ") }
-    let rest = Array(lines.dropFirst(jobs))
-    return (Array(lines.prefix(jobs)) + (rest.isEmpty ? [] : [rest.joined(separator: " · ")])).joined(separator: "\n")
-}
 func machineItem(_ m: Machine) -> NSMenuItem {
     let tone: (Int) -> NSColor = { $0 == 0 ? toneOK : $0 == 1 ? toneWarn : toneBad }
     if !m.local { return remoteMachineItem(m, tone: tone) }
-    // nella card una riga: il primo motivo («Troppi processi in fila: 2,7 per core»); chi pesa e la RAM per esteso nel sottomenu
-    var lines = m.lines.first.map { [String($0.components(separatedBy: " · ")[0])] } ?? []
-    if let g = liveTrust?.items.filter({ $0.level == "grave" }), !g.isEmpty { lines.append("\(g.count) process\(g.count == 1 ? "o sospetto" : "i sospetti")") }
-    lines = lines.isEmpty ? [] : [fitLine(lines.joined(separator: " · "), AccountBlockView.brakeFont)]
-    macProcs.detail = m.lines + (m.foot.map { [$0] } ?? [])
-    let bars = m.metrics.map { x in
-        BarSpec(label: x.name, frac: Double(x.pct) / 100, mark: x.limit.map { $0 / 100 }, color: tone(x.level), value: "\(x.pct)%",
-                spark: (x.history?.count ?? 0) > 1 ? x.history : nil, note: x.note)
-    }
-    let quiet = m.metrics.isEmpty
-    // senza misure la riga sotto dice cosa aspettarsi (la didascalia), lo stato è già nel badge
-    let v = AccountBlockView(icon: sym(m.local ? "laptopcomputer" : "desktopcomputer", pt: 14, color: .labelColor), name: m.name, caption: quiet ? nil : m.caption,
-                             badge: m.state, badgeColor: quiet && m.level == 0 ? .secondaryLabelColor : tone(m.level),
-                             brake: lines.isEmpty ? nil : machineText(lines, jobs: m.offload ?? 0), bars: bars,
-                             single: quiet ? txt(m.caption ?? "nessuna misura adesso", rowSmall, .secondaryLabelColor) : nil)
-    if !quiet { v.vertical = true }
-    let it = NSMenuItem()
-    let tip = "Conta la misura più vicina alla sua soglia (la tacca). Sotto sforzo, gli agenti in background di priorità bassa vanno in pausa e ripartono da soli; le sessioni aperte non si fermano mai."
-    v.toolTip = tip; it.view = v; it.toolTip = tip
-    v.autoresizingMask = [.width]   // larga quanto il menu, allineata alla griglia degli account
-    it.submenu = macProcs.newMenu()   // al passaggio: chi pesa adesso, per CPU e per memoria
+    // Il Mac in una riga come il PC (24/10, «occupa inutilmente tre righe»): stato nel badge, CPU e RAM accanto al nome;
+    // le misure che superano la soglia si aggiungono. Motivo, chi pesa, RAM per esteso e i grafici nel sottomenu.
+    let shown = m.metrics.filter { $0.key == "cpu" || $0.key == "mem" || $0.level > 0 }
+    var cap = shown.map { "\($0.name) \($0.pct)%" }.joined(separator: " · ")
+    if let g = liveTrust?.items.filter({ $0.level == "grave" }), !g.isEmpty { cap += " · \(g.count) sospett\(g.count == 1 ? "o" : "i")" }
+    let v = AccountBlockView(icon: sym("laptopcomputer", pt: 14, color: .labelColor), name: m.name, caption: fitLine(cap, rowSmall, width: 300),
+                             badge: m.state, badgeColor: m.metrics.isEmpty && m.level == 0 ? .secondaryLabelColor : tone(m.level), brake: nil, bars: [], single: nil)
+    v.autoresizingMask = [.width]
+    v.toolTip = "Conta la misura più vicina alla sua soglia. Sotto sforzo, gli agenti in background di priorità bassa vanno in pausa e ripartono da soli; le sessioni aperte non si fermano mai."
+    macProcs.detail = m.lines + m.metrics.map { "\($0.name) \($0.pct)%" + ($0.note.isEmpty ? "" : " · \($0.note)") } + (m.foot.map { [$0] } ?? [])
+    let it = NSMenuItem(); it.view = v; it.toolTip = v.toolTip
+    it.submenu = macProcs.newMenu()   // al passaggio: il dettaglio, chi pesa adesso, per CPU e per memoria
     return it
 }
 
@@ -2292,9 +2277,8 @@ func agentWorkRow(_ pr: LiveProject, _ g: AgentInfo, n: Int, group: String, acti
     let head = work ?? (g.kind == "sessione" ? "Sessione ancora senza titolo" : cap1(g.kind))
     let line = NSMutableAttributedString(attributedString: txt(fitLine(head, rowFont, width: 250), rowFont))
     // provider frenato: la sessione aperta continua, ma lo si dice sulla riga invece che in un banner
-    let braked = liveGates?.providers?[g.provider]?.state == "frenato"
-    line.append(txt("\t" + (braked ? "frenato" : ""), rowNum, toneWarn))
-    if let u = g.use, u.hourTokens > 0 { line.append(txt((braked ? " · " : "") + "\(tokText(u.hourTokens))/h", rowNum, .labelColor)) }
+    line.append(txt("\t", rowNum))
+    if let u = g.use, u.hourTokens > 0 { line.append(txt("\(tokText(u.hourTokens))/h", rowNum, .labelColor)) }
     line.append(txt("\t\(g.model)\(n > 1 ? " ×\(n)" : "") · \(durText(nowMs() - g.startedAt))", rowNum, .secondaryLabelColor))
     let kind = g.kind == "sessione" || name.lowercased().contains(g.kind) ? nil : g.kind
     let useText = g.use.map { u in "\(tokText(u.tokens)) token nel giro" + (u.pct.map { $0 >= 0.05 ? " · " + String(format: "%.1f", $0).replacingOccurrences(of: ".", with: ",") + "% della settimana" : "" } ?? "") }
@@ -2331,7 +2315,9 @@ func liveAgentRows(actionTarget: AnyObject?) -> [NSMenuItem] {
         let n = rows.reduce(0) { $0 + $1.n }
         let hour = rows.reduce(0.0) { $0 + ($1.g.use?.hourTokens ?? 0) * Double($1.n) }
         let line = NSMutableAttributedString(attributedString: txt(fitLine(name, rowBold, width: 250), rowBold))
-        line.append(txt("\t" + (hour > 0 ? "\(tokText(hour))/h" : ""), rowNum, .labelColor))
+        // il freno ferma i lavori rimandabili del progetto, non le sessioni aperte: si dice sulla sua riga
+        if pr.state == "frenato" { line.append(txt("\tin pausa" + (hour > 0 ? " · " : ""), rowNum, toneWarn)) } else { line.append(txt("\t", rowNum)) }
+        if hour > 0 { line.append(txt("\(tokText(hour))/h", rowNum, .labelColor)) }
         line.append(txt("\t\(n) al lavoro", rowNum, .secondaryLabelColor))
         let works = rows.map { r in (workIn(name, r.g.work) ?? (r.g.kind == "sessione" ? "ancora senza titolo" : r.g.kind)) + (r.n > 1 ? " ×\(r.n)" : "") }
         // «Regia sessioni» con un solo lavoro che si chiama uguale: il dettaglio non ripete il nome
@@ -2359,7 +2345,7 @@ func brakeMenuItem(actionTarget: AnyObject?) -> NSMenuItem {
     let hold = ov.first { $0.hold == true }
     let detail = braked.isEmpty ? (hold != nil ? "lavori nuovi fermi fino alle " + hhmmText(Int(hold!.until / 1000)) : "nessun freno")
         : braked.map { id in pName(id) + " fermo" + (liveGates?.providers?[id]?.waitUntil.map { " fino alle " + hhmmText(Int($0 / 1000)) } ?? "") }.joined(separator: " · ")
-    let it = richRow(icon: sym("hand.raised", color: braked.isEmpty ? nil : toneWarn), txt("Freno", rowFont), detail: fitLine(detail), wrap: 200)
+    let it = richRow(icon: sym("hand.raised", color: braked.isEmpty ? nil : toneWarn), txt("Ritmo e freno", rowFont), detail: fitLine(detail), wrap: 200)
     let sub = NSMenu(); sub.autoenablesItems = false
     func act(_ title: String, _ path: String, _ method: String, _ body: [String: Any]) {
         let m = NSMenuItem(title: title, action: #selector(AppDelegate.brakeAction(_:)), keyEquivalent: "")
@@ -2474,6 +2460,9 @@ func buildMenu(snapshot: Overview?, isOffline: Bool, actionTarget: AnyObject?) -
         // gli account affiancati in una griglia, una voce sola; le righe di chi non risponde subito sotto
         if !cards.isEmpty { let g = NSMenuItem(); g.view = GridView(cards); menu.addItem(g) }
         afterGrid.forEach { menu.addItem($0) }
+        // il freno sta col ritmo (24/10): sulla card c'è già «Fermo fino alle…», qui cosa è in pausa e i comandi
+        details.insertItem(brakeMenuItem(actionTarget: actionTarget), at: 0)
+        details.insertItem(.separator(), at: 1)
         details.addItem(.separator())
         for (title, sel, on) in [
             ("Mostra fascia di 5 ore", #selector(AppDelegate.toggleDaily), TrayPrefs.showDaily),
@@ -2501,7 +2490,6 @@ func buildMenu(snapshot: Overview?, isOffline: Bool, actionTarget: AnyObject?) -
         menu.addItem(.separator())
         let det = richRow(icon: sym("slider.horizontal.3"), txt("Altri abbonamenti e opzioni", rowFont)); det.submenu = details
         menu.addItem(det)
-        menu.addItem(brakeMenuItem(actionTarget: actionTarget))
     }
     // con l'hub giù il blocco Mac non c'è: la finestra Processi legge tutto in locale e resta raggiungibile
     if isOffline || macRow() == nil {
