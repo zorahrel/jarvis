@@ -258,7 +258,7 @@ def main():
                   const n = lv.projects.reduce((t, p) => t + ((p.agents && p.agents.list) || []).length, 0);
                   const h = [...document.querySelectorAll('#t-sessions h2')].map(x => x.textContent).find(x => /^Attive/.test(x)) || '';
                   const t = document.getElementById('t-sessions').innerText;
-                  return { n, h, badge: document.getElementById('nsess').textContent, title: t.includes('Prova del 22/10'), raw: /scratch-\\d{4}/.test(t) }; }""")
+                  return { n, h, badge: document.getElementById('nsess').textContent, title: t.includes('Prova veloce di un comando'), raw: /scratch-\\d{4}/.test(t) }; }""")
                 check(sv['n'] >= 3 and sv['h'] == f"Attive ({sv['n']})" and sv['badge'] == str(sv['n']), f"{w}px Sessioni: Attive e badge contano le {sv['n']} sessioni di /api/live ({sv['h']!r}, badge {sv['badge']!r})")
                 # Attività: nessuna chiave grezza del proxy (priority-set, account-cap, upstream-retry…)
                 goto_tab(pg, 'activity'); pg.wait_for_selector('#t-activity table', timeout=20000)
@@ -271,7 +271,7 @@ def main():
                 check(not raw, f'{w}px Attività: eventi in italiano, nessuna chiave grezza {raw[:4]}')
                 gen = pg.evaluate("(document.getElementById('t-activity').innerText.match(/Evento del proxy[^\\n]*/g) || []).slice(0, 3)")
                 check(not gen, f'{w}px Attività: ogni evento della demo ha la sua frase, nessuno ricade su «Evento del proxy» {gen}')
-                check(sv['title'] and not sv['raw'], f"{w}px Sessioni: il luogo è il titolo («Prova del 22/10»), non la cartella scratch-… (titolo {sv['title']}, grezzo {sv['raw']})")
+                check(sv['title'] and not sv['raw'], f"{w}px Sessioni: il luogo è il lavoro della cartella temporanea («Prova veloce di un comando»), non la cartella scratch-… (titolo {sv['title']}, grezzo {sv['raw']})")
                 goto_tab(pg, 'usage'); pg.wait_for_selector('#usage-main table', timeout=20000)
                 nu = pg.evaluate("document.querySelectorAll('#usage-main table tbody tr').length")
                 check(nu >= 4, f'{w}px Consumi disegnata con dati ({nu} righe)')
