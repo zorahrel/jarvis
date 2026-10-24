@@ -32,28 +32,46 @@ export function makeDemoRoot(now = Date.now()) {
 const alive = (pid) => { try { process.kill(pid, 0); return true; } catch (e) { return e.code === 'EPERM'; } };
 // Le cartelle di prova che contengono demo (demo-tmp-*, ui-bar-*, ux-proofs-*, prova-automazioni-*): un giro
 // interrotto le lasciava in $TMPDIR per sempre (16 + 56 + 10 il 24/10). Si tolgono vecchie di 1 ora e senza
-// nessun .pid vivo dentro, fino a due livelli.
+// nessun .pid vivo dentro. Le demo morte si cercano a qualunque profondità (giro 9: 11 annidate in hub-test-* e
+// nei tmp* di Python restavano perché lo sweep guardava solo il primo livello), e la cartella che le conteneva
+// sparisce solo se resta vuota: una cartella non nostra non si tocca.
 const PROOF_DIR = /^(?:demo-tmp-|ui-bar-|ux-proofs-|prova-automazioni-)/;
+const DEMO_DIR = /^usage-hub-demo-/;
 const HOUR = 3600000;
-function livePidInside(p, depth = 2) {
+const MAX_DEPTH = 6;
+const subdirs = (p) => { try { return fs.readdirSync(p, { withFileTypes: true }).filter((d) => d.isDirectory() && !d.isSymbolicLink()).map((d) => path.join(p, d.name)); } catch { return []; } };
+function livePidInside(p, depth = MAX_DEPTH) {
   try {
     const pid = Number(fs.readFileSync(path.join(p, '.pid'), 'utf8').trim() || 0) || 0;
     if (pid && alive(pid)) return true;
   } catch { /* nessun .pid qui */ }
-  if (!depth) return false;
-  try { return fs.readdirSync(p, { withFileTypes: true }).some((d) => d.isDirectory() && livePidInside(path.join(p, d.name), depth - 1)); } catch { return false; }
+  return depth > 0 && subdirs(p).some((d) => livePidInside(d, depth - 1));
+}
+// l'età è quella del file più recente dentro: una cartella vecchia con dentro una demo appena scritta non è vecchia
+function newestMtime(p, depth = MAX_DEPTH) {
+  let m = 0;
+  try { m = fs.statSync(p).mtimeMs; } catch { return Infinity; }
+  if (depth > 0) for (const d of subdirs(p)) m = Math.max(m, newestMtime(d, depth - 1));
+  return m;
 }
 export function sweepStaleDemoRoots(dir = os.tmpdir(), now = Date.now()) {
   let n = 0;
-  const old = (p) => { try { return now - fs.statSync(p).mtimeMs > HOUR; } catch { return false; } };
-  for (const name of fs.readdirSync(dir)) {
-    const p = path.join(dir, name);
-    if (name.startsWith('usage-hub-demo-')) {
-      if (!livePidInside(p, 0) && old(p)) { fs.rmSync(p, { recursive: true, force: true }); n++; }
-    } else if (PROOF_DIR.test(name) && old(p) && !livePidInside(p)) {
-      fs.rmSync(p, { recursive: true, force: true }); n++;
+  const old = (p) => now - newestMtime(p) > HOUR;
+  const drop = (p) => { fs.rmSync(p, { recursive: true, force: true }); n++; };
+  // torna true se ha tolto qualcosa sotto d: solo allora una cartella rimasta vuota si toglie
+  const walk = (d, depth) => {
+    let dropped = false;
+    for (const p of subdirs(d)) {
+      const name = path.basename(p);
+      if (DEMO_DIR.test(name)) { if (old(p) && !livePidInside(p)) { drop(p); dropped = true; } continue; }
+      if (depth === 0 && PROOF_DIR.test(name) && old(p) && !livePidInside(p)) { drop(p); dropped = true; continue; }
+      if (depth >= MAX_DEPTH || !walk(p, depth + 1)) continue;
+      dropped = true;
+      try { if (!fs.readdirSync(p).length) fs.rmdirSync(p); } catch { /* non vuota: dentro c'è altro, resta */ }
     }
-  }
+    return dropped;
+  };
+  walk(dir, 0);
   return n;
 }
 

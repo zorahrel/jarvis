@@ -189,12 +189,16 @@ export function readLaunchd({ dir = path.join(os.homedir(), 'Library/LaunchAgent
       if (p.StartInterval) when = whenOf({ kind: 'every', everyMs: p.StartInterval * 1000 });
       else if (cal.length && !p.WatchPaths) when = calendarWhen(cal);
       else if (p.WatchPaths) when = 'quando cambia una cartella' + (cal.length ? `, ${calendarWhen(cal)}` : '');
-      let lastAt = null;
+      let lastAt = null, atUnknownLog = false;
       for (const log of [p.StandardOutPath, p.StandardErrorPath]) {
         if (!log) continue;
         try {
           if (!fs.existsSync(log)) continue;
-          const m = fs.statSync(log).mtimeMs;
+          const st = fs.statSync(log);
+          // /dev/null (e ogni file non regolare) ha l'ora di adesso: non dice quando il job ha girato (giro 9: cinque
+          // job «riusciti» all'ora di ogni lettura). L'ora non si sa, resta l'esito di launchctl.
+          if (!st.isFile()) { atUnknownLog = true; continue; }
+          const m = st.mtimeMs;
           if (lastAt == null || m > lastAt) lastAt = m;
         } catch { /* log illeggibile: vale l'altro */ }
       }
@@ -202,7 +206,7 @@ export function readLaunchd({ dir = path.join(os.homedir(), 'Library/LaunchAgent
       // jcode-auth-sync) non dice che il job è fermo, dice che sta zitto. Allora l'ora non si sa, resta l'exit di
       // launchctl, e il giro saltato lo dice il contatore di launchd (watchRuns). Stessa soglia dei livelli: niente
       // finestra in cui il log fermo accende «non gira» e poi lo spegne.
-      let atUnknown = false;
+      let atUnknown = atUnknownLog && lastAt == null;
       if (lastAt != null && everyMs && now - lastAt > everyMs + lateTolerance(everyMs, 'launchd')) { lastAt = null; atUnknown = true; }
       let outcome = null;
       if (entry) {

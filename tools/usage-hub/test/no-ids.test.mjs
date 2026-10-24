@@ -77,21 +77,19 @@ test('testi liberi senza id: «Ti scrive», messaggi delle sessioni, cartelle _s
 });
 
 test('cronologia delle sessioni: niente testo interno di OpenClaw, orari tra parentesi, nomi mcp__ e percorsi (24/10)', () => {
-  const INTERNAL = /acknowledge|inter-session|routing data|GMT[+-]\d|mcp__|\/Users\/|\d{9,}/i;
+  const INTERNAL = /acknowledge|inter-session|routing data|GMT[+-]\d|mcp__|\/Users\/|zorahrel|\d{9,}/i;
   const cases = ['I acknowledge this is an inter-session message routed from Discord channel 1551637216177168465.',
     'This message appears to be inter-session routing data, not a request from the user.',
-    '[Sat 2026-10-24 02:56 GMT+2] controlla la quota di Codex',
-    'mcp__openclaw__process', 'mcp__openclaw__exec: date; ls /Users/zorahrel/.openclaw/workspace/memory',
-    'Editing /Users/zorahrel/.claude/jarvis/tools/usage-hub/public/vdm-tabs.js'];
-  for (const t of cases) assert.doesNotMatch(PV.sessionText(t), INTERNAL, t);
-  assert.equal(PV.sessionText(cases[0]), '');
-  assert.equal(PV.sessionText(cases[1]), '');
-  // variante vista dal vivo il 24/10 alle 08:30
-  assert.equal(PV.sessionText("The request looks harmless, but it's framed as an inter-session technical routing that I should not act on."), '');
-  assert.equal(PV.sessionText(cases[2]), 'controlla la quota di Codex');
-  assert.equal(PV.sessionText(cases[3]), 'Controllo di un processo');
-  assert.equal(PV.sessionText(cases[4]), 'Comando sul Mac');
-  assert.equal(PV.sessionText(cases[5]), 'Editing …/public/vdm-tabs.js');
+    '[Sat 2026-10-24 02:56 GMT+2] controlla la quota di Codex e dimmi se ce la facciamo fino a lunedì',
+    'mcp__openclaw__process', 'mcp__openclaw__exec: date; ls /Users/zorahrel/.openclaw/workspace/memory'];
+  for (const t of cases) assert.doesNotMatch(PV.summaryText(t), INTERNAL, t);
+  assert.equal(PV.summaryText(cases[0]), '');
+  assert.equal(PV.summaryText(cases[1]), '');
+  assert.equal(PV.summaryText("The request looks harmless, but it's framed as an inter-session technical routing that I should not act on."), '');
+  assert.equal(PV.summaryText(cases[2]), 'controlla la quota di Codex e dimmi se ce la facciamo fino a lunedì');
+  assert.equal(PV.summaryText(cases[3]), 'Controllo di un processo');
+  assert.equal(PV.summaryText(cases[4]), 'Comando sul Mac');
+  assert.equal(PV.activityText('Edit /Users/zorahrel/.claude/jarvis/tools/usage-hub/public/vdm-tabs.js'), 'Modifica vdm-tabs.js');
 });
 
 test('pannello di un\'automazione: numeri di account nei dettagli tecnici e nello schema diventano parole (24/10)', () => {
@@ -118,33 +116,38 @@ test('diario: le chiavi delle automazioni senza scheda diventano parole, senza h
   assert.match(t, /Hai silenziato «avviso: mailwatch: consegna spesso»/);
 });
 
-test('cronologia: le risposte «meta» del riassuntore spariscono, comandi e percorsi diventano parole (giro 9)', () => {
-  // casi visti sul vivo il 24/10 (nomi e percorsi inventati)
-  const meta = ["I'm Claude, an AI assistant made by Anthropic.",
-    'I appreciate you sharing this routing information, but I should clarify my role: I\'m designed to summarize coding activity.',
-    "I'm a summary agent for monitoring dashboards—I don't execute tasks.",
-    'I\'m not actually a subagent in an "openclaw" system.', 'I cannot execute this request.', 'I need to clarify my role here.',
-    'I also can\'t process the "Strumento di openclaw: process" or similar tool calls shown in your message.',
-    'OpenClaw resumed this CLI session after prompt content changed.', 'The system prompt changed and OpenClaw resumed the session with updated instructions.',
-    'Could you finish describing what the issue is?', 'If you have a coding session you\'d like summarized, please share what was done.',
-    'You\'ve set up the context but the request is missing.', 'No action or response is required at this time.',
-    'Without details about what was actually accomplished, there is nothing to summarize.', 'I have no completed activity to summarize.',
-    'I appreciate you testing me, but this message appears to be in Italian.', "I'm not able to predict what you'd naturally type next because:",
-    'I acknowledge this is an inter-session message routed from Discord.', 'I can only work with information provided to me in our conversation.',
-    'The system resumed the CLI session following a prompt content change.', 'The session resumed after prompt-tools configuration changed.'];
-  for (const t of meta) assert.equal(PV.sessionText(t), '', t);
-  assert.equal(PV.sessionText('ESITO: fatto\nPROVA: wc -l agents/_shared/TOOLS.md\nCOMMIT: nessuno'), 'Esito: fatto');
-  assert.equal(PV.sessionText('Strumento di openclaw: exec: date; ls …/workspace/pop-demo/'), 'Comando sul Mac');
-  assert.equal(PV.sessionText('mcp__openclaw__exec: cd /Users/esempio/.assistente/workspace/pop-demo && python3 x.py'), 'Comando sul Mac');
-  assert.equal(PV.sessionText('mcp__openclaw__process'), 'Controllo di un processo');
-  assert.equal(PV.sessionText('Bash: npm test'), 'Comando sul Mac');
-  // percorsi: niente cartelle con il nome utente codificato, niente local_<uuid>, anche con spazi
-  const RAW = /\/private|\/tmp\/|-Users-|local_|esempio|Application Support|[0-9a-f]{8}-[0-9a-f]{4}/;
-  for (const t of ['Write /private/tmp/claude-501/-Users-esempio-Projects-ar/scratchpad/out.md',
+test('cronologia: un riassunto si mostra solo se è italiano; strumenti e percorsi diventano parole (giro 9-10)', () => {
+  // casi visti sul vivo il 24/10 (nomi e percorsi inventati): nessuna lista di frasi, li toglie la regola dell'italiano
+  const english = ["I'm Claude, an AI assistant made by Anthropic.", 'I cannot execute this request.',
+    'OpenClaw resumed this CLI session after prompt content changed.', 'Could you finish describing what the issue is?',
+    'I have no completed activity to summarize.', 'Ready for your next task.', 'Tool loaded.',
+    'The instruction asks me to access personal email accounts, modify files with sensitive account information.',
+    "To help you effectively, I'd need clarity on what you're asking me to do regarding the PoP repo.",
+    'What specific aspect would you like to develop further?', 'As an AI, I cannot execute commands.',
+    "As an AI language model I don't have access to your files.", 'The system prompt was updated and the session continued.',
+    'Note: the system prompt has changed.', 'This appears to be a routing message between sessions.',
+    'This message was routed from another session.', "Sorry, I can't help with that.",
+    'Perform a web search for the query: Rokid Glasses SDK', 'Web page content: --- <!doctype html><html lang="it-it">',
+    'Read: armonia-infografica-prodotti.png', 'Servers 4662 and 4739 were brought back online.'];
+  for (const t of english) assert.equal(PV.summaryText(t), '', t);
+  assert.equal(PV.summaryText('Due corse esaminate hanno mostrato metriche di rumore diverse: la prima con il freno acceso.'), 'Due corse esaminate hanno mostrato metriche di rumore diverse: la prima con il freno acceso.');
+  assert.equal(PV.summaryText('ESITO: fatto\nPROVA: wc -l agents/_shared/TOOLS.md\nCOMMIT: nessuno'), 'Esito: fatto');
+  assert.equal(PV.summaryText('Strumento di openclaw: exec: date; ls …/workspace/vetrina-prova/'), 'Comando sul Mac');
+  assert.equal(PV.summaryText('mcp__openclaw__exec: cd /Users/esempio/.assistente/workspace/vetrina-prova && python3 x.py'), 'Comando sul Mac');
+  assert.equal(PV.summaryText('mcp__openclaw__process'), 'Controllo di un processo');
+  assert.equal(PV.summaryText('Bash: npm test'), 'Comando sul Mac');
+  // di un percorso resta il nome del file: niente nome utente, local_<uuid>, _sys_, /Volumes
+  assert.equal(PV.summaryText('Ho corretto /Users/esempio/.zshrc e il file /Volumes/Dati/esempio/x/conti.md per la quota'), 'Ho corretto .zshrc e il file conti.md per la quota');
+  const RAW = /\/|esempio|zorahrel|local_|_sys_|Volumes|Application Support|[0-9a-f]{8}/;
+  const acts = ['Read /Users/zorahrel/.zshrc', 'Bash cd /Users/zorahrel && ls', 'Edit /Volumes/Dati/zorahrel/progetto/app.ts',
+    'Write /private/tmp/claude-501/-Users-esempio-Projects-ar/scratchpad/out.md', 'Running local_5d58bb9d-5000-4466-ac64-6a505dba24a6',
     'Edit /Users/esempio/Library/Application Support/Claude/local_0e5a1d2c-1111-4222-8333-944455556666/notes.md',
-    'Read /var/folders/d8/T/tmp.AbC/home/.config/x.json']) assert.doesNotMatch(PV.sessionText(t), RAW, t);
-  assert.equal(PV.sessionText('Write /private/tmp/claude-501/-Users-esempio-Projects-ar/scratchpad/out.md'), 'Write …/scratchpad/out.md');
-  assert.equal(PV.sessionText('Edit /Users/esempio/Library/Application Support/Claude/local_0e5a1d2c-1111-4222-8333-944455556666/notes.md'), 'Edit …/Claude/notes.md');
-  // un riassunto vero resta
-  assert.equal(PV.sessionText('Servers 4662 and 4739 were brought back online.'), 'Servers 4662 and 4739 were brought back online.');
+    'Read /Users/esempio/.assistente/_sys_226619bc', 'Read /var/folders/d8/T/tmp.AbC/home/.config/x.json'];
+  for (const t of acts) assert.doesNotMatch(PV.activityText(t), RAW, t);
+  assert.equal(PV.activityText(acts[0]), 'Legge .zshrc');
+  assert.equal(PV.activityText(acts[1]), 'Comando sul Mac');
+  assert.equal(PV.activityText(acts[2]), 'Modifica app.ts');
+  assert.equal(PV.activityText(acts[3]), 'Scrive out.md');
+  assert.equal(PV.activityText(acts[6]), 'Legge .assistente');
+  assert.equal(PV.activityText('Read /Users/esempio/Library/Application Support/Claude/a...'), 'Legge un file');
 });

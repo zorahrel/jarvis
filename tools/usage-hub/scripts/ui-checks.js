@@ -29,12 +29,6 @@
       // un'intestazione vuota (axe empty-table-header) non dice cosa c'è nella colonna
       for (const th of ths) if (vis(th) && !(th.textContent || '').trim()) out.push((t.className || 'tabella') + ': intestazione vuota');
     }
-    for (const g of (root || document).querySelectorAll('#t-usage.on .trl')) {
-      if (!vis(g) || !g.querySelector('details.tr')) continue;
-      const h = g.querySelector('.trh');
-      if (!h || !vis(h)) { out.push('griglia ' + txt(g.closest('details.card, section').querySelector('summary, h2, h3') || g) + ': senza intestazione'); continue; }
-      if (!PROV.test(seen(h))) out.push('griglia ' + txt(g.closest('details.card, section').querySelector('summary, h2, h3') || g) + ': intestazione senza provider visibile');
-    }
     return out.slice(0, 8);
   };
 
@@ -57,26 +51,57 @@
 
   // Ogni campo ha un nome vero: aria-label, aria-labelledby, <label for> o un <label> che lo contiene con del testo.
   // Il placeholder non conta: axe lo accetta, ma WebKit legge il campo come «spinbutton» senza nome (giro 8).
-  // Contrasto misurato del testo nelle righe spente (.dim): axe con l'opacità ridotta dà solo «da rivedere», non
-  // un errore, quindi un «opacity:.55» passava. Colore effettivo = colore × opacità di tutti gli antenati sul fondo.
+  // Contrasto misurato del testo nelle righe spente (.dim), tutte le celle: axe con l'opacità ridotta dà solo «da
+  // rivedere», non un errore. Colore normalizzato da un canvas (anche color(srgb 0-1) e color-mix), moltiplicato per
+  // l'opacità e il filter: opacity() di ogni antenato, sul primo fondo pieno. Torna { n, bad } per sapere che ha misurato.
   window.__dimContrast = function (min) {
-    const out = [];
-    const rgb = (c) => (c.match(/[\d.]+/g) || []).map(Number);
+    const cv = document.createElement('canvas'); cv.width = cv.height = 1; const cx = cv.getContext('2d', { willReadFrequently: true });
+    const rgba = (c) => { cx.clearRect(0, 0, 1, 1); cx.fillStyle = '#000'; cx.fillStyle = c; cx.fillRect(0, 0, 1, 1); const d = cx.getImageData(0, 0, 1, 1).data; return [d[0], d[1], d[2], d[3] / 255]; };
     const lum = ([r, g, b]) => { const f = (v) => { v /= 255; return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; }; return 0.2126 * f(r) + 0.7152 * f(g) + 0.0722 * f(b); };
-    for (const e of document.querySelectorAll('.tab.on tr.dim td:first-child *, .tab.on tr.dim td:first-child')) {
+    document.querySelectorAll('.tab.on details').forEach((d) => { d.open = true; });
+    const out = { n: 0, bad: [] };
+    for (const e of document.querySelectorAll('.tab.on tr.dim, .tab.on tr.dim *')) {
       if (!vis(e) || ![...e.childNodes].some((n) => n.nodeType === 3 && n.textContent.trim())) continue;
       let op = 1, bg = null;
       for (let p = e; p; p = p.parentElement) {
         const cs = getComputedStyle(p); op *= Number(cs.opacity);
-        const b = rgb(cs.backgroundColor); if (!bg && b.length >= 3 && (b[3] == null || b[3] > 0.9)) bg = b.slice(0, 3);
+        for (const m of (cs.filter || '').matchAll(/opacity\(\s*([\d.]+)(%?)\s*\)/g)) op *= m[2] ? Number(m[1]) / 100 : Number(m[1]);
+        if (!bg) { const b = rgba(cs.backgroundColor); if (b[3] > 0.9) bg = b.slice(0, 3); }
       }
-      bg = bg || [255, 255, 255];
-      const c = rgb(getComputedStyle(e).color), a = (c[3] == null ? 1 : c[3]) * op;
+      bg = bg || rgba(getComputedStyle(document.body).backgroundColor).slice(0, 3);
+      const c = rgba(getComputedStyle(e).color), a = c[3] * op;
       const fg = [0, 1, 2].map((i) => c[i] * a + bg[i] * (1 - a));
       const L1 = lum(fg), L2 = lum(bg), ratio = (Math.max(L1, L2) + 0.05) / (Math.min(L1, L2) + 0.05);
-      if (ratio < min) out.push(sel(e) + ' «' + txt(e) + '» ' + ratio.toFixed(2) + ':1');
+      out.n++;
+      if (ratio < min) out.bad.push(sel(e) + ' «' + (e.textContent || '').trim().slice(0, 30) + '» ' + ratio.toFixed(2) + ':1');
     }
-    return out.slice(0, 6);
+    out.bad = out.bad.slice(0, 6);
+    return out;
+  };
+
+  // Sessioni: ogni riga di cronologia in pagina è italiana (o è la parola di uno strumento, o «Riassunto non
+  // disponibile»), e l'attività in corso è un verbo italiano. Euristica riscritta qui apposta, non presa da
+  // PagesView: un errore lì non deve spegnere anche il controllo. Torna { bad, it, na } per sapere che ha misurato.
+  window.__sessionTexts = function () {
+    const EN = new Set("the an is it would have has been fixing fix let me i'll i'm we already nothing new for this that will be catch good now done running and of to in on with not searching reading wait update".split(' '));
+    const IT = new Set('il lo la le gli che di è e non per un una ho hai sono da del della al alla con su ma se ti mi ci si come anche più già ora qui'.split(' '));
+    const italian = (t) => { let en = 0, it = 0; for (const x of (t.toLowerCase().match(/[a-zàèéìòù']+/g) || [])) { if (IT.has(x)) it++; else if (EN.has(x)) en++; } return it >= 3 && it > en; };
+    const TOOL = /^(Comando sul Mac|Controllo di un processo|Strumento \S|Esito: )/;
+    const ACT = /^(Legge|Scrive|Modifica|Cerca|Guarda|Lavora|Aggiorna|Comando sul Mac|Controllo di un processo|Strumento \S)/;
+    const out = { bad: [], it: 0, na: 0 };
+    const box = document.getElementById('t-sessions');
+    box.querySelectorAll('details').forEach((d) => { d.open = true; });
+    for (const e of box.querySelectorAll('details > div.small')) {
+      const t = (e.innerText || '').trim(); if (!t) continue;
+      if (e.hasAttribute('data-na')) { out.na++; continue; }
+      if (TOOL.test(t)) continue;
+      if (italian(t)) out.it++; else out.bad.push('riassunto non italiano: «' + t.slice(0, 70) + '»');
+    }
+    for (const e of box.querySelectorAll('.acard > div.small[style*="margin-left:26px"]:not(.mut)')) {
+      const t = (e.innerText || '').trim(); if (t && !ACT.test(t)) out.bad.push('attività in corso non tradotta: «' + t.slice(0, 70) + '»');
+    }
+    out.bad = out.bad.slice(0, 8);
+    return out;
   };
 
   window.__names = function () {

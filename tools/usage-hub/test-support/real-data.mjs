@@ -50,10 +50,13 @@ export function realStrings() {
 // Un numero di telefono o un indirizzo WhatsApp in una risposta JSON, in qualunque forma: +39 333 000 1122,
 // +39-333-000-1122, +39.333.000.1122, con spazi non separabili, +39 (333) 000-1122, 0039…, 333-000-1122, wa.me/…,
 // …@s.whatsapp.net; e come numero JSON (3330001122). Date e orari ISO non contano. Restituisce i primi trovati.
-const SEP = /(?<=\d)[\s\u00a0\u202f().\-/]+(?=[\d(])|(?<=\+\d{1,3})[\s\u00a0\u202f(]+(?=\d)/g;
-export const phoneDigits = (s) => String(s).replace(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi, ' ').replace(/\d{4}-\d{2}-\d{2}(?:[T ][\d:.]+Z?)?/g, ' ').replace(/\b\d{1,2}:\d{2}(?::\d{2})?\b/g, ' ').replace(SEP, '').replace(/[()]/g, '');
+// separatori: anche le lineette tipografiche (‒ – — −), giro 9: «+39 331–399–8288» passava
+const SEP = /(?<=\d)[\s\u00a0\u202f().\-/\u2012\u2013\u2014\u2212]+(?=[\d(])|(?<=\+\d{1,3})[\s\u00a0\u202f(]+(?=\d)/g;
+export const phoneDigits = (s) => String(s).replace(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi, ' ').replace(/\d{4}-\d{2}-\d{2}(?:[T ]\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:?\d{2})?)?/g, ' ').replace(/\b\d{1,2}:\d{2}(?::\d{2})?\b/g, ' ').replace(SEP, '').replace(/[()]/g, '');
 // numeri JSON che sono misure, non telefoni: millisecondi, token, byte, durate, conteggi
-const MEASURE = /(^|[a-z])(ts|at|At|ms|Ms|time|Time|start|end|until|reset|expires|tokens?|Tokens?|bytes|size|count|Count|duration|weighted|total|cost|n|t|c|i|o)$/;
+// Chiave intera, o la sua ultima parola in camelCase: «telefono», «numero», «contatto», «to» finivano per o/t e
+// passavano (giro 9). Le lettere sole (n, t, c, i, o) valgono solo come chiave intera.
+const MEASURE = /^(?:ts|at|ms|time|start|end|until|reset|expires|tokens?|bytes|size|count|duration|weighted|total|cost|n|t|c|i|o)$|[a-z](?:At|Ms|Time|Start|End|Until|Reset|Tokens?|Bytes|Size|Count|Duration|Total|Cost)$/;
 export function phoneLike(json) {
   const hits = [];
   const walk = (v, k) => {

@@ -121,3 +121,21 @@ test('PC in stato sconosciuto: «?», non «dorme»', async () => {
   assert.notEqual(r.asleep, true);
   assert.equal(r.ok, false);
 });
+
+test('log su /dev/null: esito di launchctl senza ora, nessun giro inventato nel Diario', async () => {
+  // Giro 9: cinque job con StandardOutPath=/dev/null comparivano «riusciti» all'ora di ogni lettura (mtime di /dev/null).
+  const { journal } = await import('../src/journal.mjs');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'falsi-verdi-'));
+  fs.writeFileSync(path.join(dir, 'com.jarvis.muto.plist'), '');
+  const plutil = () => ({ Label: 'com.jarvis.muto', StartInterval: 3600, StandardOutPath: '/dev/null', StandardErrorPath: '/dev/null', ProgramArguments: ['/bin/true'] });
+  const { items } = readLaunchd({ dir, launchctlList: '-\t0\tcom.jarvis.muto\n', now: NOW, plutil });
+  const it = items[0];
+  assert.equal(it.last.at, null, 'nessuna ora dal mtime di /dev/null');
+  assert.equal(it.last.atUnknown, true);
+  assert.equal(it.last.outcome, 'ok', 'l\'exit 0 di launchctl resta l\'ultimo esito');
+  assert.deepEqual(it.runs, []);
+  const model = buildModel({ now: NOW, sources: { launchd: { ok: true, at: NOW, items } } });
+  const rows = journal({ model, now: NOW }).filter((r) => r.ref === 'launchd:com.jarvis.muto');
+  assert.deepEqual(rows, [], 'nel Diario nessun giro con un\'ora inventata');
+  fs.rmSync(dir, { recursive: true });
+});

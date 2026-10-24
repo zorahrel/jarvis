@@ -11,7 +11,7 @@ import fs from 'node:fs';
 import { liveJobs } from '../src/server.mjs';
 import { localConfig } from '../src/local-config.mjs';
 import { sweepStaleDemoRoots } from '../src/demo.mjs';
-import { snapshotReal, realChanges, realStrings, phoneLike, phoneDigits } from '../test-support/real-data.mjs';
+import { snapshotReal, realChanges, realStrings, phoneLike } from '../test-support/real-data.mjs';
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -29,7 +29,7 @@ const freePort = () => new Promise((resolve) => { const s = net.createServer(); 
 // tutte le API che la pagina della demo legge (anche quelle del proxy VDM, finte in demo)
 const DEMO_APIS = ['/api/hub-config', '/api/automations', '/api/overview', '/api/live', '/api/pace', '/api/gates', '/api/mac', '/api/contesto', '/api/diario?days=7', '/api/attesa', '/api/services', '/api/projects', '/api/heavy', '/api/machines', '/api/pc', '/api/queue', '/api/alerts',
   '/vdm/api/profiles', '/vdm/api/settings', '/vdm/api/sessions', '/vdm/api/token-usage?days=7', '/vdm/api/activity',
-  '/api/feedback', '/api/automations/summary', '/api/forecast', '/api/contesto/check'];
+  '/api/feedback', '/api/feedback?open=1', '/api/automations/summary', '/api/forecast', '/api/contesto/check'];
 // più lo schema del pannello di ogni automazione (/api/automations/graph?key=…), che la pagina chiede a ogni apertura
 
 test('serve --demo con l\'HOME vero: nessun account, cartella o nome utente di questo Mac nelle API', { timeout: 120000 }, async () => {
@@ -52,10 +52,14 @@ test('serve --demo con l\'HOME vero: nessun account, cartella o nome utente di q
     for (const u of [...DEMO_APIS, ...keys.map((k) => '/api/automations/graph?key=' + encodeURIComponent(k))]) {
       const body = await (await fetch(url + u, { signal: AbortSignal.timeout(60000) })).text();
       const m = body.match(real);
-      // le cifre dei numeri veri anche scritte con trattini, punti, spazi o parentesi
-      const dd = phoneDigits(body), hit = realDigits.find((x) => dd.includes(x));
+      // le cifre dei numeri veri in qualunque forma: tolto tutto ciò che non è cifra, la sentinella non deve comparire
+      // nella risposta intera (giro 9: lineetta lunga, numero dopo una data e numero JSON con chiave «telefono» passavano)
+      const dd = body.replace(/\D/g, ''), hit = realDigits.find((x) => dd.includes(x));
       assert.equal(hit, undefined, `${u} contiene un numero vero (${hit && hit.slice(0, 3)}…)`);
       assert.equal(m, null, `${u} contiene «${m && body.slice(Math.max(0, m.index - 40), m.index + 40)}»`);
+      // nessuna email fuori dai domini d'esempio: l'email vera dell'account non ha la forma della sentinella
+      const mails = [...body.matchAll(/[\w.+-]+@[\w-]+(?:\.[\w-]+)+/g)].map((x) => x[0]).filter((x) => !/@(?:esempio\.it|example\.(?:com|org)|s\.whatsapp\.net)$/i.test(x));
+      assert.deepEqual(mails, [], `${u} ha email fuori dai domini d'esempio`);
       // nessun numero di telefono in nessuna forma (+39…, 39…@s.whatsapp.net, wa.me/…)
       let j = null; try { j = JSON.parse(body); } catch { /* non JSON */ }
       if (j) assert.deepEqual(phoneLike(j), [], `${u} ha un numero di telefono`);
@@ -100,10 +104,35 @@ test('sweepStaleDemoRoots: anche le demo annidate e le cartelle di prova vecchie
   const live = mk('demo-tmp-viva/usage-hub-demo-viva', process.pid); age(live); age(path.join(tmp, 'demo-tmp-viva'));
   // cartella di prova recente: resta
   mk('ui-bar-recente/home');
+  // giro 9: demo morte annidate a più livelli in cartelle qualsiasi (hub-test-*, tmp* di Python): vanno tolte, e la
+  // cartella che le conteneva sparisce solo se resta vuota
+  for (const d of ['hub-test-AbC/usage-hub-demo-1', 'hub-test-AbC/usage-hub-demo-2', 'tmpq1w2e3/a/b/usage-hub-demo-3']) age(mk(d, 999999));
+  age(path.join(tmp, 'hub-test-AbC'));
+  const other = mk('tmpaltrui/dati'); fs.writeFileSync(path.join(other, 'x'), 'non nostro'); age(other); age(path.dirname(other));
+  const mixed = mk('tmpmisto/usage-hub-demo-4', 999999); age(mixed); fs.writeFileSync(path.join(tmp, 'tmpmisto', 'altro.txt'), 'x'); age(path.join(tmp, 'tmpmisto'));
+  // demo viva sepolta a tre livelli: resta, e con lei tutta la catena
+  const deepLive = mk('tmpvivo/x/y/usage-hub-demo-viva', process.pid); age(deepLive);
+  // demo con .pid morto ma un file appena scritto dentro: non è vecchia, resta
+  const fresh = mk('tmpfresco/usage-hub-demo-5', 999999); age(fresh); fs.mkdirSync(path.join(fresh, 'log'));
   const n = sweepStaleDemoRoots(tmp);
   const left = fs.readdirSync(tmp).sort();
-  assert.deepEqual(left, ['demo-tmp-viva', 'ui-bar-recente'], 'rimaste: ' + left);
+  assert.deepEqual(left, ['demo-tmp-viva', 'tmpaltrui', 'tmpfresco', 'tmpmisto', 'tmpvivo', 'ui-bar-recente'], 'rimaste: ' + left);
   assert.ok(fs.existsSync(live));
-  assert.equal(n, 3);
+  assert.ok(fs.existsSync(deepLive), 'demo viva annidata a più livelli');
+  assert.ok(fs.existsSync(path.join(other, 'x')), 'cartella non nostra intatta');
+  assert.deepEqual(fs.readdirSync(path.join(tmp, 'tmpmisto')), ['altro.txt'], 'la demo morta va, il file altrui resta');
+  assert.ok(fs.existsSync(fresh), 'demo con contenuto recente');
+  assert.equal(n, 7);
   fs.rmSync(tmp, { recursive: true, force: true });
+});
+
+test('phoneLike: ogni forma di numero di telefono, nessuna misura', () => {
+  // giro 9: lineetta lunga, numero subito dopo una data e numero JSON con chiave che finisce per n/t/c/i/o passavano
+  const phones = [{ x: '+39 333–000–1122' }, { x: '+39 333—000—1122' }, { x: 'chiamato il 2026-10-24 333 000 1122' }, { x: '+39 (333) 000-1122' },
+    { x: '0039.333.000.1122' }, { x: 'wa.me/393330001122' }, { x: '393330001122@s.whatsapp.net' },
+    { telefono: 3330001122 }, { numero: 3330001122 }, { contatto: 3330001122 }, { to: 3330001122 }, { recipient: 3330001122 }, { destination: 3330001122 }];
+  for (const j of phones) assert.notDeepEqual(phoneLike(j), [], `non visto: ${JSON.stringify(j)}`);
+  const measures = [{ ts: 1792918800000 }, { at: 1792918800 }, { inputTokens: 123456789 }, { n: 123456789 }, { x: '2026-10-24T09:30:00.123Z' },
+    { x: '2026-10-24 09:30' }, { x: '11111111-aaaa-4000-8000-000000000001' }];
+  for (const j of measures) assert.deepEqual(phoneLike(j), [], `falso positivo: ${JSON.stringify(j)}`);
 });

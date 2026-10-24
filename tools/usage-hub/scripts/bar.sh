@@ -4,7 +4,24 @@
 set -e
 cd "$(dirname "$0")/.."
 # tutta la barra ha un TMPDIR suo: alla fine dev'essere vuoto (demo, ui-bar, prove e test non lasciano niente)
-BT="$(mktemp -d)"; export TMPDIR="$BT/"
+# mktemp -d da solo su macOS ignora TMPDIR: il modello si passa esplicito
+BT="$(mktemp -d "${TMPDIR:-/tmp}/bar.XXXX")"; export TMPDIR="$BT/"
+# processi ancora vivi lanciati dalla barra: ps eww mostra l'ambiente, si cerca $BT. Senza TMPDIR per ps e awk e con
+# la foto su file, il controllo non trova sé stesso (awk e grep ereditavano il TMPDIR della barra: falso rosso).
+alive_pids() {
+  PS="${BT%/}.ps"
+  env -u TMPDIR ps eww -ax -o pid=,command= > "$PS"
+  env -u TMPDIR awk -v bt="$BT" -v me="$$" 'index($0, bt) && $1 != me {print $1}' "$PS"; rm -f "$PS"
+}
+# A ogni uscita, rossa o verde: niente demo vive, niente $BT lasciato (giro 9: ogni rosso lasciava tutto lì)
+cleanup() {
+  st=$?; trap - EXIT INT TERM HUP
+  pids="$(alive_pids)"; [ -z "$pids" ] || kill -9 $pids 2>/dev/null || true
+  rm -rf "$BT" "${BT%/}.ps"
+  exit $st
+}
+trap cleanup EXIT
+trap 'exit 130' INT TERM HUP
 # 1. ciò che è verde resta verde: tutti i test con HOME e TMPDIR finti, sentinelle nei file veri, niente lasciato in $TMPDIR
 sh scripts/tmp-leak-check.sh
 node modules/tray/server/test.mjs
@@ -13,7 +30,8 @@ sh scripts/check-modules.sh
 python3 -m pytest -q modules/tray/server/test_muse_probe.py
 # 2. i test nuovi ci sono ancora per nome (girano nel passo 1, isolati: qui un file rinominato o sparito fa rosso)
 for f in automations-sources automations-sources-more automations-levels automations-feedback automations-feedback-import \
-  automations-api automations-view automations-queue automations-falsi-verdi dashboard-parity dashboard-actions no-ids demo-isolation; do
+  automations-api automations-view automations-queue automations-falsi-verdi dashboard-parity dashboard-actions no-ids demo-isolation \
+  demo-ids vdm-events sparkline; do
   [ -f "test/$f.test.mjs" ] || { echo "ROSSO test/$f.test.mjs sparito"; exit 1; }
 done
 # 3. i mutanti del feedback devono essere presi
@@ -34,13 +52,10 @@ node scripts/measure-automations.mjs --live
 python3 scripts/ui-bar.py
 # 7. la prova della scheda Automazioni (due demo, layout a 375, axe): era fuori dalla barra ed era rossa
 python3 scripts/prova-automazioni.py
-# 8. niente lasciato nel TMPDIR della barra, niente processi demo vivi
-left="$(ls -A "$BT")"; [ -z "$left" ] || { echo "ROSSO la barra ha lasciato in TMPDIR: $(echo $left)"; exit 1; }
-# ps eww mostra anche l'ambiente: senza TMPDIR per ps e foto su file, il controllo non trova sé stesso (awk e
-# grep della pipeline ereditano il TMPDIR della barra e facevano un falso rosso)
-sleep 2; PS="${BT%/}.ps"
-env -u TMPDIR ps eww -ax -o pid=,command= > "$PS"
-alive="$(env -u TMPDIR awk -v bt="$BT" -v me="$$" 'index($0, bt) && $1 != me {print $1}' "$PS")"; rm -f "$PS"
-[ -z "$alive" ] || { echo "ROSSO processi della barra ancora vivi: $(echo $alive)"; kill -9 $alive 2>/dev/null; exit 1; }
-rmdir "$BT"
+# 8. niente processi demo vivi (si uccidono prima di qualunque uscita), poi niente lasciato nel TMPDIR della barra
+sleep 2; alive="$(alive_pids)"
+[ -z "$alive" ] || kill -9 $alive 2>/dev/null || true
+left="$(ls -A "$BT")"
+[ -z "$alive" ] || { echo "ROSSO processi della barra ancora vivi (uccisi): $(echo $alive)"; exit 1; }
+[ -z "$left" ] || { echo "ROSSO la barra ha lasciato in TMPDIR: $(echo $left)"; exit 1; }
 echo 'BARRA VERDE'

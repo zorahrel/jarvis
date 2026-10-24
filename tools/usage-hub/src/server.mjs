@@ -211,6 +211,16 @@ export function createServer(config, deps = {}) {
   // Nei test e in --demo si crea alla prima richiesta; nell'hub vivo subito, così GitHub e PC partono col primo giro dietro.
   let autoApi = null;
   const auto = () => (autoApi ||= deps.automations || createAutomations({ background: runsLive }));
+  // «Ti aspetta» non aspetta il giro delle automazioni: a freddo il modello si ricalcola (launchctl print voce per voce,
+  // fino a 26 s sotto carico, giro 9). Si risponde con l'ultimo modello e lo si rinfresca dietro; il registro delle
+  // voci aperte invece si legge sempre fresco. Il primo giro parte all'avvio dell'hub vivo.
+  let lastModel = null;
+  const refreshModel = () => auto().model().then((m) => { lastModel = m; return m; });
+  const modelSoon = async () => {
+    if (lastModel) { refreshModel().catch(() => {}); return lastModel; }
+    return refreshModel();
+  };
+  if (runsLive && !deps.automations) setTimeout(() => refreshModel().catch(() => {}), 2000).unref?.();
   if (runsLive) auto();
   // Quota della settimana di un costo pesato (sessione, giro di workflow), con la stessa divisione dei progetti.
   // La divisione sta in session-use.mjs (shareFromReport, attachSessionUse), testata col report vero.
@@ -372,7 +382,7 @@ export function createServer(config, deps = {}) {
           if (err) return send(400, 'application/json', JSON.stringify({ error: err }));
           return send(200, 'application/json', JSON.stringify({ ok: true, row: writeAttesa(b) }));
         }
-        let model = null; try { model = await auto().model(); } catch { /* senza automazioni restano le voci del registro */ }
+        let model = null; try { model = await modelSoon(); } catch { /* senza automazioni restano le voci del registro */ }
         const items = [...readAttesa(), ...fromAutomations(model)].sort((a, b) => a.at - b.at);
         return send(200, 'application/json', JSON.stringify({ at: Date.now(), items }));
       }
@@ -513,7 +523,8 @@ export function createServer(config, deps = {}) {
       }
       if (req.url.startsWith('/vdm/')) {
         // nella barra isolata (HUB_TEST_SANDBOX=1) il proxy vero non si raggiunge mai, nemmeno con la porta scritta in config
-        const vdmPort = (config.vdm && config.vdm.port) || Number(process.env.USAGE_HUB_VDM_PORT) || 3335;
+        // Number(): «3335» scritto come stringa in config passava la guardia stretta (giro 9)
+        const vdmPort = Number((config.vdm && config.vdm.port) || process.env.USAGE_HUB_VDM_PORT) || 3335;
         if (process.env.HUB_TEST_SANDBOX === '1' && vdmPort === 3335) return send(500, 'application/json', JSON.stringify({ error: 'in prova il proxy VDM vero non si tocca' }));
         const up = http.request({ host: '127.0.0.1', port: vdmPort, path: req.url.slice(4), method: req.method, headers: { 'content-type': req.headers['content-type'] || 'application/json' } }, (r) => {
           res.writeHead(r.statusCode, { 'content-type': r.headers['content-type'] || 'application/json', 'cache-control': 'no-cache' });

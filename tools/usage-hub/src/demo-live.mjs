@@ -20,7 +20,7 @@ function account(id, label, code, active, weekPct, fivePct, nowS) {
 export function demoOverview(now = Date.now()) {
   const s = Math.floor(now / 1000);
   return { ok: true, at: now, providers: [
-    { id: 'claude', name: 'Claude', accounts: [account('anna@esempio.it', 'anna@esempio.it', 'ANN', true, 58, 40, s), account('team@esempio.it', 'team@esempio.it', 'TEA', false, 31, 0, s)] },
+    { id: 'claude', name: 'Claude', accounts: [account('anna@esempio.it', 'anna@esempio.it', 'ANN', true, 58, 40, s), account('segreteria.studio@esempio.it', 'segreteria.studio@esempio.it', 'TEA', false, 31, 0, s)] },
     { id: 'codex', name: 'Codex', accounts: [account('dev@esempio.it', 'dev@esempio.it', 'DEV', true, 44, 12, s)] },
     { id: 'muse', name: 'Muse', accounts: [account('muse@esempio.it', 'muse@esempio.it', 'MUS', true, 23, 5, s)] },
   ] };

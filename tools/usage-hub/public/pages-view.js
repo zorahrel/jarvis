@@ -87,32 +87,65 @@
     var base = String(x.cwd).replace(/[\\/]+$/, '').split(/[\\/]/).pop();
     return humanProject(base);
   }
-  // Testi della cronologia: i messaggi di servizio fra sessioni di OpenClaw diventano una frase, gli orari fra
-  // parentesi quadre spariscono, i nomi degli strumenti mcp__server__nome diventano parole, i percorsi si accorciano
-  // alle ultime due cartelle.
-  function sessionText(t) {
+  // Testi delle sessioni. Niente liste nere di frasi (giro 9: ogni variante nuova del riassuntore passava): un
+  // riassunto si mostra solo se è italiano, i nomi di strumento diventano parole, di un percorso resta il nome del
+  // file e nessun id.
+  var EN_WORDS = {}, IT_WORDS = {};
+  // stessa euristica di openclaw-group-guard/language.js (isItalian): almeno tre parole tipiche italiane e più delle inglesi
+  "the an is it would have has been fixing fix let me i'll i'm we already nothing new for this that will be catch good now done running and of to in on with not searching reading wait update".split(' ').forEach(function (w) { EN_WORDS[w] = 1; });
+  'il lo la le gli che di è e non per un una ho hai sono da del della al alla con su ma se ti mi ci si come anche più già ora qui'.split(' ').forEach(function (w) { IT_WORDS[w] = 1; });
+  function isItalian(text) {
+    var en = 0, it = 0;
+    (String(text || '').toLowerCase().match(/[a-zàèéìòù']+/g) || []).forEach(function (x) { if (IT_WORDS[x]) it++; else if (EN_WORDS[x]) en++; });
+    return it >= 3 && it > en;
+  }
+  var ID_SEG = /^-Users-|^-home-|^local_|^_sys_|^tmp\.|^claude-\d+$|[0-9a-f]{8}-[0-9a-f]{4}|^[0-9a-f]{8,}$/i;
+  // di un percorso resta solo il nome del file (o della cartella finale), mai il nome utente né una cartella-id
+  function fileName(p) {
+    var parts = String(p).replace(/\/Library\/Application Support\//g, '/Library/').split(/[\\/]/).filter(function (x) { return x && !ID_SEG.test(x); });
+    return parts.length ? parts[parts.length - 1] : '';
+  }
+  var PATH_RE = /(?:~|\/(?:Users|home|private|tmp|var|opt|Volumes|Library|System|Applications)\b)(?:\/[^\s:;,'"()]+)+|(?:~|\/(?:Users|home|private|tmp|var|opt|Volumes))\b/g;
+  function cleanText(t) {
     var s = String(t == null ? '' : t).trim().replace(/^\[(?:[A-Z][a-z]{2} )?\d{4}-\d{2}-\d{2}[ T][\d:]+(?: ?GMT[+-]?\d*| ?UTC)?\]\s*/, '');
-    // risposte del riassuntore su se stesso (rifiuti, domande, «I'm Claude…») e messaggi di servizio: non sono lavoro, non si mostrano
-    if (META_START.test(s) || META_ANY.test(s)) return '';
-    var e = /^ESITO:\s*(\S+)/.exec(s);
-    if (e) return 'Esito: ' + e[1];
-    // nomi di strumenti: un comando di shell è «Comando sul Mac» (il testo del comando non si mostra)
-    var tool = /^(?:mcp__([a-z0-9-]+)__([a-z0-9_-]+)|Strumento di [a-z0-9-]+:\s*([a-z0-9_-]+)|(exec|bash|Bash|process))\b/i.exec(s);
-    if (tool) {
-      var name = (tool[2] || tool[3] || tool[4]).toLowerCase();
-      return name === 'exec' || name === 'bash' ? 'Comando sul Mac' : name === 'process' ? 'Controllo di un processo' : 'Strumento ' + name.replace(/_/g, ' ');
-    }
     s = s.replace(/\bmcp__([a-z0-9-]+)__([a-z0-9_-]+)/gi, function (_, srv, name) { return 'strumento ' + name.replace(/_/g, ' '); })
       .replace(/\/Library\/Application Support\//g, '/Library/Application_Support/')
-      .replace(/(?:~|\/(?:Users|home|private|tmp|var|opt)\b)(?:\/[^\s/:;,'"()]+)+/g, function (p) {
-        // ultime due cartelle, saltando quelle che sono id o percorsi codificati (-Users-…, local_<uuid>, _sys_…, tmp.XXXX)
-        var parts = p.split('/').filter(function (x) { return x && !/^-Users-|^-home-|^local_|^_sys_|^tmp\.|^claude-\d+$|[0-9a-f]{8}-[0-9a-f]{4}|^Application_Support$/i.test(x); });
-        return (parts.length > 2 ? '…/' + parts.slice(-2).join('/') : '…/' + parts.slice(-1).join('/'));
-      });
-    return noIds(s);
+      .replace(PATH_RE, function (p) { return fileName(p); });
+    return noIds(s).replace(/\s{2,}/g, ' ').trim();
   }
-  var META_START = /^(?:I(?:'m|'ve|'ll| am| have| will| won't| need| can| cannot| can't| also| appreciate| understand| acknowledge| should| don't| do not| notice| see)\b|You(?:'re|'ve)?\b|Could you|If you|What (?:screen|would|do)|Please\b|No action|Without details|For example|Sugg|\*\*|"è )/;
-  var META_ANY = /inter-session|routing (?:data|information)|OpenClaw resumed|system prompt changed|resumed (?:the |this )?(?:CLI )?session|session resumed|prompt[- ](?:content|tools)|AI assistant made by Anthropic|summary agent|monitoring dashboards?\b.*\b(?:role|designed)|naturally type next/i;
+  // riga di uno strumento (dalla cronologia o dall'esito del riassuntore): la parola, mai il testo del comando
+  function toolWords(s) {
+    var tool = /^(?:mcp__([a-z0-9-]+)__([a-z0-9_-]+)|Strumento di [a-z0-9-]+:\s*([a-z0-9_-]+)|(exec|bash|process))\b/i.exec(s);
+    if (!tool) return null;
+    var name = (tool[2] || tool[3] || tool[4]).toLowerCase();
+    return name === 'exec' || name === 'bash' ? 'Comando sul Mac' : name === 'process' ? 'Controllo di un processo' : 'Strumento ' + name.replace(/_/g, ' ');
+  }
+  // Titoli scritti dall'hub (/api/live): solo pulizia, il titolo è già nostro.
+  function sessionText(t) { return cleanText(t); }
+  // Una riga della cronologia scritta dal riassuntore: '' se non è italiana (chi chiama mostra «Riassunto non disponibile»).
+  function summaryText(t) {
+    var s = String(t == null ? '' : t).trim().replace(/^\[(?:[A-Z][a-z]{2} )?\d{4}-\d{2}-\d{2}[ T][\d:]+(?: ?GMT[+-]?\d*| ?UTC)?\]\s*/, '');
+    var tw = toolWords(s);
+    if (tw) return tw;
+    var e = /^ESITO:\s*(\S+)/.exec(s);
+    if (e) return 'Esito: ' + cleanText(e[1]);
+    return isItalian(s) ? cleanText(s) : '';
+  }
+  // L'attività in corso del proxy («Read /percorso», «Bash cd …», «mcp__x__y …»): verbo italiano e nome del file.
+  var ACT = { read: 'Legge', write: 'Scrive', edit: 'Modifica', multiedit: 'Modifica', notebookedit: 'Modifica', grep: 'Cerca nei file', glob: 'Cerca file', ls: 'Guarda una cartella', websearch: 'Cerca sul web', webfetch: 'Legge una pagina web', task: 'Lavora con un sottoagente', agent: 'Lavora con un sottoagente', todowrite: 'Aggiorna la lista dei passi' };
+  function activityText(t) {
+    var s = String(t == null ? '' : t).trim();
+    if (!s) return '';
+    var m = /^(\S+)\s*([\s\S]*)$/.exec(s), name = m[1], arg = m[2];
+    var tw = toolWords(name);
+    if (tw) return tw;
+    var verb = ACT[name.toLowerCase()];
+    if (!verb) return /^[A-Z][A-Za-z]+$/.test(name) ? 'Strumento ' + name : '';
+    if (!/^(read|write|edit|multiedit|notebookedit)$/i.test(name)) return verb;
+    // il proxy tronca a 60 caratteri: un nome di file tagliato non si mostra
+    var f = /\.\.\.$/.test(arg) ? '' : noIds(fileName(arg.split(/\s/)[0] || ''));
+    return f ? verb + ' ' + f : verb + ' un file';
+  }
   // Consumo di una sessione: token letti dai suoi log e, dove l'hub la sa, la quota della settimana che pesa.
   function tokWords(n) {
     if (!(n > 0)) return '';
@@ -267,7 +300,7 @@
       top + checks + docBox + con + '<div class="stack">' + lists + skills + '</div>' + dup + old;
   }
 
-  var api = { humanTitle: humanTitle, humanProject: humanProject, sessionPlace: sessionPlace, sessionText: sessionText, useWords: useWords, tokWords: tokWords, attesaHtml: attesaHtml, journalHtml: journalHtml, contextHtml: contextHtml, jarvisHref: jarvisHref, jarvisBtn: jarvisBtn, stIcon: stIcon, dayLabel: dayLabel };
+  var api = { humanTitle: humanTitle, humanProject: humanProject, sessionPlace: sessionPlace, sessionText: sessionText, summaryText: summaryText, activityText: activityText, isItalian: isItalian, useWords: useWords, tokWords: tokWords, attesaHtml: attesaHtml, journalHtml: journalHtml, contextHtml: contextHtml, jarvisHref: jarvisHref, jarvisBtn: jarvisBtn, stIcon: stIcon, dayLabel: dayLabel };
   root.PagesView = api;
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
 })(globalThis);

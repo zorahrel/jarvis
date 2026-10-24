@@ -30,7 +30,8 @@ echo '{"ts":'"$now"',"source":"sentinella","text":"SENTINELLA diario vero da non
 echo '{"kind":"apri","id":"s1","tipo":"decisione","title":"SENTINELLA attesa vera da non mostrare","why":"SENTINELLA motivo vero","from":"sentinella","at":'"$now"'}' > "$H/.claude/jarvis/private/ti-aspetta.jsonl"
 echo '{"whatsapp":"+393330001122"}' > "$H/.config/claude-usage-hub/notify.json"
 # local.json come quello vero (link WhatsApp di Jarvis, operatore, account API): la demo non deve mostrarne niente
-echo '{"jarvis":{"whatsapp":"https://wa.me/393339998877"},"operatore":"sentinella-operatore","api":{"account":"sentinella-account"}}' > "$H/.config/claude-usage-hub/local.json"
+# l'operatore ha un nome e l'account un'email, come nel file vero: un nome o un'email letti lì e mostrati fanno rosso
+echo '{"jarvis":{"whatsapp":"https://wa.me/393339998877"},"operatore":"Gualtiero Sentinelli","api":{"account":"sentinella.persona@dominio-vero.it"}}' > "$H/.config/claude-usage-hub/local.json"
 # la coda dei lavori e le cache dell'hub (~/.cache): un test che ci scrive manderebbe un lavoro a un agente vero
 mkdir -p "$H/.cache/claude-usage-hub"; echo '[]' > "$H/.cache/claude-usage-hub/queue.json"
 cp -R "$H" "$R/home-prima"
@@ -51,14 +52,26 @@ case "$1 $2" in
 esac
 FAKE
 chmod +x "$R/bin/openclaw"
-# il proxy VDM vero (:3335) scrive nella HOME vera: la porta del proxy punta a una porta chiusa, e sotto si
-# controlla che il suo registro non abbia scritture di test (priority-set, account-cap…) nate durante il giro
-VDMLOG="$HOME/.claude/account-switcher/activity-log.json"; t0="$(($(date +%s) * 1000))"
-PATH="$R/bin:$PATH" OPENCLAW_GATEWAY_URL="ws://127.0.0.1:9" USAGE_HUB_VDM_PORT=9 USAGE_HUB_VDM_URL="http://127.0.0.1:9" HOME="$H" TMPDIR="$R/tmp/" HUB_TEST_SANDBOX=1 QUOTA_GUARD_PY="$QG" node --test --test-timeout=120000 --test-force-exit test/ modules/vdm/test/ modules/tray/server/test.mjs >"$R/out" 2>&1
+# il proxy VDM vero (:3335) scrive nella HOME vera. Tre difese: la sua porta punta a una porta chiusa; il preload
+# no-real-net rifiuta ogni connessione a 3333-3336 e all'hub vivo (3360) e annota il tentativo; il registro del
+# proxy si confronta prima e dopo (ogni voce che non sia traffico vero è rossa, registro illeggibile è rosso).
+# VDM_ACTIVITY_LOG solo per i mutanti della barra (una copia del registro, mai quello vero da scrivere)
+VDMLOG="${VDM_ACTIVITY_LOG:-$HOME/.claude/account-switcher/activity-log.json}"
+node scripts/vdm-log-guard.mjs snap "$VDMLOG" "$R/vdm-prima.json" || exit 1
+# il preload morde davvero: una connessione a 3335 è rifiutata e annotata (un NODE_OPTIONS perso la lascerebbe passare)
+NODE_OPTIONS="--import=$PWD/test-support/no-real-net.mjs" NO_REAL_NET_LOG="$R/net-prova.log" node -e 'fetch("http://127.0.0.1:3335/api/settings").then(() => process.exit(3), (e) => process.exit(/sandbox dei test/.test(String(e.cause && e.cause.message)) ? 0 : 4))' \
+  && grep -q ':3335' "$R/net-prova.log" 2>/dev/null || { echo "FAIL il preload no-real-net non blocca 3335: i test potrebbero toccare il proxy vero"; exit 1; }
+# niente --test-force-exit: con node 26 scartava in silenzio i test registrati dopo un await di primo livello (giro 9).
+# Un test appeso cade al suo timeout; i conteggi per file dal report junit dicono se ne è sparito uno.
+PATH="$R/bin:$PATH" OPENCLAW_GATEWAY_URL="ws://127.0.0.1:9" USAGE_HUB_VDM_PORT=9 USAGE_HUB_VDM_URL="http://127.0.0.1:9" HOME="$H" TMPDIR="$R/tmp/" HUB_TEST_SANDBOX=1 QUOTA_GUARD_PY="$QG" \
+  NODE_OPTIONS="--import=$PWD/test-support/no-real-net.mjs" NO_REAL_NET_LOG="$R/net.log" \
+  node --test --test-timeout=120000 --test-reporter=spec --test-reporter-destination=stdout --test-reporter=junit --test-reporter-destination="$R/junit.xml" \
+  test/ modules/vdm/test/ modules/tray/server/test.mjs >"$R/out" 2>&1
 rc=$?
 grep -E "^✖|^not ok" "$R/out" | sort -u | head -20 | sed "s/^/     /"; tail -n 8 "$R/out" | sed "s/^/     /"
-vdm_w="$(node -e 'try { const l = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8")); console.log(l.filter((e) => e.ts >= +process.argv[2] && /priority-set|account-cap|account-enabled|manual-switch|remove/.test(e.type)).length) } catch { console.log(0) }' "$VDMLOG" "$t0")"
-if [ "$vdm_w" != 0 ]; then echo "FAIL un test ha scritto sul proxy VDM vero ($vdm_w voci nel suo registro durante il giro)"; exit 1; fi
+node scripts/vdm-log-guard.mjs check "$VDMLOG" "$R/vdm-prima.json" || exit 1
+if [ -s "$R/net.log" ]; then echo "FAIL un test ha provato a raggiungere un servizio vero del Mac:"; sed 's/^/     /' "$R/net.log" | head -5; exit 1; fi
+node scripts/test-count.mjs "${TEST_COUNT_MODE:-check}" "$R/junit.xml" || exit 1
 oc_real="$(grep -c "$R/home" "$OCLOG" 2>/dev/null || true)"
 [ -f "$R/openclaw-chiamate" ] && echo "ok   openclaw finto chiamato $(wc -l < "$R/openclaw-chiamate" | tr -d ' ') volte: $(cut -d' ' -f1-2 "$R/openclaw-chiamate" | sort -u | tr '\n' ',')"
 if [ "${oc_real:-0}" != 0 ]; then echo "FAIL un test ha chiamato l'openclaw vero ($oc_real righe nel suo log con la HOME finta)"; exit 1; fi

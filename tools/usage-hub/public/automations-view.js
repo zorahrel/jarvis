@@ -18,7 +18,7 @@
       .replace(/\b(account|conto|chat|utente|user)\s+\d{9,}/gi, '$1')
       .replace(/\(\s*\)/g, '');
     // nei <pre> (comandi, domande, errori) spazi e a capo restano com'erano
-    return keepSpace ? r : r.replace(/[ \t]{2,}/g, ' ').replace(/\s+([,.;:)])/g, '$1').trim();
+    return keepSpace ? r : r.replace(/[ \t]{2,}/g, ' ').replace(/\s+([,.;:)])(?=\s|$)/g, '$1').trim();
   }
   function esc(s) {
     return String(s ?? '').replace(/[&<>"]/g, function (c) {

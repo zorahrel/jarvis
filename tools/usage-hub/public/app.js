@@ -159,16 +159,17 @@ function macHtml(m) {
 }
 
 async function renderOverview() {
-  // «Ti aspetta» compare subito; quote, Mac e progetti (lenti sotto carico) arrivano dopo, sotto.
-  let done = false;
-  const waitP = attesaSection();
-  waitP.then((w) => { if (!done && !$('t-overview').querySelector('[data-sec=wait]')) $('t-overview').innerHTML = w + '<p class="mut small" data-loading>Carico quote e agenti…</p>'; });
+  // Niente aspetta tutto: «Ti aspetta», Mac e progetti arrivano ognuno nel suo riquadro quando ci sono. «Ti aspetta» a
+  // freddo poteva metterci 26 s e teneva ferma la Panoramica sullo scheletro (giro 9).
+  let waitHtml = null;
+  const WAIT_SKEL = '<section class="sec" data-sec="wait"><div class="sec-h"><h2>Ti aspetta</h2></div><p class="mut small" data-loading>Leggo le voci in attesa…</p></section>';
+  attesaSection().then((w) => { waitHtml = w; const el = $('t-overview').querySelector('[data-sec=wait]'); if (el) el.outerHTML = w; });
   // I progetti (agenti vivi, la lettura più lenta a freddo) arrivano per ultimi nel loro riquadro: il resto non li aspetta.
   const liveP = j('/api/live', { signal: AbortSignal.timeout(20000) });
   // il Mac a freddo risponde fino a 6 s sotto carico: non tiene ferma la pagina, arriva nel suo riquadro quando c'è
   const macP = j('/api/mac', { signal: AbortSignal.timeout(20000) });
-  let [wait, gates, queue, pace, heavy, alerts] = await Promise.all([waitP, ...['/api/gates', '/api/queue', '/api/pace', '/api/heavy', '/api/alerts'].map((u) => j(u, { signal: AbortSignal.timeout(u === '/api/gates' ? 8000 : 20000) }))]);
-  done = true;
+  let [gates, queue, pace, heavy, alerts] = await Promise.all(['/api/gates', '/api/queue', '/api/pace', '/api/heavy', '/api/alerts'].map((u) => j(u, { signal: AbortSignal.timeout(u === '/api/gates' ? 8000 : 20000) })));
+  const wait = waitHtml || WAIT_SKEL;
   // Sotto carico il freno può metterci 30 s: la Panoramica non lo aspetta oltre 8 s, il resto non oltre 20.
   // un errore dell'hub arriva come oggetto {error}: per quote e ritmo vale «nessun dato», non un crash
   if (!Array.isArray(pace)) pace = null;

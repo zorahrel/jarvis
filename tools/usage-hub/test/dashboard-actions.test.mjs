@@ -1,6 +1,6 @@
 import '../test-support/isolate-tmp.mjs';
 // Pulsanti che scrivono nella dashboard: (1) ognuno chiama l'endpoint giusto col payload giusto (fetch finto, nessun account toccato);
-// (2) priorità e tetto di un account vero: POST, rilettura, ripristino del valore di prima (solo se il proxy VDM è raggiungibile).
+// (2) priorità e tetto passano dall'hub a un proxy finto; (3) in prova /vdm/ verso il proxy vero è rifiutato.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -84,4 +84,23 @@ test('priorità e tetto di un account passano dall\'hub al proxy e si rileggono 
   } finally {
     srv.close(); vdm.srv.close(); srv.closeAllConnections?.(); vdm.srv.closeAllConnections?.();
   }
+});
+
+// La guardia dell'hub: in prova il /vdm/ non va mai al proxy vero, che la porta arrivi come numero o come stringa
+// (giro 9: «3335» scritto in config passava il confronto stretto e GET /vdm/api/settings rispondeva coi dati veri).
+test('in prova /vdm/ verso 3335 risponde 500, con la porta numero o stringa, senza aprire connessioni', { timeout: 20000 }, async () => {
+  const prev = process.env.HUB_TEST_SANDBOX; process.env.HUB_TEST_SANDBOX = '1';
+  try {
+    for (const port of [3335, '3335']) {
+      const srv = createServer({ quotaSource: { url: 'http://x' }, alerts: { rules: [] }, vdm: { port } }, { fetchImpl: async () => ({ ok: false, json: async () => ({}) }), root });
+      await new Promise((r) => srv.listen(0, '127.0.0.1', r));
+      try {
+        for (const [method, p] of [['GET', '/vdm/api/settings'], ['POST', '/vdm/api/priority']]) {
+          const r = await fetch(`http://127.0.0.1:${srv.address().port}${p}`, { method, headers: { 'content-type': 'application/json' }, body: method === 'POST' ? '{"name":"x","priority":1}' : undefined });
+          assert.equal(r.status, 500, `${method} ${p} con porta ${JSON.stringify(port)}: ${r.status}`);
+          assert.match((await r.json()).error, /proxy VDM vero non si tocca/);
+        }
+      } finally { srv.close(); srv.closeAllConnections?.(); }
+    }
+  } finally { if (prev == null) delete process.env.HUB_TEST_SANDBOX; else process.env.HUB_TEST_SANDBOX = prev; }
 });

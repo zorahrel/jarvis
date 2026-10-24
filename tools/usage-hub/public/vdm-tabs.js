@@ -14,15 +14,36 @@ const BLOCK = (p) => {
 };
 
 // ---------- Account ----------
+// Ora di Roma per le tacche: allineare a multipli di 24 h in millisecondi metteva la griglia alla mezzanotte UTC, e
+// dopo le 02:00 la prima etichetta usciva a sinistra del grafico (giro 9: x = -17).
+const ROME = new Intl.DateTimeFormat('en-GB', { timeZone: 'Europe/Rome', hourCycle: 'h23', year: 'numeric', month: 'numeric', day: 'numeric', hour: 'numeric', minute: 'numeric' });
+const romeParts = (t) => { const o = {}; for (const x of ROME.formatToParts(new Date(t))) o[x.type] = Number(x.value); return o; };
+// istante di un'ora di parete a Roma (due passate bastano anche nei giorni del cambio d'ora)
+function romeTs(y, m, d, h) {
+  let t = Date.UTC(y, m - 1, d, h);
+  for (let i = 0; i < 2; i++) { const p = romeParts(t); t -= Date.UTC(p.year, p.month - 1, p.day, p.hour, p.minute) - Date.UTC(y, m - 1, d, h); }
+  return t;
+}
+function sparkTicks(t0, now, hours) {
+  const out = [], s = romeParts(t0);
+  for (let day = 0; day < 40; day++) {
+    for (let h = 0; h < 24; h += hours ? 3 : 24) {
+      const t = romeTs(s.year, s.month, s.day + day, h);
+      if (t > now) return out;
+      if (t >= t0) out.push({ t, h });
+    }
+  }
+  return out;
+}
 function sparkline(hist, key, windowMs, hours) {
   const W = 320, H = 44, pt = 1, ph = 31, now = Date.now(), t0 = now - windowMs;
   let svg = '';
-  const step = hours ? 3 * 3600000 : 86400000, first = new Date(t0);
-  first.setMinutes(0, 0, 0); if (!hours) first.setHours(0);
-  for (let t = Math.ceil(first.getTime() / step) * step; t <= now; t += step) {
-    const x = ((t - t0) / windowMs) * W, d = new Date(t);
+  for (const { t, h } of sparkTicks(t0, now, hours)) {
+    const x = ((t - t0) / windowMs) * W;
     svg += `<line x1="${x.toFixed(1)}" y1="${pt}" x2="${x.toFixed(1)}" y2="${pt + ph}" stroke="currentColor" opacity=".15" stroke-width=".5"/>`;
-    if (!hours || d.getHours() % 6 === 0) svg += `<text x="${x.toFixed(1)}" y="${H - 1}" fill="currentColor" opacity=".5" font-size="7" text-anchor="middle">${hours ? d.getHours() + ':00' : d.toLocaleDateString('it-IT', { weekday: 'short' })}</text>`;
+    // un'etichetta (larga ~12 unità) che toccherebbe il bordo non si scrive: la tacca basta
+    if (x < 8 || x > W - 8) continue;
+    if (!hours || h % 6 === 0) svg += `<text x="${x.toFixed(1)}" y="${H - 1}" fill="currentColor" opacity=".5" font-size="7" text-anchor="middle">${hours ? h + ':00' : new Date(t).toLocaleDateString('it-IT', { weekday: 'short', timeZone: 'Europe/Rome' })}</text>`;
   }
   let pts = (hist || []).filter((h) => h.ts >= t0 && h.ts <= now);
   const filled = []; pts.forEach((p, i) => { filled.push(p); if (i < pts.length - 1 && pts[i + 1].ts - p.ts > 600000) filled.push({ ts: p.ts + 600000, [key]: 0 }); });
@@ -125,9 +146,13 @@ function drawUsage() {
   const total = tot.i + tot.o, planDay = USAGE.plan / 30, days = f.days;
   // per account la quota della settimana vera (stessa fonte di /api/pace); per modello e cartella non esiste: lì è la parte dei token del proxy
   const weekOf = (acct) => { const r = (USAGE.pace || []).find((x) => x.provider === 'claude' && x.account === acct); return r && r.used != null ? r.used + '%' : '–'; };
-  const rows = (m, colored) => { const es = Object.entries(m).sort((a, b) => b[1].t - a[1].t); return es.length ? (colored ? `<div class="stack">${es.map(([k, v], i) => `<i style="width:${total ? v.t / total * 100 : 0}%;background:${COLORS[i % 7]}"></i>`).join('')}</div>` : '') + `<table><thead><tr><th scope="col">${provIcon('claude')} ${colored === 'm' ? 'Modello' : 'Account'} Claude</th><th scope="col" class="num">Token</th><th scope="col" class="num hide-s">A listino</th><th scope="col" class="num">${colored === 'a' ? 'Quota della settimana' : 'Parte dei token'}</th></tr></thead><tbody>${es.map(([k, v], i) => `<tr><td>${colored ? `<i class="dot" style="background:${COLORS[i % 7]}"></i>` : ''}${esc(colored === 'm' ? short(k) : k)}</td><td class="num mut">${tok(v.t)}</td><td class="num mut hide-s">${eur(v.c)}</td><td class="num">${colored === 'a' ? weekOf(k) : (total ? Math.round(v.t / total * 100) : 0) + '%'}</td></tr>`).join('')}</tbody></table>` : empty('Nessun dato.'); };
-  const repoHead = `<div class="trh"><span>${provIcon('claude')} Cartella e ramo Claude</span><span class="num">Token</span><span class="num hide-s">A listino</span><span class="num">Parte dei token</span></div>`;
-  const repoRows = Object.entries(by.repo).sort((a, b) => b[1].t - a[1].t).map(([k, v]) => `<details class="tr" ${USAGE.open[k] ? 'open' : ''} data-k="${esc(k)}"><summary><span>${esc(k)}</span><span class="num mut">${tok(v.t)}</span><span class="num mut hide-s">${eur(v.c)}</span><span class="num">${total ? Math.round(v.t / total * 100) : 0}%</span></summary>${Object.entries(v.br).sort((a, b) => b[1].t - a[1].t).map(([b, x]) => `<div class="br"><span>${esc(b)}</span><span class="num mut">${tok(x.t)}</span><span class="num mut hide-s">${eur(x.c)}</span></div>`).join('')}</details>`).join('');
+  const rows = (m, colored) => { const es = Object.entries(m).sort((a, b) => b[1].t - a[1].t); return es.length ? (colored ? `<div class="stack">${es.map(([k, v], i) => `<i style="width:${total ? v.t / total * 100 : 0}%;background:${COLORS[i % 7]}"></i>`).join('')}</div>` : '') + `<table><thead><tr><th scope="col">${provIcon('claude')} ${colored === 'm' ? 'Modello' : 'Account'} Claude</th><th scope="col" class="num">Token</th><th scope="col" class="num hide-s">A listino</th><th scope="col" class="num">${colored === 'a' ? 'Quota della settimana' : 'Parte dei token'}</th></tr></thead><tbody>${es.map(([k, v], i) => `<tr><td${colored === 'a' ? ' class="acct"' : ''}>${colored ? `<i class="dot" style="background:${COLORS[i % 7]}"></i>` : ''}${esc(colored === 'm' ? short(k) : k)}</td><td class="num mut">${tok(v.t)}</td><td class="num mut hide-s">${eur(v.c)}</td><td class="num">${colored === 'a' ? weekOf(k) : (total ? Math.round(v.t / total * 100) : 0) + '%'}</td></tr>`).join('')}</tbody></table>` : empty('Nessun dato.'); };
+  // tabella vera (intestazioni di colonna per i lettori di schermo); i rami di una cartella si aprono dal pulsante
+  const repoTable = Object.keys(by.repo).length ? `<table class="repo"><thead><tr><th scope="col">${provIcon('claude')} Cartella e ramo Claude</th><th scope="col" class="num">Token</th><th scope="col" class="num hide-s">A listino</th><th scope="col" class="num">Parte dei token</th></tr></thead><tbody>${Object.entries(by.repo).sort((a, b) => b[1].t - a[1].t).map(([k, v]) => {
+    const open = !!USAGE.open[k], brs = Object.entries(v.br).sort((a, b) => b[1].t - a[1].t);
+    return `<tr class="rp"><th scope="row"><button class="rp-t" data-repo="${esc(k)}" aria-expanded="${open}">${esc(k)}<span class="sr"> (${brs.length} ${brs.length === 1 ? 'ramo' : 'rami'})</span></button></th><td class="num mut">${tok(v.t)}</td><td class="num mut hide-s">${eur(v.c)}</td><td class="num">${total ? Math.round(v.t / total * 100) : 0}%</td></tr>` +
+      brs.map(([b, x]) => `<tr class="brr"${open ? '' : ' hidden'} data-of="${esc(k)}"><td>${esc(b)}</td><td class="num mut">${tok(x.t)}</td><td class="num mut hide-s">${eur(x.c)}</td><td class="num mut">${total ? Math.round(x.t / total * 100) : 0}%</td></tr>`).join('');
+  }).join('')}</tbody></table>` : '';
   const dkeys = Object.keys(by.day).sort(), mx = Math.max(1, ...dkeys.map((d) => by.day[d].t));
   const dchart = dkeys.length ? `<div class="bars14 wide">${dkeys.map((d) => `<div title="${esc(d)}: ${tok(by.day[d].t)} token · ${eur(by.day[d].c)}"><i style="height:${Math.max(3, by.day[d].t / mx * 90)}px"></i><span>${esc(d.slice(5))}</span></div>`).join('')}</div>` : empty('Nessun dato.');
   let cum = 0, plan = 0; const pts = dkeys.map((d, i) => { cum += by.day[d].c; plan = planDay * (i + 1); return [cum, plan]; });
@@ -139,10 +164,11 @@ function drawUsage() {
   $('usage-main').innerHTML = `<div class="row" style="border:0"><select data-u="repo" aria-label="Cartella">${opt(uniq((e) => repoName(e.repo)), f.repo, 'Tutte le cartelle')}</select><select data-u="model" aria-label="Modello">${opt(uniq((e) => e.model), f.model, 'Tutti i modelli')}</select><select data-u="account" aria-label="Account">${opt(uniq((e) => e.account), f.account, 'Tutti gli account')}</select><select data-u="days" aria-label="Periodo">${[1, 7, 30].map((d) => `<option value="${d}" ${d === days ? 'selected' : ''}>${d === 1 ? 'Oggi' : d + ' giorni'}</option>`).join('')}</select><span class="grow"></span><button class="b" data-u="csv">Esporta CSV</button></div>
     <div class="grid"><div class="kpi"><b>${tok(total)}</b><span>token totali</span></div><div class="kpi"><b>${tok(tot.i)}</b><span>input</span></div><div class="kpi"><b>${tok(tot.o)}</b><span>output</span></div><div class="kpi"><b>${nfmt(tot.n)}</b><span>richieste</span></div><div class="kpi"><b>${eur(tot.c)}</b><span>equivalente a listino API</span></div></div>
     ${USAGE.plan ? `<p class="small mut">Il tuo piano (${eur(USAGE.plan)}/mese) ti fa risparmiare circa <b class="ok">${eur(Math.max(0, tot.c / days - planDay))}/giorno</b> rispetto alle tariffe API (${eur(planDay)}/giorno di piano contro ${eur(tot.c / days)}/giorno di API).</p>` : ''}
-    ${card('Token al giorno', dchart, false)}${card('Risparmio rispetto all\'API', saving, false)}${card('Per modello', rows(by.model, 'm'))}${card('Per account', rows(by.account, 'a'))}${card('Per cartella e ramo', `<div class="trl">${repoRows ? repoHead + repoRows : empty('Nessun dato.')}</div>`, false)}`;
+    ${card('Token al giorno', dchart, false)}${card('Risparmio rispetto all\'API', saving, false)}${card('Per modello', rows(by.model, 'm'))}${card('Per account', rows(by.account, 'a'))}${card('Per cartella e ramo', repoTable || empty('Nessun dato.'), false)}`;
 }
 async function renderUsage() {
-  $('t-usage').innerHTML = '<div id="usage-main"><section data-loading>' + empty('Carico…') + '</section></div><div id="usage-extra"></div>';
+  // anche la seconda metà (progetti, Muse, proxy, tray) ha il suo segnaposto: la barra aspetta che arrivi (giro 9, MX)
+  $('t-usage').innerHTML = '<div id="usage-main"><section data-loading>' + empty('Carico…') + '</section></div><div id="usage-extra"><section data-loading>' + empty('Carico progetti e quote…') + '</section></div>';
   const [pf, st, tu, pace] = await Promise.all([vdm('/api/profiles'), vdm('/api/settings'), vdm('/api/token-usage?days=' + USAGE.f.days), j('/api/pace')]);
   USAGE.pace = Array.isArray(pace) ? pace : [];
   if (st && st.usdEur) USD_EUR = st.usdEur;
@@ -163,7 +189,12 @@ document.addEventListener('click', (e) => {
     const csv = ['timestamp,repo,branch,model,account,input_tokens,output_tokens', ...d.map((x) => [new Date(x.ts).toISOString(), q(x.repo), q(x.branch), q(x.model), q(x.account), x.inputTokens || 0, x.outputTokens || 0].join(','))].join('\n');
     const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv' })); a.download = 'consumi-' + new Date().toISOString().slice(0, 10) + '.csv'; a.click(); URL.revokeObjectURL(a.href);
   }
-  const t = e.target.closest('details.tr'); if (t) setTimeout(() => { USAGE.open[t.dataset.k] = t.open; }, 0);
+  const t = e.target.closest('button.rp-t');
+  if (t) {
+    const k = t.dataset.repo, open = t.getAttribute('aria-expanded') !== 'true';
+    USAGE.open[k] = open; t.setAttribute('aria-expanded', String(open));
+    for (const r of t.closest('tbody').querySelectorAll('tr.brr')) if (r.dataset.of === k) r.hidden = !open;
+  }
 });
 
 // ---------- Sessioni ----------
@@ -178,11 +209,21 @@ async function renderSessions() {
   const liveHtml = live.map((a) => `<div class="card acard active"><div class="head">${provIcon(a.provider)}<span>${esc(a.place)}${PagesView.sessionText(a.title || '') ? ' · ' + esc(PagesView.sessionText(a.title)) : ''}</span><span class="mut small" style="margin-left:auto">${a.startedAt ? dur(Date.now() - a.startedAt) : ''}</span></div>${a.use ? `<div class="small mut" style="margin-left:26px">${esc(PagesView.useWords(a.use))}</div>` : ''}</div>`).join('');
   // luogo e testi delle sessioni passano da PagesView: cartelle con id e messaggi con canali o marcatori diventano parole
   const proj = (x) => PagesView.sessionPlace(x);
-  // righe vuote dopo sessionText (risposte del riassuntore su se stesso, messaggi di servizio) non si mostrano
-  const tl = (x) => (x.timeline || []).filter((t) => PagesView.sessionText(t.text)).map((t) => `<div class="small ${t.type === 'input' ? '' : 'mut'}" style="${t.type === 'input' ? 'font-weight:600' : 'padding-left:12px'}">${esc(PagesView.sessionText(t.text))}</div>`).join('');
+  const tl = (x) => {
+    // un riassunto che non è italiano non si mostra: una riga «Riassunto non disponibile» per ogni fila di righe così
+    const rows = [];
+    for (const t of x.timeline || []) {
+      const txt = PagesView.summaryText(t.text);
+      if (!txt) { if (rows.length && rows[rows.length - 1].na) continue; rows.push({ na: true }); continue; }
+      rows.push({ txt, input: t.type === 'input' });
+    }
+    if (!rows.length) return '';
+    return rows.map((r) => r.na ? '<div class="small mut" style="padding-left:12px" data-na>Riassunto non disponibile</div>'
+      : `<div class="small ${r.input ? '' : 'mut'}" style="${r.input ? 'font-weight:600' : 'padding-left:12px'}">${esc(r.txt)}</div>`).join('');
+  };
   const act = (s.active || []).map((x) => {
     const idle = Date.now() - x.lastActiveAt, waiting = idle > 120000;
-    return `<div class="card acard ${waiting ? '' : 'active'}"><div class="head">${provIcon('claude')}<span>${esc(x.account)} · ${esc(proj(x))}</span><span class="mut small" style="margin-left:auto">${dur(Date.now() - x.startedAt)}${waiting ? ` · in attesa di input da ${dur(idle)}` : ''}</span></div>${PagesView.sessionText(x.currentActivity) ? `<div class="small" style="margin-left:26px">${esc(PagesView.sessionText(x.currentActivity))}</div>` : ''}${tl(x) ? `<details><summary>cronologia</summary>${tl(x)}</details>` : ''}<div class="small mut" style="margin-left:26px">${esc(short(x.model))} · ${x.requestCount} richieste · ${nfmt(x.totalInputTokens + x.totalOutputTokens)} token</div></div>`;
+    return `<div class="card acard ${waiting ? '' : 'active'}"><div class="head">${provIcon('claude')}<span>${esc(x.account)} · ${esc(proj(x))}</span><span class="mut small" style="margin-left:auto">${dur(Date.now() - x.startedAt)}${waiting ? ` · in attesa di input da ${dur(idle)}` : ''}</span></div>${PagesView.activityText(x.currentActivity) ? `<div class="small" style="margin-left:26px">${esc(PagesView.activityText(x.currentActivity))}</div>` : ''}${tl(x) ? `<details><summary>cronologia</summary>${tl(x)}</details>` : ''}<div class="small mut" style="margin-left:26px">${esc(short(x.model))} · ${x.requestCount} richieste · ${nfmt(x.totalInputTokens + x.totalOutputTokens)} token</div></div>`;
   }).join('');
   const rec = (s.recent || []).map((x) => `<details class="card"><summary><span style="color:var(--fg)">${ago(x.completedAt || x.startedAt)} · <b>${esc(x.account)}</b> · ${esc(proj(x))}</span> <span class="mut small">· ${dur(x.duration || 0)} · circa ${eur(costOf({ model: x.model, inputTokens: x.totalInputTokens, outputTokens: x.totalOutputTokens }))} · ${x.requestCount || 0} richieste · ${nfmt((x.totalInputTokens || 0) + (x.totalOutputTokens || 0))} token</span></summary>${tl(x)}</details>`).join('');
   const conf = (s.conflicts || []).length ? `<section class="status warn">${IC.hand}<div>${s.conflicts.map((c) => `<div>${c.count} sessioni modificano ${esc(c.file)}</div>`).join('')}</div></section>` : '';
@@ -193,10 +234,52 @@ async function renderSessions() {
 }
 
 // ---------- Attività ----------
-const EVT = { 'auto-switch': ['info', (e) => `Cambio automatico da <b>${esc(e.from || '?')}</b> a <b>${esc(e.to || '?')}</b>`], 'proactive-switch': ['info', (e) => `Cambio proattivo a <b>${esc(e.to || '?')}</b>`], 'manual-switch': ['info', (e) => `Cambio manuale a <b>${esc(e.to || '?')}</b>`], 'rate-limited': ['warn', (e) => `<b>${esc(e.account || '?')}</b> rate limit${e.retryAfter ? ` (${Math.round(e.retryAfter / 60)} min)` : ''}`], 'auth-expired': ['bad', (e) => `<b>${esc(e.account || '?')}</b> token scaduto`], 'all-exhausted': ['bad', () => 'Tutti gli account esauriti'], 'account-discovered': ['ok', (e) => `Trovato <b>${esc(e.label || e.name || '?')}</b>`], 'account-renamed': ['mut', (e) => `<b>${esc(e.name || '?')}</b> rinominato in <b>${esc(e.label || '?')}</b>`], 'account-enabled': ['mut', (e) => `<b>${esc(e.name || '?')}</b> ${e.enabled ? 'riacceso' : 'spento: escluso dalla rotazione'}`], 'settings-changed': ['mut', () => 'Impostazioni cambiate'], upgrade: ['ok', (e) => `Aggiornato a <b>${esc(e.to || '?')}</b>`], 'refresh-failed': ['bad', (e) => `<b>${esc(e.account || '?')}</b> rinnovo fallito: ${esc(e.error || 'sconosciuto')}`], 'token-refreshed': ['ok', (e) => `<b>${esc(e.account || '?')}</b> token rinnovato`], 'priority-set': ['mut', (e) => `<b>${esc(e.name || e.account || '?')}</b> priorità impostata a ${esc(String(e.priority ?? '?'))}`], 'account-cap': ['mut', (e) => `<b>${esc(e.name || e.account || '?')}</b> ${e.fiveH == null && e.sevenD == null ? 'senza tetto' : `tetto ${e.fiveH != null ? e.fiveH + '% sulle 5 ore' : ''}${e.fiveH != null && e.sevenD != null ? ', ' : ''}${e.sevenD != null ? e.sevenD + '% sulla settimana' : ''}`}`], 'account-removed': ['warn', (e) => `<b>${esc(e.name || e.account || '?')}</b> rimosso`], 'overloaded_error': ['warn', (e) => `Anthropic sovraccarico su <b>${esc(e.account || '?')}</b>${e.attempt ? ` (tentativo ${e.attempt})` : ''}`], 'upstream-retry': ['warn', (e) => `Nuovo tentativo su <b>${esc(e.account || '?')}</b>${e.status ? ` dopo errore ${e.status}` : ''}`], overloaded_error: ['warn', (e) => `<b>${esc(e.account || '?')}</b> Anthropic sovraccarico (tentativo ${e.attempt})`] };
+// Ogni tipo che il proxy VDM scrive nel registro (un test lo legge da modules/vdm/dashboard.mjs e cade se ne manca
+// uno). `L` traduce il nome interno del profilo (auto-2) nella sua etichetta (l'email) presa da /api/profiles.
+const mins = (s) => (s ? ` (${Math.max(1, Math.round(s / 60))} min)` : '');
+const capTxt = (e) => (e.fiveH == null && e.sevenD == null ? 'senza tetto' : `tetto ${e.fiveH != null ? e.fiveH + '% sulle 5 ore' : ''}${e.fiveH != null && e.sevenD != null ? ', ' : ''}${e.sevenD != null ? e.sevenD + '% sulla settimana' : ''}`);
+const EVT = {
+  'auto-switch': ['info', (e, L) => `Cambio automatico da <b>${L(e.from)}</b> a <b>${L(e.to)}</b>${e.reason ? ` <span class="mut small">(errore ${esc(String(e.reason).replace(/-error$/, ''))})</span>` : ''}`],
+  'proactive-switch': ['info', (e, L) => `Cambio in anticipo${e.from ? ` da <b>${L(e.from)}</b>` : ''} a <b>${L(e.to)}</b>`],
+  'manual-switch': ['info', (e, L) => `Cambio manuale a <b>${L(e.to)}</b>`],
+  'rate-limited': ['warn', (e, L) => `<b>${L(e.account)}</b> al limite di richieste${mins(e.retryAfter)}`],
+  'balance-cooldown': ['warn', (e, L) => `<b>${L(e.account)}</b> in pausa per non sforare${mins(e.retryAfter)}`],
+  'balance-overflow': ['warn', (e, L) => `<b>${L(e.account)}</b> oltre la sua parte di richieste in parallelo${e.cap ? ` (massimo ${esc(String(e.cap))})` : ''}`],
+  'model-limited': ['warn', (e, L) => `<b>${L(e.account)}</b> al limite per ${esc(String(e.model || 'un modello'))}${mins(e.retryAfter)}`],
+  'model-recovered': ['ok', (e, L) => `<b>${L(e.account)}</b> di nuovo disponibile per ${esc(String(e.model || 'il modello'))}`],
+  'cap-hold': ['warn', () => 'Tutti gli account sono al tetto: le richieste aspettano invece di fallire'],
+  'cap-exhausted': ['bad', (e, L) => `Tetto raggiunto su tutti gli account${(e.capped || []).length ? `: ${e.capped.map((x) => `<b>${L(x)}</b>`).join(', ')}` : ''}`],
+  'all-exhausted': ['bad', () => 'Tutti gli account esauriti'],
+  'auth-expired': ['bad', (e, L) => `<b>${L(e.account)}</b> accesso scaduto`],
+  'permission-blocked': ['bad', (e, L) => `<b>${L(e.account)}</b> richiesta rifiutata per permessi`],
+  'bad-request-400': ['warn', (e, L) => `<b>${L(e.account)}</b> richiesta rifiutata come non valida${e.consecutive > 1 ? ` (${e.consecutive} di fila)` : ''}`],
+  'reserved-mcp-schema-error': ['warn', (e, L) => `<b>${L(e.account)}</b> rifiuta lo schema di uno strumento MCP`],
+  'openclaw-isolated-retry': ['info', (e, L) => `Richiesta di OpenClaw riprovata da <b>${L(e.from)}</b> su <b>${L(e.to)}</b>`],
+  'openclaw-ambiguous-extra-usage': ['warn', (e, L) => `<b>${L(e.account)}</b>: non è chiaro se OpenClaw stia usando crediti extra`],
+  'upstream-retry': ['warn', (e, L) => `Nuovo tentativo su <b>${L(e.account)}</b>${e.status ? ` dopo l'errore ${esc(String(e.status))}` : ''}`],
+  'inband-retry': ['warn', (e, L) => `Nuovo tentativo su <b>${L(e.account)}</b> dopo un errore a metà risposta`],
+  // inband-retry scrive come tipo l'errore stesso (overloaded_error, api_error): vedi INBAND_RETRY_ERRORS nel proxy
+  overloaded_error: ['warn', (e, L) => `Server di Claude sovraccarico su <b>${L(e.account)}</b>${e.attempt ? ` (tentativo ${esc(String(e.attempt))})` : ''}`],
+  api_error: ['warn', (e, L) => `Errore del server di Claude su <b>${L(e.account)}</b>${e.attempt ? ` (tentativo ${esc(String(e.attempt))})` : ''}`],
+  'account-discovered': ['ok', (e, L) => `Trovato <b>${esc(e.label || '') || L(e.name)}</b>`],
+  'account-renamed': ['mut', (e, L) => `<b>${L(e.name)}</b> rinominato in <b>${esc(e.label || '?')}</b>`],
+  'account-enabled': ['mut', (e, L) => `<b>${L(e.name)}</b> ${e.enabled ? 'riacceso' : 'spento: escluso dalla rotazione'}`],
+  'account-removed': ['warn', (e, L) => `<b>${L(e.name || e.account)}</b> rimosso`],
+  'priority-set': ['mut', (e, L) => `<b>${L(e.name || e.account)}</b> priorità impostata a ${esc(String(e.priority ?? '?'))}`],
+  'account-cap': ['mut', (e, L) => `<b>${L(e.name || e.account)}</b> ${capTxt(e)}`],
+  'settings-changed': ['mut', () => 'Impostazioni cambiate'],
+  'refresh-failed': ['bad', (e, L) => `<b>${L(e.account)}</b> rinnovo fallito: ${esc(e.error || 'sconosciuto')}`],
+  'token-refreshed': ['ok', (e, L) => `<b>${L(e.account)}</b> token rinnovato`],
+  upgrade: ['ok', (e) => `Aggiornato a <b>${esc(e.to || '?')}</b>`],
+};
 async function renderActivity() {
-  const a = await vdm('/api/activity'), log = (a && a.log) || [];
-  $('t-activity').innerHTML = `<section>${log.length ? `<table><thead><tr><th scope="col">Quando</th><th scope="col"><span class="sr">Tipo</span></th><th scope="col">Cosa è successo</th></tr></thead><tbody>${log.map((e) => { const [c, f] = EVT[e.type] || ['mut', () => `Evento del proxy <span class="mut small">(${esc(String(e.type).replace(/[-_]+/g, ' '))})</span>`]; return `<tr><td class="mut small" style="width:120px">${when(e.ts)} ${hhmmss(e.ts).slice(-8, -3) ? '' : ''}</td><td style="width:14px"><i class="dot ${c}" style="background:currentColor"></i></td><td>${f(e)}</td></tr>`; }).join('')}</tbody></table>` : empty('Ancora nessuna attività.')}</section>`;
+  const [a, pr] = await Promise.all([vdm('/api/activity'), vdm('/api/profiles')]);
+  const log = (a && a.log) || [];
+  // nome interno del profilo → etichetta; un nome che non è un profilo resta com'è (è già un'email)
+  const lab = {};
+  for (const p of (pr && pr.profiles) || []) if (p && p.name) lab[p.name] = p.label || p.name;
+  const L = (x) => esc(x == null || x === '' ? '?' : lab[x] || String(x));
+  $('t-activity').innerHTML = `<section>${log.length ? `<table><thead><tr><th scope="col">Quando</th><th scope="col"><span class="sr">Tipo</span></th><th scope="col">Cosa è successo</th></tr></thead><tbody>${log.map((e) => { const [c, f] = EVT[e.type] || ['mut', () => `Evento del proxy <span class="mut small">(${esc(String(e.type).replace(/[-_]+/g, ' '))})</span>`]; return `<tr><td class="mut small" style="width:120px">${when(e.ts)}</td><td style="width:14px"><i class="dot ${c}" style="background:currentColor"></i></td><td>${f(e, L)}</td></tr>`; }).join('')}</tbody></table>` : empty('Ancora nessuna attività.')}</section>`;
 }
 
 // ---------- Impostazioni ----------

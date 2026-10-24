@@ -2,12 +2,17 @@
 # I due mutanti di feedback.mjs devono far fallire il test, o il test non li prende.
 set -e
 cd "$(dirname "$0")/.."
-tmp="$(mktemp -d)"
+# mktemp -d da solo su macOS ignora TMPDIR: la copia finiva fuori dal TMPDIR della barra
+tmp="$(mktemp -d "${TMPDIR:-/tmp}/mutate.XXXX")"
 trap 'rm -rf "$tmp"' EXIT INT TERM HUP
-cp -R src test package.json "$tmp/"
+# la copia deve poter girare il test: giro 9 copiava solo src e test, ERR_MODULE_NOT_FOUND e «mutante preso» sempre
+cp -R src test test-support public modules package.json "$tmp/"
 orig="$tmp/orig-feedback.mjs"
 cp "$tmp/src/automations/feedback.mjs" "$orig"
 caught=0
+# la copia senza mutanti dev'essere verde, se no un rosso dei mutanti non vuol dire niente
+(cd "$tmp" && node --test test/automations-feedback.test.mjs > "$tmp/base.log" 2>&1) || {
+  echo 'ROSSO la copia senza mutanti non passa il test: i mutanti non proverebbero niente'; tail -20 "$tmp/base.log"; exit 1; }
 
 # (a) vince il primo voto invece dell'ultimo.
 cp "$orig" "$tmp/src/automations/feedback.mjs"
