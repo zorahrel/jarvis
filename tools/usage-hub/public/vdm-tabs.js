@@ -203,7 +203,7 @@ async function renderSessions() {
   if (!$('t-sessions').innerHTML.trim()) $('t-sessions').innerHTML = `<section data-loading>${empty('Carico…')}</section>`;
   const [s0, lv] = await Promise.all([vdm('/api/sessions'), j('/api/live')]);
   // le sessioni vive le conta l'hub (tutti i fornitori, come /api/live); il proxy aggiunge cronologia e attività
-  const live = ((lv && lv.projects) || []).flatMap((p) => ((p.agents && p.agents.list) || []).map((a) => ({ ...a, place: p.title || p.label || PagesView.humanProject(p.name) })));
+  const live = ((lv && lv.projects) || []).flatMap((p) => ((p.agents && p.agents.list) || []).map((a) => ({ ...a, place: p.display || p.title || p.label || PagesView.humanProject(p.name) })));
   if (!s0 && !live.length) { $('t-sessions').innerHTML = `<section>${empty('Il proxy VDM non risponde.')}</section>`; return; }
   const s = s0 || { active: [], recent: [], enabled: true };
   const liveHtml = live.map((a) => `<div class="card acard active"><div class="head">${provIcon(a.provider)}<span>${esc(a.place)}${PagesView.sessionText(a.title || '') ? ' · ' + esc(PagesView.sessionText(a.title)) : ''}</span><span class="mut small" style="margin-left:auto">${a.startedAt ? dur(Date.now() - a.startedAt) : ''}</span></div>${a.use ? `<div class="small mut" style="margin-left:26px">${esc(PagesView.useWords(a.use))}</div>` : ''}</div>`).join('');

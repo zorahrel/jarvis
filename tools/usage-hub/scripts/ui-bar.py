@@ -170,6 +170,12 @@ def main():
                       for (let i = 0; i < 40 && document.getElementById('nsess').textContent === ''; i++) await new Promise((r) => setTimeout(r, 100));
                       return { n, badge: document.getElementById('nsess').textContent, seen: [...document.querySelectorAll('#nav button.on')].map((b) => b.dataset.t) }; }""")
                     check(bd['n'] >= 3 and bd['badge'] == str(bd['n']) and bd['seen'] == ['overview'], f"badge Sessioni all'apertura della Panoramica = {bd['n']} sessioni di /api/live (badge {bd['badge']!r}, tab {bd['seen']})")
+                    # i nomi dei progetti: quelli che l'hub dà in display (worktree → il suo repo), mai la cartella del worktree
+                    nm = pg.evaluate("""async () => { const d = await (await fetch('/api/live')).json();
+                      const rows = [...document.querySelectorAll('#t-overview tr td:first-child > b')].map((b) => b.textContent.trim());
+                      const wt = (d.projects || []).filter((p) => p.display && p.display !== (p.title || p.name));
+                      return { wt: wt.map((p) => [p.name, p.display]), shown: wt.every((p) => rows.includes(p.display)), raw: wt.filter((p) => rows.includes(p.name)).map((p) => p.name) }; }""")
+                    check(len(nm['wt']) >= 1 and nm['shown'] and not nm['raw'], f"Panoramica: il worktree ha il nome del repo, non la cartella {nm['wt']} (cartella in pagina: {nm['raw']})")
                 pg.goto(url + '/#automations', wait_until='domcontentloaded')
                 pg.wait_for_selector('#t-automations [data-sec=table]', timeout=60000)
                 # 1. nav: a ogni cambio di tab, poi col sottotitolo più lungo possibile

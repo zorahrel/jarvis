@@ -5,6 +5,10 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+// lo stesso filtro della pagina: la descrizione di un workflow entra nel Diario solo se è italiana. pages-view.js è
+// un IIFE che si appende a globalThis (nel package type:module non riempie module.exports)
+import '../public/pages-view.js';
+const isItalian = (s) => globalThis.PagesView.isItalian(s);
 
 const EXEC = { free: 'canali gratis', muse: 'Muse', codex: 'Codex', claude: 'Claude' };
 const SYS = { openclaw: 'OpenClaw', launchd: 'Mac', desktop: 'Claude desktop', lobster: 'Lobster', workflow: 'Workflow', github: 'GitHub', pc: 'PC di casa' };
@@ -106,7 +110,7 @@ export function journal({ model, queue = [], feedback = [], diary = [], now = Da
       if (r.agents != null) bits.push(r.agents + (r.agents === 1 ? ' agente' : ' agenti'));
       if (r.durationMs != null) bits.push(Math.max(1, Math.round(r.durationMs / 60000)) + ' min');
       out.push({ at: r.at, kind: 'workflow', who: 'Workflow', title: wfTitle(w.name), outcome: r.outcome || null,
-        what: [r.summary ? firstLine(r.summary, 120) : '', bits.join(', ')].filter(Boolean).join(' · '), ref: 'wf:' + w.name, link: '#automations/' + encodeURIComponent('wf:' + w.name) });
+        what: [r.summary && isItalian(r.summary) ? firstLine(r.summary, 120) : '', bits.join(', ')].filter(Boolean).join(' · '), ref: 'wf:' + w.name, link: '#automations/' + encodeURIComponent('wf:' + w.name) });
     }
   }
   // Lavori delegati dalla coda: quando sono finiti, o quando sono partiti se girano ancora.

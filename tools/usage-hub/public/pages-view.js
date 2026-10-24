@@ -91,9 +91,11 @@
   // riassunto si mostra solo se è italiano, i nomi di strumento diventano parole, di un percorso resta il nome del
   // file e nessun id.
   var EN_WORDS = {}, IT_WORDS = {};
-  // stessa euristica di openclaw-group-guard/language.js (isItalian): almeno tre parole tipiche italiane e più delle inglesi
+  // stessa euristica di openclaw-group-guard/language.js (isItalian): almeno tre parole tipiche italiane e più delle inglesi.
+  // Con le preposizioni articolate (giro 10): «Mappa obiettivi, stato e risorse delle sessioni aperte…» restava fuori.
+  // «i» e «a» no: in inglese ci sono («I checked», «a fix»).
   "the an is it would have has been fixing fix let me i'll i'm we already nothing new for this that will be catch good now done running and of to in on with not searching reading wait update".split(' ').forEach(function (w) { EN_WORDS[w] = 1; });
-  'il lo la le gli che di è e non per un una ho hai sono da del della al alla con su ma se ti mi ci si come anche più già ora qui'.split(' ').forEach(function (w) { IT_WORDS[w] = 1; });
+  'il lo la le gli che di è e non per un una ho hai sono da del della al alla con su ma se ti mi ci si come anche più già ora qui dei delle degli dello dai dalle dagli nel nella nei nelle negli sul sulla sui sulle tra fra ogni prima dopo poi senza ed questo questa'.split(' ').forEach(function (w) { IT_WORDS[w] = 1; });
   function isItalian(text) {
     var en = 0, it = 0;
     (String(text || '').toLowerCase().match(/[a-zàèéìòù']+/g) || []).forEach(function (x) { if (IT_WORDS[x]) it++; else if (EN_WORDS[x]) en++; });

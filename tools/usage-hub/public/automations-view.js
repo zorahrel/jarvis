@@ -314,7 +314,7 @@
     var bad = run.outcome === 'error';
     return '<div class="cx-row wr' + (ui.sel === 'wf:' + w.name ? ' sel' : '') + '" role="button" tabindex="0" data-cx="wf:' + esc(w.name) + '">' +
       (bad ? '<span class="cx-g rotto">' + ic('circle-x') + '</span>' : '<span class="cx-g ok" aria-hidden="true"></span>') + '<span class="sr">' + (bad ? 'fallito' : 'riuscito') + '</span>' +
-      '<span class="cx-t"><span class="cx-tt">' + esc(wfTitle(w.name)) + '</span>' + (run.summary ? '<small>' + esc(run.summary) + '</small>' : '') + '</span>' +
+      '<span class="cx-t"><span class="cx-tt">' + esc(wfTitle(w.name)) + '</span>' + (itSummary(run.summary) ? '<small>' + esc(itSummary(run.summary)) + '</small>' : '') + '</span>' +
       '<span class="cx-c">' + esc(short(run.at, now)) + '</span>' +
       '<span class="cx-c du dim">' + esc(durWords(run.durationMs) || '—') + '</span>' +
       '<span class="cx-c ag dim">' + (run.agents != null ? run.agents : '—') + '</span>' +
@@ -409,6 +409,12 @@
       '<h3 class="bx-t">Computer e app</h3><span class="cx-cnt"><span>' + all.length + (all.length === 1 ? ' voce' : ' voci') + '</span>' + (off ? '<span>' + off + (off === 1 ? ' ferma' : ' ferme') + '</span>' : '') + '</span></header>' +
       '<p class="bx-d">Il tuo Mac, il PC e le tue app. Le vedi qui, ma non contano tra i problemi di Jarvis e non finiscono in «Ti aspetta».</p>' +
       '<div class="bx-list">' + hdr + rows.map(function (c) { return rowHtml(c, ui, now); }).join('') + '</div></article>';
+  }
+  // La descrizione di un workflow la scrive chi lo lancia, spesso in inglese («Refute the Claude Code ctrl+r filter…»):
+  // si mostra solo se è italiana, con lo stesso filtro dei riassunti di Sessioni; altrimenti resta il titolo (giro 10).
+  function itSummary(s) {
+    var P = root.PagesView || (typeof require === 'function' ? require('./pages-view.js') : null);
+    return s && P && P.isItalian(String(s)) ? noIds(String(s)) : '';
   }
   function jobsCard(model, ui, now) {
     var wf = model.workflows || {};
@@ -663,7 +669,7 @@
       return '<li><span>' + esc(short(r.at, now)) + '</span><span class="' + (r.outcome === 'error' ? 'bad' : '') + '">' + esc(outcomeWord(r.outcome)) + '</span><span>' + esc(durWords(r.durationMs)) + '</span></li>';
     }).join('');
     return '<div class="cx-wf">' + panelHead(run.outcome === 'error' ? 'rotto' : 'va', outcomeWord(run.outcome), 'Workflow') +
-      '<div class="cx-pb"><h3 id="cx-pt">' + esc(wfTitle(w.name)) + '</h3>' + (run.summary ? '<p class="cx-desc">' + esc(run.summary) + '</p>' : '') +
+      '<div class="cx-pb"><h3 id="cx-pt">' + esc(wfTitle(w.name)) + '</h3>' + (itSummary(run.summary) ? '<p class="cx-desc">' + esc(itSummary(run.summary)) + '</p>' : '') +
       '<p class="cx-bits">' + esc(bits.join(' · ')) + ' ' + (run.runId ? costHtml(run.runId, ui) : '') + '</p>' +
       flowHtml(run) + (prev ? '<h4 class="cx-h4">Giri precedenti</h4><ul class="cx-prev">' + prev + '</ul>' : '') + '</div></div>';
   }

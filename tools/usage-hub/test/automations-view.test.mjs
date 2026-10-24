@@ -200,3 +200,15 @@ test('(m) griglia bento: ogni riga somma a 12 colonne, niente buchi', () => {
   for (const m of html.matchAll(/<article class="bx [^"]*\bb-(\d+)/g)) { used += Number(m[1]); assert.ok(used <= 12); if (used === 12) used = 0; }
   assert.equal(used, 0);
 });
+
+test('Lavori lanciati dalle sessioni: la descrizione si vede solo se è italiana, altrimenti resta il titolo', async () => {
+  await import('../public/pages-view.js');   // isItalian, lo stesso filtro dei riassunti di Sessioni
+  const m = JSON.parse(JSON.stringify(ok));
+  const [w1, w2] = m.workflows.byName;
+  w1.runs[0].summary = 'Refute the Claude Code ctrl+r filter and prove it end-to-end with a real claude in a real terminal';
+  w2.runs[0].summary = 'Mappa obiettivi, stato e risorse delle sessioni aperte, trova i conflitti e verificali';
+  const html = V.render(m, {}, ok.checkedAt);
+  assert.doesNotMatch(html, /Refute the Claude Code/, 'descrizione inglese in pagina');
+  assert.match(html, /Mappa obiettivi, stato e risorse delle sessioni aperte/);
+  assert.ok(m.workflows.byName.length >= 2);
+});

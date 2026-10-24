@@ -287,3 +287,16 @@ test('validateAttesa: link claude:// accettato (apre la sessione nell\'app), jav
   for (const link of ['javascript:alert(1)', 'JavaScript:alert(1)', 'data:text/html,<script>alert(1)</script>', ' javascript:alert(1)', 'claude:alert(1)'])
     assert.match(validateAttesa({ ...base, link }) || '', /^link:/, `accettato: ${link}`);
 });
+
+test('Diario: la descrizione di un workflow entra solo se è italiana', async () => {
+  const { journal } = await import('../src/journal.mjs');
+  const now = Date.parse('2026-10-24T12:00:00+02:00');
+  const run = (summary) => ({ at: now - 3600000, outcome: 'ok', agents: 2, durationMs: 120000, summary });
+  const model = { cards: {}, workflows: { byName: [
+    { name: 'verifica-inglese', runs: [run('Independent adversarial review of the Topics PRs before merge')] },
+    { name: 'mappa-italiana', runs: [run('Mappa obiettivi, stato e risorse delle sessioni aperte, trova i conflitti e verificali')] }] } };
+  const rows = journal({ model, now }).filter((r) => r.kind === 'workflow');
+  assert.equal(rows.length, 2);
+  assert.doesNotMatch(rows.map((r) => r.what).join(' | '), /Independent adversarial/);
+  assert.match(rows.map((r) => r.what).join(' | '), /Mappa obiettivi/);
+});

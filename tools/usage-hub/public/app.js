@@ -43,6 +43,8 @@ const card = (title, body, open = true) => `<details class="card" ${open ? 'open
 const empty = (t) => `<div class="mut small">${t}</div>`;
 
 // ---------- Panoramica ----------
+// Il nome che si vede: display dall'hub (worktree → il suo repo, cartella temporanea → il lavoro, b378420), poi titolo e nome.
+const projName = (p) => p.display || (p.title && p.title !== p.name ? p.title : PagesView.humanProject(p.name));
 // Grafico dell'andamento accanto alla barra, come nella tray: scala 0–100 fissa, linea a gradini con l'area, punto sull'ultimo valore.
 // Solo i punti fra l'inizio della finestra e adesso: uno dopo «adesso» (orologio indietro) usciva dalla card (giro 10).
 function spark(points, spanMs, tone = '') {
@@ -118,7 +120,7 @@ function projectRows(live, items) {
   // Una colonna di soli «–» non dice niente: si mostra solo il provider che ha consumo su almeno un progetto.
   const cols = ['claude', 'codex', 'muse'].filter((k) => ps.some((p) => p[k] > 0));
   const row = (p, dim) => { const s = stateOf(p, items), r = reason(p);
-    return `<tr class="${dim ? 'dim' : ''}"><td><b>${esc(p.title && p.title !== p.name ? p.title : PagesView.humanProject(p.name))}</b>${p.priority && p.priority !== 'normale' ? ` <span class="pill ${p.priority === 'alta' ? 'warn' : 'mut'}">priorità ${esc(p.priority)}</span>` : ''}<div class="small mut">${esc(p.what || '')}</div>${agentsHtml(p)}</td>` +
+    return `<tr class="${dim ? 'dim' : ''}"><td><b>${esc(projName(p))}</b>${p.priority && p.priority !== 'normale' ? ` <span class="pill ${p.priority === 'alta' ? 'warn' : 'mut'}">priorità ${esc(p.priority)}</span>` : ''}<div class="small mut">${esc(p.what || '')}</div>${agentsHtml(p)}</td>` +
       // su telefono l'intestazione sparisce: ogni numero porta con sé icona e nome del provider
       cols.map((k) => `<td class="num ${p[k] > 0 ? '' : 'mut'}"><span class="pv">${IC[k]} ${PROV[k]}</span>${pct(p[k])}</td>`).join('') +
       `<td class="state ${s.cls}" title="${esc(r)}">${IC[s.icon]} ${esc(s.text)}</td></tr>`; };
