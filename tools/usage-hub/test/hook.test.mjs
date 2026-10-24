@@ -47,7 +47,10 @@ test('hook prints one line over budget, stays mute otherwise, and is fast', () =
   assert.equal(hit.out, 'PoP: 7.6% della settimana, budget 3%: lavoro meccanico su Muse Wonder');
   // il migliore di 3: con il Mac carico un avvio a freddo di node sfora per lo scheduler, un hook lento sfora sempre
   const ms = Math.min(hit.ms, ...[1, 2].map(() => runHook(cache, '/Users/x/.openclaw/workspace/pop-demo').ms));
-  assert.ok(ms < 300, `hook took ${ms} ms`);
+  // il costo dell'hook oltre l'avvio di node, misurato nello stesso momento: a carico 60 node da solo ne prende 1500
+  // (giro 10, barra rossa per il carico, non per l'hook); un hook lento sfora comunque
+  const bare = Math.min(...[1, 2, 3].map(() => { const t0 = performance.now(); spawnSync(process.execPath, ['-e', '0']); return performance.now() - t0; }));
+  assert.ok(ms < 300 || ms - bare < 200, `hook took ${Math.round(ms)} ms, node da solo ${Math.round(bare)} ms`);
   assert.equal(runHook(cache, '/Users/x/Projects/claude-usage-hub').out, '');
   writeStatus(buildStatus(report(1.2), budgets), file);
   assert.equal(runHook(cache, '/Users/x/.openclaw/workspace/pop-demo').out, '');
