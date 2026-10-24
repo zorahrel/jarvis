@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>com.jarvis.esempio-ogni15</string>
+  <key>ProgramArguments</key><array><string>/usr/bin/env</string><string>museagent</string><string>giro di prova</string></array>
+  <key>StartInterval</key><integer>900</integer>
+  <key>StandardOutPath</key><string>LOGDIR/esempio-ogni15.log</string>
+</dict>
+</plist>

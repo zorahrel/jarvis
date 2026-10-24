@@ -42,7 +42,8 @@ export function demoMac(now = Date.now()) {
 export function demoAgents(now = Date.now()) {
   const a = (project, provider, model, title, minsAgo) => ({ project, provider, model, title, cliId: 'demo-' + project, depth: 0, cwd: '/work/' + project, startedAt: now - minsAgo * 60000, lastActivity: now - 60000 });
   // la prima ha il link «apri» come le sessioni vere aperte in un tab (serve alla barra: link nel testo, contrasto)
-  return [{ ...a('billing-api', 'claude', 'Sonnet', 'Sistemare il calcolo delle fatture', 42), open: { url: '#projects', via: 'tab Topics' } }, a('mobile-app', 'codex', 'gpt-5', 'Test della schermata di accesso', 15)];
+  // una cartella scratch-…: il nome grezzo non va in pagina, si legge il titolo («Prova del 22/10»)
+  return [{ ...a('billing-api', 'claude', 'Sonnet', 'Sistemare il calcolo delle fatture', 42), open: { url: '#projects', via: 'tab Topics' } }, a('scratch-2026-10-22-a1b2c3', 'claude', 'Haiku', 'Prova veloce di un comando', 7), a('mobile-app', 'codex', 'gpt-5', 'Test della schermata di accesso', 15)];
 }
 
 export function demoContext(now = Date.now()) {

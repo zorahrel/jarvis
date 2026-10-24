@@ -11,7 +11,7 @@ import fs from 'node:fs';
 import { liveJobs } from '../src/server.mjs';
 import { localConfig } from '../src/local-config.mjs';
 import { sweepStaleDemoRoots } from '../src/demo.mjs';
-import { snapshotReal, realChanges, realStrings, phoneLike } from '../test-support/real-data.mjs';
+import { snapshotReal, realChanges, realStrings, phoneLike, phoneDigits } from '../test-support/real-data.mjs';
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -28,7 +28,9 @@ const freePort = () => new Promise((resolve) => { const s = net.createServer(); 
 
 // tutte le API che la pagina della demo legge (anche quelle del proxy VDM, finte in demo)
 const DEMO_APIS = ['/api/hub-config', '/api/automations', '/api/overview', '/api/live', '/api/pace', '/api/gates', '/api/mac', '/api/contesto', '/api/diario?days=7', '/api/attesa', '/api/services', '/api/projects', '/api/heavy', '/api/machines', '/api/pc', '/api/queue', '/api/alerts',
-  '/vdm/api/profiles', '/vdm/api/settings', '/vdm/api/sessions', '/vdm/api/token-usage?days=7', '/vdm/api/activity'];
+  '/vdm/api/profiles', '/vdm/api/settings', '/vdm/api/sessions', '/vdm/api/token-usage?days=7', '/vdm/api/activity',
+  '/api/feedback', '/api/automations/summary', '/api/forecast', '/api/contesto/check'];
+// più lo schema del pannello di ogni automazione (/api/automations/graph?key=…), che la pagina chiede a ogni apertura
 
 test('serve --demo con l\'HOME vero: nessun account, cartella o nome utente di questo Mac nelle API', { timeout: 120000 }, async () => {
   const port = await freePort(), before = snapshotReal();
@@ -43,9 +45,16 @@ test('serve --demo con l\'HOME vero: nessun account, cartella o nome utente di q
     const leaves = (o) => (o && typeof o === 'object' ? Object.values(o).flatMap(leaves) : typeof o === 'string' && o.length >= 6 ? [o] : []);
     // e i testi veri di diario e «Ti aspetta» e il numero di notify.json: la demo non legge niente di vero
     const real = new RegExp([user, home, '.openclaw', '/jarvis', ...leaves(localConfig()), ...realStrings()].map(esc).join('|'), 'i');
-    for (const u of DEMO_APIS) {
+    const auto = await (await fetch(url + '/api/automations')).json();
+    const keys = Object.keys(auto.cards || {}).length ? Object.keys(auto.cards) : (auto.items || auto.rows || []).map((c) => c.key).filter(Boolean);
+    assert.ok(keys.length >= 3, 'la demo ha automazioni da aprire');
+    const realDigits = realStrings().filter((x) => /^\d{9,}$/.test(x));
+    for (const u of [...DEMO_APIS, ...keys.map((k) => '/api/automations/graph?key=' + encodeURIComponent(k))]) {
       const body = await (await fetch(url + u, { signal: AbortSignal.timeout(60000) })).text();
       const m = body.match(real);
+      // le cifre dei numeri veri anche scritte con trattini, punti, spazi o parentesi
+      const dd = phoneDigits(body), hit = realDigits.find((x) => dd.includes(x));
+      assert.equal(hit, undefined, `${u} contiene un numero vero (${hit && hit.slice(0, 3)}…)`);
       assert.equal(m, null, `${u} contiene «${m && body.slice(Math.max(0, m.index - 40), m.index + 40)}»`);
       // nessun numero di telefono in nessuna forma (+39…, 39…@s.whatsapp.net, wa.me/…)
       let j = null; try { j = JSON.parse(body); } catch { /* non JSON */ }
@@ -77,4 +86,24 @@ test('serve --demo fermato con SIGTERM toglie la sua cartella; una rimasta da un
   assert.deepEqual(fs.readdirSync(tmp).filter((n) => n.startsWith('usage-hub-demo-')), ['usage-hub-demo-viva']);
   assert.equal(sweepStaleDemoRoots(tmp), 0);
   } finally { p.kill('SIGKILL'); }
+});
+
+test('sweepStaleDemoRoots: anche le demo annidate e le cartelle di prova vecchie, mai quelle di un processo vivo', () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'sweep-')), old = Date.now() - 7 * 3600000;
+  const mk = (rel, pid) => { const p = path.join(tmp, rel); fs.mkdirSync(p, { recursive: true }); if (pid != null) fs.writeFileSync(path.join(p, '.pid'), String(pid)); return p; };
+  const age = (p) => fs.utimesSync(p, old / 1000, old / 1000);
+  // demo morta dentro una cartella di prova: va tolta, e con lei la cartella vuota
+  const nested = mk('demo-tmp-abc/usage-hub-demo-vecchia', 999999); age(nested); age(path.join(tmp, 'demo-tmp-abc'));
+  // cartelle di prova vecchie senza processi vivi
+  for (const d of ['ui-bar-xyz/home', 'ux-proofs-q1/home']) { const p = mk(d); age(p); age(path.dirname(p)); }
+  // demo viva annidata (pid di questo processo): resta, con la sua cartella
+  const live = mk('demo-tmp-viva/usage-hub-demo-viva', process.pid); age(live); age(path.join(tmp, 'demo-tmp-viva'));
+  // cartella di prova recente: resta
+  mk('ui-bar-recente/home');
+  const n = sweepStaleDemoRoots(tmp);
+  const left = fs.readdirSync(tmp).sort();
+  assert.deepEqual(left, ['demo-tmp-viva', 'ui-bar-recente'], 'rimaste: ' + left);
+  assert.ok(fs.existsSync(live));
+  assert.equal(n, 3);
+  fs.rmSync(tmp, { recursive: true, force: true });
 });

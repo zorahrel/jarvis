@@ -20,6 +20,8 @@ agents/
 # Runtime data
 memory/
 state/
+# …ma i fixture dei test dell'hub stanno nel commit, anche le cartelle state/ e i .bak finti (giro 9: barra rossa su una copia pulita)
+!tools/usage-hub/test/fixtures/**/state/
 **/moondream-env/
 **/*-venv/
 **/__pycache__/
@@ -122,3 +124,5 @@ docs/estirpazione-2026-10.md
 scripts/fatture-mensili.py
 scripts/fatture-portali.py
 scripts/jcode-auth-sync.py
+# il .bak finto dei fixture dell'hub serve al test che lo esclude (dopo «*.bak», che altrimenti vince)
+!tools/usage-hub/test/fixtures/**/*.bak

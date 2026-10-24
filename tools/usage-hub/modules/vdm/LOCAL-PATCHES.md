@@ -1025,3 +1025,11 @@ that part needs a human.
 
 Still open: the `[discover]` trace from the previous patch, to be read after the next
 `/login`.
+
+## Riassunto delle sessioni in italiano, NIENTE senza lavoro (24/10)
+`callHaikuSummary` usava un prompt inglese e, quando riceveva un messaggio di servizio di OpenClaw invece di
+lavoro, Haiku rispondeva parlando di sé («I'm Claude…», «I appreciate you sharing this routing information…»);
+quelle frasi, o in mancanza il testo grezzo del turno (`mcp__openclaw__exec: …`), finivano nella pagina Sessioni
+dell'hub. Prompt e lettura della risposta stanno ora in `lib.mjs` (`SUMMARY_SYSTEM`, `parseSummary`): italiano,
+forma impersonale, e `NIENTE` quando non c'è lavoro → `{ skip: true }`, il turno non entra in cronologia (nemmeno
+col fallback a regole). Test: `test/summary.test.mjs`. Vale dal prossimo riavvio del proxy.

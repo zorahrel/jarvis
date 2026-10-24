@@ -47,6 +47,8 @@ export function createDemoAutomations({ fixture = 'ok', dir = process.env.USAGE_
         { id: 'trigger', kind: 'trigger', label: 'ogni giorno alle 7:00', detail: 'pianificazione di esempio' },
         { id: 'sources', kind: 'sources', label: '2 fonti', items: [{ label: 'agenda di esempio' }, { label: 'note di esempio' }], detail: 'nominate nel prompt' },
         { id: 's1', kind: 'step', label: 'raccoglie le voci del giorno', outcome: 'ok', ms: 12000 },
+        // un passo del modello con domanda e risposta: nel pannello c'è «Mostra domanda e risposta» (alto 44 px sul telefono)
+        { id: 'm1', kind: 'model', label: 'scrive il riassunto', outcome: 'ok', ms: 18000, model: 'claude-sonnet-5', io: { in: 'Riassumi le voci del giorno in tre righe.', out: 'Tre appuntamenti, una scadenza, niente di urgente.', outFrom: 'Sonnet' } },
         { id: 'deliver', kind: 'deliver', label: 'chat di esempio', outcome: 'ok', at: at + 42000 },
       ],
     };

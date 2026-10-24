@@ -106,10 +106,22 @@ def goto_tab(pg, t):
     return wait_loaded(pg)
 
 
+# La demo non ha progetti fermi né righe di log: senza, contrasto delle righe «.dim» e scorrimento di #logbox
+# non si misurano. Un progetto di /api/live diventa fermo, e il log riceve 120 righe come da logSrc.
+DEAD_JS = """(() => { const f = window.fetch; window.fetch = async (u, o) => { const r = await f(u, o);
+  if (!String(u).endsWith('/api/live')) return r;
+  const j = await r.clone().json(); const p = (j.projects || []).filter(x => !((x.agents && x.agents.list) || []).length).pop();
+  if (p) { p.dead = true; p.agents = null; }
+  return new Response(JSON.stringify(j), { status: r.status, headers: { 'content-type': 'application/json' } }); }; })()"""
+FILL_LOG = "(() => { const b = document.getElementById('logbox'); if (!b) return 0; for (let i = 0; i < 120; i++) b.append(document.createTextNode('09:' + String(i % 60).padStart(2, '0') + ' riga di prova del log ' + i + '\\n')); return b.scrollHeight; })()"
+
+
 def axe_tabs(pg, axe, tabs):
     bad = []
     for t in tabs:
         goto_tab(pg, t)
+        if t == 'logs':
+            pg.evaluate(FILL_LOG)
         pg.add_script_tag(content=axe)
         bad += [t + ':' + x for x in pg.evaluate(AXE_RUN)]
     return bad
@@ -130,6 +142,7 @@ def main():
                 pg = b.new_context(viewport={'width': w, 'height': 900}).new_page()
                 # lo schema del pannello arriva dopo 2,5 s (UI_BAR_GRAPH_DELAY per provare che oltre 4 s è rosso): il pannello deve mostrare lo scheletro nel frattempo
                 pg.add_init_script("(() => { const f = window.fetch; window.fetch = (u, o) => String(u).includes('/api/automations/graph') ? new Promise((r) => setTimeout(r, %d)).then(() => f(u, o)) : f(u, o); })()" % GRAPH_DELAY_MS)
+                pg.add_init_script(DEAD_JS)
                 pg.set_default_timeout(90000)
                 errs = []
                 pg.on('pageerror', lambda e: errs.append(str(e)[:160]))
@@ -167,7 +180,7 @@ def main():
                 check(not stuck, f'{w}px ogni tab finisce di caricare entro 40 s {stuck}')
                 check(not cuts, f'{w}px nessun testo tagliato su {len(TABS)} tab {cuts[:4]}')
                 # 5. provider, card, comandi: Panoramica, Progetti e Consumi con i «Altri N» aperti
-                prov, out, taps, leak, heads = [], [], [], [], []
+                prov, out, taps, leak, heads, names = [], [], [], [], [], []
                 for t in TABS:
                     goto_tab(pg, t)
                     pg.evaluate("document.querySelectorAll('.tab.on details').forEach(d => d.open = true)")
@@ -176,6 +189,7 @@ def main():
                     prov += [t + ': ' + x for x in pg.evaluate('__provLabels()')]
                     out += [t + ': ' + x for x in pg.evaluate('__contained()')]
                     leak += [t + ': ' + x for x in pg.evaluate('__internal()')]
+                    names += [t + ': ' + x for x in pg.evaluate('__names()')]
                     heads += [t + ': ' + x for x in pg.evaluate('__tableHeads()')]
                     if w <= 560:
                         taps += [t + ': ' + x for x in pg.evaluate('__taps(44)')]
@@ -192,13 +206,32 @@ def main():
                 check(not out, f'{w}px nessuna cella fuori dalla sua card {out[:4]}')
                 check(not leak, f'{w}px nessun testo interno (OpenClaw, mcp__, percorsi, id) su {len(TABS)} tab {leak[:4]}')
                 check(not heads, f'{w}px ogni tabella ha le intestazioni delle colonne {heads[:4]}')
+                check(not names, f'{w}px ogni campo ha un nome vero (non il placeholder) {names[:4]}')
+                dimn = pg.evaluate("location.hash='overview', new Promise(r => setTimeout(() => r(document.querySelectorAll('#t-overview tr.dim, #t-projects tr.dim').length), 1500))")
+                check(dimn >= 1, f'{w}px c\'è un progetto fermo da misurare ({dimn} righe .dim)')
                 # Sessioni e Consumi disegnati con i dati del proxy finto, non vuoti
                 goto_tab(pg, 'sessions')
                 ns = pg.evaluate("document.querySelectorAll('#t-sessions .card').length")
                 check(ns >= 3, f'{w}px Sessioni disegnata con dati ({ns} schede)')
+                # Attive = sessioni vive dell'hub (/api/live), badge compreso; il luogo è il titolo, non la cartella
+                sv = pg.evaluate("""async () => { const lv = await (await fetch('/api/live')).json();
+                  const n = lv.projects.reduce((t, p) => t + ((p.agents && p.agents.list) || []).length, 0);
+                  const h = [...document.querySelectorAll('#t-sessions h2')].map(x => x.textContent).find(x => /^Attive/.test(x)) || '';
+                  const t = document.getElementById('t-sessions').innerText;
+                  return { n, h, badge: document.getElementById('nsess').textContent, title: t.includes('Prova del 22/10'), raw: /scratch-\\d{4}/.test(t) }; }""")
+                check(sv['n'] >= 3 and sv['h'] == f"Attive ({sv['n']})" and sv['badge'] == str(sv['n']), f"{w}px Sessioni: Attive e badge contano le {sv['n']} sessioni di /api/live ({sv['h']!r}, badge {sv['badge']!r})")
+                # Attività: nessuna chiave grezza del proxy (priority-set, account-cap, upstream-retry…)
+                goto_tab(pg, 'activity'); pg.wait_for_selector('#t-activity table', timeout=20000)
+                raw = pg.evaluate("[...new Set((document.getElementById('t-activity').innerText.match(/\\b[a-z]+(?:[-_][a-z]+)+\\b/g) || []))]")
+                check(not raw, f'{w}px Attività: eventi in italiano, nessuna chiave grezza {raw[:4]}')
+                check(sv['title'] and not sv['raw'], f"{w}px Sessioni: il luogo è il titolo («Prova del 22/10»), non la cartella scratch-… (titolo {sv['title']}, grezzo {sv['raw']})")
                 goto_tab(pg, 'usage'); pg.wait_for_selector('#usage-main table', timeout=20000)
                 nu = pg.evaluate("document.querySelectorAll('#usage-main table tbody tr').length")
                 check(nu >= 4, f'{w}px Consumi disegnata con dati ({nu} righe)')
+                pg.add_script_tag(content=CHECKS_JS)
+                uq = pg.evaluate("async () => __usageQuota(await (await fetch('/api/pace')).json())")
+                nq = pg.evaluate("[...document.querySelectorAll('#t-usage th')].filter(h => /quota della settimana/i.test(h.textContent)).length")
+                check(not uq and nq >= 1, f'{w}px Consumi: «Quota della settimana» per account uguale a pace ({nq} colonne) {uq}')
                 if w <= 560:
                     check(not taps, f'{w}px comandi alti almeno 44 px ({len(taps)} sotto) {taps[:5]}')
                 if axe:
@@ -227,7 +260,9 @@ def main():
                         bp = pg.evaluate('__band()')
                         check(not bp, f'{w}px pannello aperto: fascia ESEMPIO in vista {bp}')
                         if w <= 560:
-                            pt = [x for x in pg.evaluate('__taps(44)') if 'cx-' in x or 'au-' in x]
+                            pt = pg.evaluate("__taps(44, '.cx-panel')")
+                            ng = pg.evaluate("document.querySelectorAll('.cx-panel details.gmore > summary').length")
+                            check(ng >= 1, f'{w}px pannello: c\'è un «Mostra domanda e risposta» da misurare ({ng})')
                             check(not pt, f'{w}px pannello: comandi di almeno 44×44 px {pt[:5]}')
                         pg.evaluate("document.querySelectorAll('.cx-panel details').forEach(d => d.open = true)")
                         if shots:
@@ -248,10 +283,16 @@ def main():
                 # 4. in scuro: contrasto e il resto di axe
                 if axe:
                     pd = b.new_context(viewport={'width': w, 'height': 900}, color_scheme='dark').new_page()
+                    pd.add_init_script(DEAD_JS)
                     pd.set_default_timeout(90000)
                     pd.goto(url + '/#overview', wait_until='domcontentloaded')
                     v = axe_tabs(pd, axe, AXE_TABS)
                     check(not v, f'{w}px axe su {len(AXE_TABS)} tab in scuro: nessuna violazione seria {v[:4]}')
+                    provd = []
+                    for t in ('overview', 'projects', 'usage'):
+                        goto_tab(pd, t); pd.evaluate("document.querySelectorAll('.tab.on details').forEach(d => d.open = true)"); pd.add_script_tag(content=CHECKS_JS)
+                        provd += [t + ': ' + x for x in pd.evaluate('__provLabels()')]
+                    check(not provd, f'{w}px in scuro ogni numero di consumo ha il suo provider {provd[:4]}')
                     links = []
                     for t in ('overview', 'projects', 'journal', 'services'):
                         goto_tab(pd, t); pd.add_script_tag(content=CHECKS_JS)
@@ -286,6 +327,15 @@ def main():
             done = wait_loaded(pg, 60)
             real = pg.evaluate("!!document.querySelector('#t-overview section.status') && !/Carico quote/.test(document.getElementById('t-overview').innerText)")
             check(done and real, f'Panoramica lenta (attesa +6 s, live +12 s): la barra aspetta la pagina vera (caricata {done}, vera {real})')
+            pg.context.close()
+            # 7b. Mac lento a freddo (+8 s): il resto della Panoramica c'è entro 3 s, il Mac arriva nel suo riquadro
+            pg = b.new_context(viewport={'width': 1440, 'height': 900}).new_page()
+            pg.add_init_script("(() => { const f = window.fetch; window.fetch = (u, o) => String(u).includes('/api/mac') ? new Promise((r) => setTimeout(r, 8000)).then(() => f(u, o)) : f(u, o); })()")
+            pg.goto(url + '/#overview', wait_until='domcontentloaded'); pg.wait_for_timeout(3000)
+            early = pg.evaluate("({ status: !!document.querySelector('#t-overview section.status'), mac: !!document.querySelector('#t-overview [data-sec=mac] [data-loading]') })")
+            check(early['status'] and early['mac'], f'Panoramica col Mac lento (+8 s): a 3 s c\'è già lo stato, il Mac ha il suo segnaposto {early}')
+            macok = wait_loaded(pg, 20) and pg.evaluate("!!document.querySelector('#t-overview [data-sec=mac] section, #t-overview [data-sec=mac] .mac, #t-overview [data-sec=mac] *:not(p)')")
+            check(macok, f'Panoramica col Mac lento: il blocco Mac arriva ({macok})')
             pg.context.close()
             b.close()
     finally:

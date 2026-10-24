@@ -54,13 +54,14 @@ def open_tab(page, url):
 
 def audit(page, label):
     # ui-audit misura il DOM (sovrapposizioni, overflow, tap target); axe guarda contrasto e accessibilità.
-    page.add_script_tag(content=AUDIT_JS.read_text())
+    # come ui-bar.py: i pezzi interni delle icone SVG (path e circle della stessa icona) non sono sovrapposizioni
+    page.add_script_tag(content=AUDIT_JS.read_text().replace('var el = all[i];', 'var el = all[i]; if (el.ownerSVGElement) continue;', 1))
     res = json.loads(page.evaluate("window.__uiAudit({scope:'#t-automations', minTap:32, maxEls:800})"))
     page.add_script_tag(content=AXE_JS.read_text())
     axe = page.evaluate("""async () => { const r = await axe.run('#t-automations', { runOnly: ['wcag2a', 'wcag2aa'] });
       return r.violations.filter(v => v.impact === 'serious' || v.impact === 'critical').map(v => ({ id: v.id, n: v.nodes.length, t: v.nodes[0].target })); }""")
     f = res['findings']
-    check(len(f.get('overlap', [])) == 0, f'{label}: 0 sovrapposizioni (trovate {len(f.get("overlap", []))})')
+    check(len(f.get('overlap', [])) == 0, f'{label}: 0 sovrapposizioni (trovate {len(f.get("overlap", []))}) {f.get("overlap", [])[:3]}')
     check(not res['overflowX']['present'], f'{label}: niente scroll orizzontale (pagina {res["overflowX"]["docWidth"]} px su {res["overflowX"]["viewport"]})')
     check(len(axe) == 0, f'{label}: 0 problemi gravi di accessibilità e contrasto ({axe})')
     return {'uiAudit': res, 'axeSerious': axe}

@@ -512,7 +512,10 @@ export function createServer(config, deps = {}) {
         return v ? send(200, 'application/json', JSON.stringify(v)) : send(404, 'application/json', JSON.stringify({ error: 'non nella demo' }));
       }
       if (req.url.startsWith('/vdm/')) {
-        const up = http.request({ host: '127.0.0.1', port: (config.vdm && config.vdm.port) || 3335, path: req.url.slice(4), method: req.method, headers: { 'content-type': req.headers['content-type'] || 'application/json' } }, (r) => {
+        // nella barra isolata (HUB_TEST_SANDBOX=1) il proxy vero non si raggiunge mai, nemmeno con la porta scritta in config
+        const vdmPort = (config.vdm && config.vdm.port) || Number(process.env.USAGE_HUB_VDM_PORT) || 3335;
+        if (process.env.HUB_TEST_SANDBOX === '1' && vdmPort === 3335) return send(500, 'application/json', JSON.stringify({ error: 'in prova il proxy VDM vero non si tocca' }));
+        const up = http.request({ host: '127.0.0.1', port: vdmPort, path: req.url.slice(4), method: req.method, headers: { 'content-type': req.headers['content-type'] || 'application/json' } }, (r) => {
           res.writeHead(r.statusCode, { 'content-type': r.headers['content-type'] || 'application/json', 'cache-control': 'no-cache' });
           r.pipe(res);
           res.on('close', () => r.destroy());

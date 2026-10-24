@@ -1,0 +1,3 @@
+{ "filePath": "/Users/demo/.openclaw/workflows/prova.lobster", "resumeAtIndex": 2,
+  "steps": { "uno": { "id": "uno", "stdout": "uno\n" }, "cancello": { "id": "cancello", "stdout": "aspetto il tuo ok\n" } },
+  "args": {}, "approvalStepId": "cancello", "approvalIdentity": {}, "supersededResumeStateKeys": [], "createdAt": "2026-10-22T23:00:44.162Z" }

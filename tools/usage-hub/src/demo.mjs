@@ -30,17 +30,28 @@ export function makeDemoRoot(now = Date.now()) {
 // Un --demo ucciso con SIGKILL non fa girare 'exit': alla partenza si tolgono le cartelle demo di un'ora fa
 // il cui processo (scritto in .pid da removeOnExit) non c'è più. Una demo ancora accesa resta.
 const alive = (pid) => { try { process.kill(pid, 0); return true; } catch (e) { return e.code === 'EPERM'; } };
+// Le cartelle di prova che contengono demo (demo-tmp-*, ui-bar-*, ux-proofs-*, prova-automazioni-*): un giro
+// interrotto le lasciava in $TMPDIR per sempre (16 + 56 + 10 il 24/10). Si tolgono vecchie di 1 ora e senza
+// nessun .pid vivo dentro, fino a due livelli.
+const PROOF_DIR = /^(?:demo-tmp-|ui-bar-|ux-proofs-|prova-automazioni-)/;
+const HOUR = 3600000;
+function livePidInside(p, depth = 2) {
+  try {
+    const pid = Number(fs.readFileSync(path.join(p, '.pid'), 'utf8').trim() || 0) || 0;
+    if (pid && alive(pid)) return true;
+  } catch { /* nessun .pid qui */ }
+  if (!depth) return false;
+  try { return fs.readdirSync(p, { withFileTypes: true }).some((d) => d.isDirectory() && livePidInside(path.join(p, d.name), depth - 1)); } catch { return false; }
+}
 export function sweepStaleDemoRoots(dir = os.tmpdir(), now = Date.now()) {
   let n = 0;
+  const old = (p) => { try { return now - fs.statSync(p).mtimeMs > HOUR; } catch { return false; } };
   for (const name of fs.readdirSync(dir)) {
-    if (!name.startsWith('usage-hub-demo-')) continue;
     const p = path.join(dir, name);
-    try {
-      const pid = Number(fs.readFileSync(path.join(p, '.pid'), 'utf8').trim() || 0) || 0;
-      if (pid && alive(pid)) continue;
-      if (now - fs.statSync(p).mtimeMs > 3600000) { fs.rmSync(p, { recursive: true, force: true }); n++; }
-    } catch (e) {
-      if (e.code === 'ENOENT' && fs.existsSync(p) && now - fs.statSync(p).mtimeMs > 3600000) { fs.rmSync(p, { recursive: true, force: true }); n++; }
+    if (name.startsWith('usage-hub-demo-')) {
+      if (!livePidInside(p, 0) && old(p)) { fs.rmSync(p, { recursive: true, force: true }); n++; }
+    } else if (PROOF_DIR.test(name) && old(p) && !livePidInside(p)) {
+      fs.rmSync(p, { recursive: true, force: true }); n++;
     }
   }
   return n;

@@ -92,14 +92,27 @@
   // alle ultime due cartelle.
   function sessionText(t) {
     var s = String(t == null ? '' : t).trim().replace(/^\[(?:[A-Z][a-z]{2} )?\d{4}-\d{2}-\d{2}[ T][\d:]+(?: ?GMT[+-]?\d*| ?UTC)?\]\s*/, '');
-    if (/^\[Inter-session message\]|^I acknowledge\b[^.]*inter-session|inter-session|routing data/i.test(s)) return 'Messaggio di servizio fra sessioni';
-    s = s.replace(/\bmcp__([a-z0-9-]+)__([a-z0-9_-]+)/gi, function (_, srv, name) { return 'Strumento di ' + srv + ': ' + name; })
+    // risposte del riassuntore su se stesso (rifiuti, domande, «I'm Claude…») e messaggi di servizio: non sono lavoro, non si mostrano
+    if (META_START.test(s) || META_ANY.test(s)) return '';
+    var e = /^ESITO:\s*(\S+)/.exec(s);
+    if (e) return 'Esito: ' + e[1];
+    // nomi di strumenti: un comando di shell è «Comando sul Mac» (il testo del comando non si mostra)
+    var tool = /^(?:mcp__([a-z0-9-]+)__([a-z0-9_-]+)|Strumento di [a-z0-9-]+:\s*([a-z0-9_-]+)|(exec|bash|Bash|process))\b/i.exec(s);
+    if (tool) {
+      var name = (tool[2] || tool[3] || tool[4]).toLowerCase();
+      return name === 'exec' || name === 'bash' ? 'Comando sul Mac' : name === 'process' ? 'Controllo di un processo' : 'Strumento ' + name.replace(/_/g, ' ');
+    }
+    s = s.replace(/\bmcp__([a-z0-9-]+)__([a-z0-9_-]+)/gi, function (_, srv, name) { return 'strumento ' + name.replace(/_/g, ' '); })
+      .replace(/\/Library\/Application Support\//g, '/Library/Application_Support/')
       .replace(/(?:~|\/(?:Users|home|private|tmp|var|opt)\b)(?:\/[^\s/:;,'"()]+)+/g, function (p) {
-        var parts = p.split('/').filter(Boolean);
-        return parts.length > 2 ? '…/' + parts.slice(-2).join('/') : p;
+        // ultime due cartelle, saltando quelle che sono id o percorsi codificati (-Users-…, local_<uuid>, _sys_…, tmp.XXXX)
+        var parts = p.split('/').filter(function (x) { return x && !/^-Users-|^-home-|^local_|^_sys_|^tmp\.|^claude-\d+$|[0-9a-f]{8}-[0-9a-f]{4}|^Application_Support$/i.test(x); });
+        return (parts.length > 2 ? '…/' + parts.slice(-2).join('/') : '…/' + parts.slice(-1).join('/'));
       });
     return noIds(s);
   }
+  var META_START = /^(?:I(?:'m|'ve|'ll| am| have| will| won't| need| can| cannot| can't| also| appreciate| understand| acknowledge| should| don't| do not| notice| see)\b|You(?:'re|'ve)?\b|Could you|If you|What (?:screen|would|do)|Please\b|No action|Without details|For example|Sugg|\*\*|"è )/;
+  var META_ANY = /inter-session|routing (?:data|information)|OpenClaw resumed|system prompt changed|resumed (?:the |this )?(?:CLI )?session|session resumed|prompt[- ](?:content|tools)|AI assistant made by Anthropic|summary agent|monitoring dashboards?\b.*\b(?:role|designed)|naturally type next/i;
   // Consumo di una sessione: token letti dai suoi log e, dove l'hub la sa, la quota della settimana che pesa.
   function tokWords(n) {
     if (!(n > 0)) return '';

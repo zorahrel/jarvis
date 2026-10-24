@@ -103,6 +103,8 @@ p a, li a, .small a { text-decoration:underline; text-underline-offset:2px; }
 .pill { display:inline-flex; align-items:center; gap:5px; font-size:12px; font-weight:550; padding:1px 9px; border-radius:99px; white-space:nowrap; color:color-mix(in srgb,var(--tone,var(--fg-2)) 78%,#000); background:color-mix(in srgb,var(--tone,var(--mut)) 13%,transparent); }
 .pill.mut { color:var(--mut); }
 .head { display:flex; align-items:center; gap:8px; font-weight:600; } .head .pill { margin-left:auto; }
+/* intestazione di «Per cartella e ramo»: stesse colonne delle righe */
+.trl .trh { font-size:12.5px; font-weight:600; color:var(--mut); padding:4px 0; } .trl .trh .ic { vertical-align:-3px; }
 /* su telefono il nome e i badge vanno a capo invece di uscire dalla card */
 .head { flex-wrap:wrap; min-width:0; } .head > span { min-width:0; overflow-wrap:anywhere; }
 button.b, select, input[type=number], input[type=text] { font:inherit; font-size:13px; border:1px solid var(--line-2); background:var(--surface); color:var(--fg); border-radius:var(--r-s); padding:4px 10px; min-height:30px; }
@@ -255,7 +257,8 @@ span.spk { background:none; }
 table.share { table-layout:fixed; width:100%; } table.share td:first-child { overflow-wrap:anywhere; }
 table.share th:nth-child(2) { width:26%; } table.share th:nth-child(3) { width:84px; }
 .warnline { color:var(--warn); font-size:12.5px; margin-top:4px; }
-.dim td:first-child { opacity:.55; }
+/* progetto fermo: colore attenuato ma leggibile (con opacity .55 il nome scendeva a 2,3:1, sotto il 4,5:1 richiesto) */
+.dim td:first-child, .dim td:first-child b, .dim td:first-child .mut { color:var(--mut); } .dim td:first-child b { font-weight:500; }
 .tile img { display:block; }
 .grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:10px; margin-bottom:12px; }
 .kpi { background:var(--surface); border:1px solid var(--line); border-radius:var(--r); padding:12px 14px; box-shadow:var(--shadow); } .kpi b { font-size:20px; font-weight:600; letter-spacing:-.02em; display:block; } .kpi span { color:var(--mut); font-size:12.5px; }
@@ -275,14 +278,14 @@ table.share th:nth-child(2) { width:26%; } table.share th:nth-child(3) { width:8
 .stack > .tile:last-child { margin-bottom:12px; }
 .bars14 { display:flex; gap:6px; align-items:flex-end; height:110px; margin-top:8px; overflow-x:auto; } .bars14 > div { flex:1; min-width:22px; display:flex; flex-wrap:wrap; align-items:flex-end; justify-content:center; gap:2px; height:100%; position:relative; } .bars14 i { width:7px; background:var(--run); border-radius:2px 2px 0 0; display:block; } .bars14 i.b2 { background:var(--ok); } .bars14 span { flex-basis:100%; text-align:center; font-size:10px; color:var(--mut); } .bars14.wide i { width:14px; }
 .dot { display:inline-block; width:8px; height:8px; border-radius:50%; margin-right:8px; background:currentColor; } .dot.ok { color:var(--ok); } .dot.warn { color:var(--warn); } .dot.bad { color:var(--bad); } .dot.info { color:var(--run); } .dot.mut { color:var(--mut); }
-.trl details.tr > summary, .br { display:grid; grid-template-columns:1fr 90px 90px 50px; gap:8px; padding:7px 0; border-bottom:1px solid var(--line); color:var(--fg); font-size:13.5px; } .br { padding-left:18px; color:var(--mut); font-size:13px; }
+.trl .trh, .trl details.tr > summary, .br { display:grid; grid-template-columns:1fr 90px 90px 50px; gap:8px; padding:7px 0; border-bottom:1px solid var(--line); color:var(--fg); font-size:13.5px; } .br { padding-left:18px; color:var(--mut); font-size:13px; }
 table.svc { table-layout:fixed; width:100%; } .svc th:nth-child(2) { width:110px; } .svc th:nth-child(3) { width:150px; } .svc th:nth-child(4) { width:190px; } .svc td { overflow-wrap:anywhere; }
 @media (max-width:760px) {
   .hide-s { display:none; }
   table.share th:nth-child(2) { width:22%; } table.share th:nth-child(3) { width:72px; }
   .bars { margin-left:0; grid-template-columns:60px 1fr 64px 80px; gap:5px 8px; } .spk { width:80px; } .bars > .mut:last-child, .bars > span.mut { display:none; }
   .two { grid-template-columns:1fr; }
-  .trl details.tr > summary, .br { grid-template-columns:1fr 80px 50px; }
+  .trl .trh, .trl details.tr > summary, .br { grid-template-columns:1fr 80px 50px; }
 }
 /* telefono: ogni comando alto almeno 44 px (nav, bottoni, tendine, campi, «Altri N») */
 @media (max-width:560px) {
@@ -554,6 +557,8 @@ details.tech pre { white-space:pre-wrap; overflow-wrap:anywhere; font-family:var
 details.gmore { border-top:1px solid var(--line); }
 details.gmore > summary { display:flex; align-items:center; gap:6px; min-height:32px; padding:0 10px; color:var(--mut); font-size:12.5px; }
 details.gmore > summary:hover { color:var(--fg); }
+/* sul telefono anche «Mostra domanda e risposta» è alto 44 px: la regola sopra (32 px) vinceva su quella generale */
+@media (max-width:560px) { details.gmore > summary { min-height:44px; } }
 .gchev { width:14px; height:14px; transition:transform .15s; }
 details.gmore[open] > summary .gchev { transform:rotate(90deg); }
 @media (prefers-reduced-motion:reduce) { .gchev, details.more .chev { transition:none; } }

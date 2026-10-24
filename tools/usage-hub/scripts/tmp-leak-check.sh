@@ -29,6 +29,10 @@ day="$(TZ=Europe/Rome date +%Y-%m-%d)"; now="$(($(date +%s) * 1000))"  # ora ver
 echo '{"ts":'"$now"',"source":"sentinella","text":"SENTINELLA diario vero da non mostrare","outcome":"ok"}' > "$H/.claude/jarvis/state/diario/$day.jsonl"
 echo '{"kind":"apri","id":"s1","tipo":"decisione","title":"SENTINELLA attesa vera da non mostrare","why":"SENTINELLA motivo vero","from":"sentinella","at":'"$now"'}' > "$H/.claude/jarvis/private/ti-aspetta.jsonl"
 echo '{"whatsapp":"+393330001122"}' > "$H/.config/claude-usage-hub/notify.json"
+# local.json come quello vero (link WhatsApp di Jarvis, operatore, account API): la demo non deve mostrarne niente
+echo '{"jarvis":{"whatsapp":"https://wa.me/393339998877"},"operatore":"sentinella-operatore","api":{"account":"sentinella-account"}}' > "$H/.config/claude-usage-hub/local.json"
+# la coda dei lavori e le cache dell'hub (~/.cache): un test che ci scrive manderebbe un lavoro a un agente vero
+mkdir -p "$H/.cache/claude-usage-hub"; echo '[]' > "$H/.cache/claude-usage-hub/queue.json"
 cp -R "$H" "$R/home-prima"
 # quota-guard vero (sta nella HOME vera): il test lo prova su fixture, senza la HOME vera non avrebbe chi provare
 QG="$HOME/.openclaw/bin/quota-guard.py"
@@ -47,14 +51,22 @@ case "$1 $2" in
 esac
 FAKE
 chmod +x "$R/bin/openclaw"
-PATH="$R/bin:$PATH" OPENCLAW_GATEWAY_URL="ws://127.0.0.1:9" HOME="$H" TMPDIR="$R/tmp/" HUB_TEST_SANDBOX=1 QUOTA_GUARD_PY="$QG" node --test test/ modules/vdm/test/ modules/tray/server/test.mjs >"$R/out" 2>&1
+# il proxy VDM vero (:3335) scrive nella HOME vera: la porta del proxy punta a una porta chiusa, e sotto si
+# controlla che il suo registro non abbia scritture di test (priority-set, account-cap…) nate durante il giro
+VDMLOG="$HOME/.claude/account-switcher/activity-log.json"; t0="$(($(date +%s) * 1000))"
+PATH="$R/bin:$PATH" OPENCLAW_GATEWAY_URL="ws://127.0.0.1:9" USAGE_HUB_VDM_PORT=9 USAGE_HUB_VDM_URL="http://127.0.0.1:9" HOME="$H" TMPDIR="$R/tmp/" HUB_TEST_SANDBOX=1 QUOTA_GUARD_PY="$QG" node --test --test-timeout=120000 --test-force-exit test/ modules/vdm/test/ modules/tray/server/test.mjs >"$R/out" 2>&1
 rc=$?
 grep -E "^✖|^not ok" "$R/out" | sort -u | head -20 | sed "s/^/     /"; tail -n 8 "$R/out" | sed "s/^/     /"
+vdm_w="$(node -e 'try { const l = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8")); console.log(l.filter((e) => e.ts >= +process.argv[2] && /priority-set|account-cap|account-enabled|manual-switch|remove/.test(e.type)).length) } catch { console.log(0) }' "$VDMLOG" "$t0")"
+if [ "$vdm_w" != 0 ]; then echo "FAIL un test ha scritto sul proxy VDM vero ($vdm_w voci nel suo registro durante il giro)"; exit 1; fi
 oc_real="$(grep -c "$R/home" "$OCLOG" 2>/dev/null || true)"
 [ -f "$R/openclaw-chiamate" ] && echo "ok   openclaw finto chiamato $(wc -l < "$R/openclaw-chiamate" | tr -d ' ') volte: $(cut -d' ' -f1-2 "$R/openclaw-chiamate" | sort -u | tr '\n' ',')"
 if [ "${oc_real:-0}" != 0 ]; then echo "FAIL un test ha chiamato l'openclaw vero ($oc_real righe nel suo log con la HOME finta)"; exit 1; fi
+# nessun processo lanciato dai test resta vivo (il 23/10 un node --test è rimasto appeso un giorno intero)
+alive="$(ps eww -ax -o pid=,command= | grep -F "$R" | grep -v grep | grep -v tmp-leak-check | awk '{print $1}')"
+if [ -n "$alive" ]; then echo "FAIL processi dei test ancora vivi dopo il giro: $(echo $alive)"; kill -9 $alive 2>/dev/null; exit 1; fi
 # i file veri della HOME finta sono quelli di prima
-changed="$(diff -rq "$R/home-prima/.claude/jarvis" "$H/.claude/jarvis" 2>&1; diff -rq "$R/home-prima/.config" "$H/.config" 2>&1)"
+changed="$(diff -rq "$R/home-prima/.claude/jarvis" "$H/.claude/jarvis" 2>&1; diff -rq "$R/home-prima/.config" "$H/.config" 2>&1; diff -rq "$R/home-prima/.cache" "$H/.cache" 2>&1)"
 if [ -n "$changed" ]; then echo "FAIL i test hanno toccato i file veri (nella HOME finta):"; echo "$changed" | sed 's/^/     /'; exit 1; fi
 [ "$rc" = 0 ] || { echo "FAIL i test escono $rc (HOME e TMPDIR finti)"; exit 1; }
 left="$(ls -A "$R/tmp" | wc -l | tr -d ' ')"

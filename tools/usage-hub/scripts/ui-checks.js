@@ -9,23 +9,61 @@
   // Il logo da solo non basta («% sett.» passava), e nemmeno il titolo della card.
   const PROV = /\b(claude|codex|muse|gemini|openai|chatgpt|copilot|grok|kimi|glm)\b/i;
   const tabs = '#t-overview, #t-projects, #t-usage';
+  // testo che si vede: senza le etichette solo per lettori di schermo (un «Claude» nascosto non dice niente a chi guarda)
+  const seen = (e) => { const c = e.cloneNode(true); c.querySelectorAll('.sr, .au-sr, [hidden]').forEach((x) => x.remove()); c.querySelectorAll('*').forEach((x) => x.append(' ')); return c.textContent.replace(/\s+/g, ' ').trim(); };
   window.__provLabels = function (root) {
     const out = [];
     for (const t of (root || document).querySelectorAll(tabs.split(', ').map((x) => x + '.on table:not(.svc)').join(', '))) {
       if (!vis(t)) continue;
-      const ths = [...t.querySelectorAll('thead th')], headTxt = ths.map((h) => h.innerText).join(' ');
+      const ths = [...t.querySelectorAll('thead th')], headTxt = ths.map(seen).join(' ');
       for (const tr of t.querySelectorAll('tbody tr')) {
         [...tr.children].forEach((td, i) => {
           if (!td.matches('td.num') || !vis(td)) return;
           const pv = td.querySelector('.pv');
           if (pv && vis(pv) && PROV.test(pv.innerText)) return;
           const th = ths[i];
-          if (th && vis(th) && /[a-zà-ù]{3,}/i.test(th.innerText) && (PROV.test(headTxt) || PROV.test(tr.innerText))) return;
+          if (th && vis(th) && /[a-zà-ù]{3,}/i.test(seen(th)) && (PROV.test(headTxt) || PROV.test(seen(tr)))) return;
           out.push((t.className || 'tabella') + ' in ' + (t.closest('details.card, section') ? txt(t.closest('details.card, section').querySelector('summary, h2, h3') || t) : '?') + ': «' + txt(td) + '» senza provider');
         });
       }
       // un'intestazione vuota (axe empty-table-header) non dice cosa c'è nella colonna
       for (const th of ths) if (vis(th) && !(th.textContent || '').trim()) out.push((t.className || 'tabella') + ': intestazione vuota');
+    }
+    for (const g of (root || document).querySelectorAll('#t-usage.on .trl')) {
+      if (!vis(g) || !g.querySelector('details.tr')) continue;
+      const h = g.querySelector('.trh');
+      if (!h || !vis(h)) { out.push('griglia ' + txt(g.closest('details.card, section').querySelector('summary, h2, h3') || g) + ': senza intestazione'); continue; }
+      if (!PROV.test(seen(h))) out.push('griglia ' + txt(g.closest('details.card, section').querySelector('summary, h2, h3') || g) + ': intestazione senza provider visibile');
+    }
+    return out.slice(0, 8);
+  };
+
+  // Una colonna chiamata «Quota» è la quota della settimana: deve dire lo stesso numero di /api/pace per quell'account.
+  // Chiamare «Quota» la parte dei token del proxy faceva leggere 47% un account esaurito (giro 8).
+  window.__usageQuota = function (pace) {
+    const out = [];
+    for (const t of document.querySelectorAll('#t-usage.on table')) {
+      const ths = [...t.querySelectorAll('thead th')], qi = ths.findIndex((h) => /quota/i.test(seen(h)));
+      if (qi < 0) continue;
+      for (const tr of t.querySelectorAll('tbody tr')) {
+        const name = seen(tr.children[0]), got = seen(tr.children[qi]);
+        const r = pace.find((x) => x.provider === 'claude' && x.account === name);
+        const want = r && r.used != null ? r.used + '%' : '–';
+        if (got !== want) out.push(name + ': «' + got + '» invece di «' + want + '» (pace)');
+      }
+    }
+    return out.slice(0, 6);
+  };
+
+  // Ogni campo ha un nome vero: aria-label, aria-labelledby, <label for> o un <label> che lo contiene con del testo.
+  // Il placeholder non conta: axe lo accetta, ma WebKit legge il campo come «spinbutton» senza nome (giro 8).
+  window.__names = function () {
+    const out = [];
+    for (const e of document.querySelectorAll('.tab.on input:not([type=hidden]), .tab.on select, .tab.on textarea, .cx-panel input:not([type=hidden]), .cx-panel select')) {
+      if (e.closest('[hidden]')) continue;
+      const lab = e.getAttribute('aria-label') || (e.getAttribute('aria-labelledby') || '').split(/\s+/).map((id) => (document.getElementById(id) || {}).textContent || '').join(' ')
+        || (e.id && [...document.querySelectorAll('label[for="' + e.id + '"]')].map((l) => l.textContent).join(' ')) || (e.closest('label') ? e.closest('label').textContent : '');
+      if (!String(lab).trim()) out.push(sel(e) + (e.dataset.k ? '[data-k=' + e.dataset.k + ']' : '') + ' senza nome');
     }
     return out.slice(0, 8);
   };
@@ -46,9 +84,9 @@
 
   // Comandi di almeno `min`×`min` px (WCAG 2.5.5): logo, nav, comandi della tab e del pannello. I link dentro una
   // frase sono esenti (2.5.8): conta solo ciò che non è inline. Prima si guardava solo l'altezza dei bottoni dell'header.
-  window.__taps = function (min) {
+  window.__taps = function (min, scope) {
     const out = [];
-    for (const e of document.querySelectorAll('header a[href], header button, .tab.on button, .tab.on select, .tab.on input:not([type=hidden]), .tab.on summary, .tab.on a[href], .tab.on [role=button], .cx-panel button, .cx-panel a[href], .cx-panel summary')) {
+    for (const e of (scope ? [...document.querySelectorAll(scope)].flatMap((r) => [...r.querySelectorAll('button, a[href], summary, select, input:not([type=hidden]), [role=button]')]) : document.querySelectorAll('header a[href], header button, .tab.on button, .tab.on select, .tab.on input:not([type=hidden]), .tab.on summary, .tab.on a[href], .tab.on [role=button], .cx-panel button, .cx-panel a[href], .cx-panel summary'))) {
       if (!vis(e) || e.closest('[hidden], .sr, .au-sr')) continue;
       const cs = getComputedStyle(e);
       if (e.tagName === 'A' && cs.display === 'inline') continue;
@@ -110,7 +148,7 @@
   // assoluti, cartelle con un id. Legge il testo visibile della tab attiva con i <details> aperti.
   window.__internal = () => {
     const t = (document.querySelector('.tab.on') || document.body).innerText;
-    const re = /I acknowledge|inter-session|routing data|\[[A-Z][a-z]{2} \d{4}-\d{2}-\d{2}|GMT[+-]\d|mcp__\w|\/Users\/|\/home\/|local_[0-9a-f]{8}|_sys_[0-9a-f]{6}|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}/g;
+    const re = /(?:^|\n)\s*(?:I(?:'m|'ve| am| appreciate| need| cannot| can't| can )|You(?:'re|'ve)? |Could you|If you)|Strumento di|\bexec: |ESITO:|resumed (?:this |the )?(?:CLI )?session|Anthropic|\/private\/|\/tmp\/|\/var\/folders|-Users-|Application Support|I acknowledge|inter-session|routing data|\[[A-Z][a-z]{2} \d{4}-\d{2}-\d{2}|GMT[+-]\d|mcp__\w|\/Users\/|\/home\/|local_[0-9a-f]{8}|_sys_[0-9a-f]{6}|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}/g;
     return [...new Set(t.match(re) || [])].map((m) => { const i = t.indexOf(m); return m + ' in «' + t.slice(Math.max(0, i - 25), i + m.length + 25).replace(/\s+/g, ' ') + '»'; });
   };
   // Ogni tabella con più di una riga dice cosa c'è nelle colonne: <thead> con un <th> che ha testo per colonna.

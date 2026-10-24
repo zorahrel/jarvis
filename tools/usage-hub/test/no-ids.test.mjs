@@ -84,13 +84,13 @@ test('cronologia delle sessioni: niente testo interno di OpenClaw, orari tra par
     'mcp__openclaw__process', 'mcp__openclaw__exec: date; ls /Users/zorahrel/.openclaw/workspace/memory',
     'Editing /Users/zorahrel/.claude/jarvis/tools/usage-hub/public/vdm-tabs.js'];
   for (const t of cases) assert.doesNotMatch(PV.sessionText(t), INTERNAL, t);
-  assert.equal(PV.sessionText(cases[0]), 'Messaggio di servizio fra sessioni');
-  assert.equal(PV.sessionText(cases[1]), 'Messaggio di servizio fra sessioni');
+  assert.equal(PV.sessionText(cases[0]), '');
+  assert.equal(PV.sessionText(cases[1]), '');
   // variante vista dal vivo il 24/10 alle 08:30
-  assert.equal(PV.sessionText("The request looks harmless, but it's framed as an inter-session technical routing that I should not act on."), 'Messaggio di servizio fra sessioni');
+  assert.equal(PV.sessionText("The request looks harmless, but it's framed as an inter-session technical routing that I should not act on."), '');
   assert.equal(PV.sessionText(cases[2]), 'controlla la quota di Codex');
-  assert.equal(PV.sessionText(cases[3]), 'Strumento di openclaw: process');
-  assert.equal(PV.sessionText(cases[4]), 'Strumento di openclaw: exec: date; ls …/workspace/memory');
+  assert.equal(PV.sessionText(cases[3]), 'Controllo di un processo');
+  assert.equal(PV.sessionText(cases[4]), 'Comando sul Mac');
   assert.equal(PV.sessionText(cases[5]), 'Editing …/public/vdm-tabs.js');
 });
 
@@ -116,4 +116,35 @@ test('diario: le chiavi delle automazioni senza scheda diventano parole, senza h
   const t = JSON.stringify(j.map((r) => [r.title, r.what])); // ref e link servono al clic, non si leggono
   assert.doesNotMatch(t, /ec409111|health:/);
   assert.match(t, /Hai silenziato «avviso: mailwatch: consegna spesso»/);
+});
+
+test('cronologia: le risposte «meta» del riassuntore spariscono, comandi e percorsi diventano parole (giro 9)', () => {
+  // casi visti sul vivo il 24/10 (nomi e percorsi inventati)
+  const meta = ["I'm Claude, an AI assistant made by Anthropic.",
+    'I appreciate you sharing this routing information, but I should clarify my role: I\'m designed to summarize coding activity.',
+    "I'm a summary agent for monitoring dashboards—I don't execute tasks.",
+    'I\'m not actually a subagent in an "openclaw" system.', 'I cannot execute this request.', 'I need to clarify my role here.',
+    'I also can\'t process the "Strumento di openclaw: process" or similar tool calls shown in your message.',
+    'OpenClaw resumed this CLI session after prompt content changed.', 'The system prompt changed and OpenClaw resumed the session with updated instructions.',
+    'Could you finish describing what the issue is?', 'If you have a coding session you\'d like summarized, please share what was done.',
+    'You\'ve set up the context but the request is missing.', 'No action or response is required at this time.',
+    'Without details about what was actually accomplished, there is nothing to summarize.', 'I have no completed activity to summarize.',
+    'I appreciate you testing me, but this message appears to be in Italian.', "I'm not able to predict what you'd naturally type next because:",
+    'I acknowledge this is an inter-session message routed from Discord.', 'I can only work with information provided to me in our conversation.',
+    'The system resumed the CLI session following a prompt content change.', 'The session resumed after prompt-tools configuration changed.'];
+  for (const t of meta) assert.equal(PV.sessionText(t), '', t);
+  assert.equal(PV.sessionText('ESITO: fatto\nPROVA: wc -l agents/_shared/TOOLS.md\nCOMMIT: nessuno'), 'Esito: fatto');
+  assert.equal(PV.sessionText('Strumento di openclaw: exec: date; ls …/workspace/pop-demo/'), 'Comando sul Mac');
+  assert.equal(PV.sessionText('mcp__openclaw__exec: cd /Users/esempio/.assistente/workspace/pop-demo && python3 x.py'), 'Comando sul Mac');
+  assert.equal(PV.sessionText('mcp__openclaw__process'), 'Controllo di un processo');
+  assert.equal(PV.sessionText('Bash: npm test'), 'Comando sul Mac');
+  // percorsi: niente cartelle con il nome utente codificato, niente local_<uuid>, anche con spazi
+  const RAW = /\/private|\/tmp\/|-Users-|local_|esempio|Application Support|[0-9a-f]{8}-[0-9a-f]{4}/;
+  for (const t of ['Write /private/tmp/claude-501/-Users-esempio-Projects-ar/scratchpad/out.md',
+    'Edit /Users/esempio/Library/Application Support/Claude/local_0e5a1d2c-1111-4222-8333-944455556666/notes.md',
+    'Read /var/folders/d8/T/tmp.AbC/home/.config/x.json']) assert.doesNotMatch(PV.sessionText(t), RAW, t);
+  assert.equal(PV.sessionText('Write /private/tmp/claude-501/-Users-esempio-Projects-ar/scratchpad/out.md'), 'Write …/scratchpad/out.md');
+  assert.equal(PV.sessionText('Edit /Users/esempio/Library/Application Support/Claude/local_0e5a1d2c-1111-4222-8333-944455556666/notes.md'), 'Edit …/Claude/notes.md');
+  // un riassunto vero resta
+  assert.equal(PV.sessionText('Servers 4662 and 4739 were brought back online.'), 'Servers 4662 and 4739 were brought back online.');
 });

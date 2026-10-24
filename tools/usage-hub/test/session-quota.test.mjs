@@ -57,6 +57,15 @@ test('sessionUse: il giro parte dalle righe del file, non dall\'inizio stimato s
   assert.equal(u.tokens, rows.length * 110);
 });
 
+test('sessionUse: weighted sono i token pesati coi pesi passati, la base del ricalcolo della barra (giro 9, V1c)', () => {
+  const now = Date.now(), rows = [[now - 2 * MIN, '/w/p', 100, 10, 40, 1000], [now - MIN, '/w/p', 50, 5, 0, 0]];
+  const trackers = { claude: { files: new Map([['f', { rows }]]) } };
+  const weights = { input: 2, output: 7, cacheWrite: 1.5, cacheRead: 0.2 };
+  const u = sessionUse({ provider: 'claude', file: 'f', startedAt: now - 5 * MIN }, trackers, { now, weights, weekShare: (w) => w / 1e7 });
+  assert.equal(u.weighted, Math.round(100 * 2 + 10 * 7 + 40 * 1.5 + 1000 * 0.2 + 50 * 2 + 5 * 7));
+  assert.equal(u.pct, Number((u.weighted / 1e7).toPrecision(3)));
+});
+
 test('sessionUse: una sessione piccola non arrotonda la quota a zero', () => {
   const now = Date.now(), trackers = { claude: { files: new Map([['f', { rows: [[now, '/w/p', 10, 1, 0, 0]] }]]) } };
   const u = sessionUse({ provider: 'claude', file: 'f', startedAt: now - MIN }, trackers, { now, weekShare: (w) => w / 1e7 });
@@ -94,7 +103,7 @@ test('checkSessionUse: verde sul caso buono, rosso senza consumo, senza quota o 
   const a = (provider, use) => ({ provider, kind: 'sessione', file: 'f', startedAt: old, title: 't', use });
   const projects = (list) => [{ agents: { list } }];
   const pace = { account: { weekPct: 40 }, codex: { quota: { weekPct: 30 } } };
-  const good = [a('claude', { tokens: 10, pct: 2 }), a('claude', { tokens: 5, pct: 1 }), a('codex', { tokens: 9, pct: 3 })];
+  const good = [a('claude', { tokens: 10, pct: 2, weighted: 10 }), a('claude', { tokens: 5, pct: 1, weighted: 5 }), a('codex', { tokens: 9, pct: 3, weighted: 0 })];
   assert.deepEqual(checkSessionUse(projects(good), pace, { now }).fail, []);
   assert.equal(checkSessionUse(projects([a('claude', null), a('claude', null)]), pace, { now }).fail.length, 1);
   assert.equal(checkSessionUse(projects([a('codex', { tokens: 9, pct: null })]), pace, { now }).fail.length, 1);
@@ -108,7 +117,7 @@ test('checkSessionUse: verde sul caso buono, rosso senza consumo, senza quota o 
   assert.deepEqual(checkSessionUse(projects(ok), rep, { now }).fail, []);
   assert.equal(checkSessionUse(projects(ok.map((x) => ({ ...x, use: { ...x.use, pct: x.use.pct * 30 } }))), rep, { now }).fail.length, 1);
   // Claude ×100 su un account attivo al 31%, con altri account al 100% in /api/pace: cade (prima passava)
-  assert.equal(checkSessionUse(projects([a('claude', { tokens: 9, pct: 76 })]), { account: { weekPct: 31 } }, { now }).fail.length, 1);
+  assert.ok(checkSessionUse(projects([a('claude', { tokens: 9, pct: 76, weighted: 9 })]), { account: { weekPct: 31 } }, { now }).fail.some((f) => /più del 31%/.test(f)));
   // un provider senza sessioni vive lo dice
   assert.ok(checkSessionUse(projects(good), pace, { now }).lines.some((l) => /muse: nessuna viva/.test(l)));
 });
@@ -119,8 +128,20 @@ test('workflowRunCost: per un messaggio vale l\'ultima riga (output finale, non 
   const dir = path.join(sess, 'subagents', 'workflows', 'wf_abc'); fs.mkdirSync(dir, { recursive: true });
   fs.mkdirSync(path.join(sess, 'workflows'), { recursive: true }); const run = path.join(sess, 'workflows', 'wf_abc.json'); fs.writeFileSync(run, '{}');
   const now = Date.now();
-  fs.writeFileSync(path.join(dir, 'agent-1.jsonl'), [line(now, 'm1', { input_tokens: 10, output_tokens: 9 }), line(now, 'm1', { input_tokens: 10, output_tokens: 689 })].join('\n') + '\n');
+  // righe dello stesso messaggio con input e cache diversi: conta tutta l'ultima, non solo il suo output (giro 9, mutante E)
+  const first = { input_tokens: 10, output_tokens: 9, cache_creation_input_tokens: 100, cache_read_input_tokens: 1000 };
+  const last = { input_tokens: 40, output_tokens: 689, cache_creation_input_tokens: 300, cache_read_input_tokens: 5000 };
+  fs.writeFileSync(path.join(dir, 'agent-1.jsonl'), [line(now, 'm1', first), line(now, 'm1', last)].join('\n') + '\n');
   const r = workflowRunCost(run, (w) => w / 1000);
-  assert.equal(r.weighted, 10 + 689 * 5);
-  assert.equal(r.weekPct, Math.round((10 + 689 * 5) / 1000 * 100) / 100);
+  const want = 40 + 689 * 5 + 300 * 1.25 + 5000 * 0.1;
+  assert.equal(r.weighted, Math.round(want));
+  assert.equal(r.weekPct, Math.round(want / 1000 * 100) / 100);
+});
+
+test('checkSessionUse: una sessione con la quota ma senza i token pesati non si può ricalcolare, quindi è rossa (giro 9, V1c)', async () => {
+  const { checkSessionUse } = await import('../src/session-use.mjs');
+  const report = { account: { claude: { used: 40 } }, providers: { claude: { weightedWeek: 1e6 } } };
+  const projects = [{ name: 'p', agents: { list: [{ provider: 'claude', kind: 'sessione', title: 'x', use: { tokens: 5000, pct: 0.3, weighted: null } }] } }];
+  const r = checkSessionUse(projects, report);
+  assert.ok(r.fail.some((f) => /senza i token pesati/.test(f)), r.fail.join(' | '));
 });

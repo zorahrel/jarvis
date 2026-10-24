@@ -722,6 +722,7 @@ import {
   createModelBlocks,
   isMisfiledModelCooldown,
   accountFreeAt,
+  SUMMARY_SYSTEM, parseSummary,
 } from './lib.mjs';
 
 // Fetch email from Anthropic roles API using OAuth token
@@ -3527,7 +3528,7 @@ async function callHaikuSummary(userText, assistantContext, toolUses) {
     return arg ? `${name} ${arg}` : name;
   }).slice(0, 10).join(', ');
 
-  const sysMsg = 'You summarize coding activity for a monitoring dashboard. Output ONLY 2-3 plain-text sentences. Past tense. No code, no markdown, no bullets, no preamble. Never quote code snippets or commands. Never start with "The user" or "I\'ll". Focus on what was decided, found, or changed. Skip verification steps, test runs, and routine checks.';
+  const sysMsg = SUMMARY_SYSTEM;
   const userMsg = `${trimmedUser.slice(0, 500)}${trimmedCtx ? '\n' + trimmedCtx.slice(0, 300) : ''}${toolList ? '\nTools: ' + toolList : ''}`;
 
   let token;
@@ -3567,22 +3568,8 @@ async function callHaikuSummary(userText, assistantContext, toolUses) {
       _summarizerOverhead.outputTokens += data.usage.output_tokens || 0;
     }
 
-    // Parse response — split into sentences, first = input, rest = actions
-    const raw = (data.content?.[0]?.text || '').replace(/<[^>]+>/g, '').trim();
-    if (!raw) return null;
-    // Split on sentence boundaries (period/exclamation/question followed by space or end)
-    const isMeta = s => /^(The user |I'll |I don't |I can't |However|Please share|Since there|This appears|You've provided|Let me )/i.test(s);
-    const sentences = raw.split(/(?<=[.!?])\s+/)
-      .map(s => s.replace(/^[\s*\-•>]+/, '').trim())
-      .filter(s => s && !isMeta(s));
-    if (!sentences.length) return null;
-    const input = sentences[0].slice(0, 200);
-    const actions = sentences.slice(1, 4).map(s => s.slice(0, 200));
-
-    if (input || actions.length) {
-      return { input, actions };
-    }
-    return null;
+    // risposta → frasi (patch locale: italiano, NIENTE = turno senza lavoro, vedi lib.mjs parseSummary)
+    return parseSummary(data.content?.[0]?.text);
   } catch {
     _haikuFailCount++;
     if (_haikuFailCount >= 3) _haikuBackoffUntil = Date.now() + HAIKU_BACKOFF_MS;
@@ -3702,7 +3689,8 @@ function updateSessionTimeline(bodyObj, acctName, usage, token) {
     const mergedTools = batch.flatMap(t => t.toolUses);
     session.pendingHaiku = true;
     callHaikuSummary(mergedUser, mergedContext, mergedTools).then(result => {
-      const summary = result || formatTurnFallback(mergedUser, mergedTools);
+      // skip: il riassuntore dice che non c'era lavoro (messaggio di servizio): niente in cronologia, nemmeno il testo grezzo
+      const summary = result && result.skip ? { actions: [] } : result || formatTurnFallback(mergedUser, mergedTools);
       if (summary.input) {
         session.timeline.push({ type: 'input', text: summary.input });
       }

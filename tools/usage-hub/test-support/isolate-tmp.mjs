@@ -9,6 +9,9 @@ const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hub-test-'));
 process.env.TMPDIR = dir + '/'; // con la barra finale, come la dà macOS: qualcuno concatena senza path.join
 // La copia delle fonti (ultima lettura buona) sta in cache sotto HOME: i test non devono leggere né riscrivere quella vera.
 process.env.USAGE_HUB_LAST_GOOD = path.join(dir, 'automazioni-ultima-buona.json');
+// idem per i nomi dei cron (scritti dopo ogni `openclaw cron list`) e per la coda dei lavori, che l'hub vivo lancia
+process.env.USAGE_HUB_CRON_NAMES ||= path.join(dir, 'cron-names.json');
+process.env.USAGE_HUB_QUEUE ||= path.join(dir, 'queue.json');
 process.on('exit', () => {
   try { fs.rmSync(dir, { recursive: true, force: true }); } catch { /* già tolta */ }
 });

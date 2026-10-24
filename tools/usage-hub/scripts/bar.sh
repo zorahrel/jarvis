@@ -3,18 +3,19 @@
 #   npm run bar
 set -e
 cd "$(dirname "$0")/.."
+# tutta la barra ha un TMPDIR suo: alla fine dev'essere vuoto (demo, ui-bar, prove e test non lasciano niente)
+BT="$(mktemp -d)"; export TMPDIR="$BT/"
 # 1. ciò che è verde resta verde: tutti i test con HOME e TMPDIR finti, sentinelle nei file veri, niente lasciato in $TMPDIR
 sh scripts/tmp-leak-check.sh
 node modules/tray/server/test.mjs
-node --test modules/vdm/test/
 node --test modules/tray/assets/bar-icons.test.mjs
 sh scripts/check-modules.sh
 python3 -m pytest -q modules/tray/server/test_muse_probe.py
-node --test test/dashboard-parity.test.mjs
-# 2. i test nuovi per nome (sono anche in npm test: qui un file rinominato o sparito fa rosso)
-node --test test/automations-sources.test.mjs test/automations-sources-more.test.mjs test/automations-levels.test.mjs \
-  test/automations-feedback.test.mjs test/automations-feedback-import.test.mjs test/automations-api.test.mjs \
-  test/automations-view.test.mjs test/automations-queue.test.mjs test/automations-falsi-verdi.test.mjs
+# 2. i test nuovi ci sono ancora per nome (girano nel passo 1, isolati: qui un file rinominato o sparito fa rosso)
+for f in automations-sources automations-sources-more automations-levels automations-feedback automations-feedback-import \
+  automations-api automations-view automations-queue automations-falsi-verdi dashboard-parity dashboard-actions no-ids demo-isolation; do
+  [ -f "test/$f.test.mjs" ] || { echo "ROSSO test/$f.test.mjs sparito"; exit 1; }
+done
 # 3. i mutanti del feedback devono essere presi
 sh scripts/mutate-feedback.sh
 # 4. il feedback finisce cifrato (l'attributo; la prova sul blob la fa il cron una tantum dopo il primo commit notturno)
@@ -31,4 +32,11 @@ node scripts/measure-automations.mjs --demo
 node scripts/measure-automations.mjs --live
 # 6. UI: nav intera cambiando tab, niente tagli, ui-audit e axe a 0 a 1440, 700 e 375 (serve --demo a parte)
 python3 scripts/ui-bar.py
+# 7. la prova della scheda Automazioni (due demo, layout a 375, axe): era fuori dalla barra ed era rossa
+python3 scripts/prova-automazioni.py
+# 8. niente lasciato nel TMPDIR della barra, niente processi demo vivi
+left="$(ls -A "$BT")"; [ -z "$left" ] || { echo "ROSSO la barra ha lasciato in TMPDIR: $(echo $left)"; exit 1; }
+alive="$(ps eww -ax -o pid=,command= | grep -F "$BT" | grep -v grep | awk '{print $1}')"
+[ -z "$alive" ] || { echo "ROSSO processi della barra ancora vivi: $(echo $alive)"; kill -9 $alive 2>/dev/null; exit 1; }
+rmdir "$BT"
 echo 'BARRA VERDE'

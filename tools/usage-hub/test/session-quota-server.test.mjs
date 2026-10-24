@@ -27,7 +27,9 @@ test('/api/live: ogni sessione ha la quota che dice il report, coi pesi dell\'hu
   fs.mkdirSync(path.join(sess, 'subagents', 'workflows', 'wf_abc'), { recursive: true });
   fs.writeFileSync(path.join(sess, 'subagents', 'workflows', 'wf_abc', 'agent-1.jsonl'), JSON.stringify({ message: { id: 'w1', usage: u } }) + '\n');
   const agents = [{ project: 'billing-api', provider: 'claude', model: 'Sonnet', kind: 'sessione', title: 'viva', file, cwd: '/work/billing-api', startedAt: now - 60000, lastActivity: now }];
-  const srv = createServer({ root, vdm: false, free: false, openclaw: null, groups: [], alerts: { rules: [] }, quotaSource: { url: 'http://127.0.0.1:9/api/overview' }, tray: { url: 'http://127.0.0.1:9' } }, {
+  // pesi dell'hub diversi dai predefiniti: se il collegamento non li passa, la quota cambia e il test cade (giro 9, S4)
+  const weights = { input: 2, output: 7, cacheWrite: 1.5, cacheRead: 0.2 };
+  const srv = createServer({ root, weights, vdm: false, free: false, openclaw: null, groups: [], alerts: { rules: [] }, quotaSource: { url: 'http://127.0.0.1:9/api/overview' }, tray: { url: 'http://127.0.0.1:9' } }, {
     inProcess: false, noLive: true, noQueue: true, overview: async () => demoOverview(now), projectsDir: proj,
     museRoot: path.join(tmp, 'muse'), codexRoot: path.join(tmp, 'codex'), diaryDir: path.join(tmp, 'diario'),
     scanAgents: () => ({ agents: agents.map((a) => ({ ...a })), lastSeen: {} }) });
@@ -38,11 +40,13 @@ test('/api/live: ogni sessione ha la quota che dice il report, coi pesi dell\'hu
     const live = await (await fetch(`http://127.0.0.1:${port}/api/live`)).json();
     const s = live.projects.flatMap((p) => p.agents?.list || []).find((a) => a.title === 'viva');
     assert.ok(s && s.use, 'la sessione ha il consumo: ' + JSON.stringify(live.projects.map((p) => [p.name, (p.agents?.list || []).map((a) => [a.title, a.file, a.use])])).slice(0, 600));
-    const exp = shareFromReport(report, 'claude', weighUsage(u, DEFAULT_WEIGHTS));
+    const exp = shareFromReport(report, 'claude', weighUsage(u, weights));
+    assert.notEqual(exp, shareFromReport(report, 'claude', weighUsage(u, DEFAULT_WEIGHTS)), 'i pesi del test devono cambiare la quota');
     assert.ok(exp > 0, `quota attesa ${exp}`);
     assert.equal(s.use.pct, Number(exp.toPrecision(3)));
     const run = await (await fetch(`http://127.0.0.1:${port}/api/automations/run/wf_abc`)).json();
     assert.equal(run.weighted, Math.round(weighUsage(u)));
-    assert.equal(run.weekPct, Math.round(shareFromReport(report, 'claude', weighUsage(u)) * 100) / 100);
+    const wexp = shareFromReport(report, 'claude', weighUsage(u));
+    assert.ok(Math.abs(run.weekPctExact - wexp) <= wexp * 0.001, `weekPct ${run.weekPctExact} invece di ${wexp}`);
   } finally { srv.close(); }
 });

@@ -162,10 +162,12 @@ async function renderOverview() {
   // «Ti aspetta» compare subito; quote, Mac e progetti (lenti sotto carico) arrivano dopo, sotto.
   let done = false;
   const waitP = attesaSection();
-  waitP.then((w) => { if (!done && !$('t-overview').querySelector('[data-sec=wait]')) $('t-overview').innerHTML = w + '<p class="mut small" data-loading>Carico quote, agenti e Mac…</p>'; });
+  waitP.then((w) => { if (!done && !$('t-overview').querySelector('[data-sec=wait]')) $('t-overview').innerHTML = w + '<p class="mut small" data-loading>Carico quote e agenti…</p>'; });
   // I progetti (agenti vivi, la lettura più lenta a freddo) arrivano per ultimi nel loro riquadro: il resto non li aspetta.
   const liveP = j('/api/live', { signal: AbortSignal.timeout(20000) });
-  let [wait, gates, queue, pace, heavy, alerts, mac] = await Promise.all([waitP, ...['/api/gates', '/api/queue', '/api/pace', '/api/heavy', '/api/alerts', '/api/mac'].map((u) => j(u, { signal: AbortSignal.timeout(u === '/api/gates' ? 8000 : 20000) }))]);
+  // il Mac a freddo risponde fino a 6 s sotto carico: non tiene ferma la pagina, arriva nel suo riquadro quando c'è
+  const macP = j('/api/mac', { signal: AbortSignal.timeout(20000) });
+  let [wait, gates, queue, pace, heavy, alerts] = await Promise.all([waitP, ...['/api/gates', '/api/queue', '/api/pace', '/api/heavy', '/api/alerts'].map((u) => j(u, { signal: AbortSignal.timeout(u === '/api/gates' ? 8000 : 20000) }))]);
   done = true;
   // Sotto carico il freno può metterci 30 s: la Panoramica non lo aspetta oltre 8 s, il resto non oltre 20.
   // un errore dell'hub arriva come oggetto {error}: per quote e ritmo vale «nessun dato», non un crash
@@ -198,12 +200,13 @@ async function renderOverview() {
   const queueHtml = waiting.length ? `<table><tbody>${waiting.map((x) => `<tr><td>${esc(x.task.slice(0, 90))}</td><td>${esc(x.project || '–')}</td><td class="${x.status === 'running' ? 'ok' : 'info'}">${x.status === 'running' ? 'in corso' : 'in attesa' + (x.waitUntil ? ' fino alle ' + hhmm(x.waitUntil) : '')}</td></tr>`).join('')}</tbody></table>` : empty('Nessun lavoro in attesa.');
   $('t-overview').innerHTML = wait +
     `<section class="status ${st[0]}">${st[0] ? IC.hand : IC.check}<div><b>${st[1]}</b><span class="mut small">${st[2]}</span></div></section>` +
-    macHtml(mac) +
+    '<div data-sec="mac"><p class="mut small" data-loading>Leggo lo stato del Mac…</p></div>' +
     (firing.length ? `<section>${firing.map((e) => `<div class="bad small">${esc(e.message)}</div>`).join('')}</section>` : '') +
     `<section>${accounts}<div id="acc-missing"></div></section>` +
     card(`${IC.gauge} Come funziona il freno <span class="mut small">${braked.length ? 'frenati: ' + braked.join(', ') : 'nessun freno'}</span>`, brake, false) +
     card(`${IC.tray} Coda <span class="mut small">${waiting.length ? waiting.length + ' in attesa' : 'vuota'}</span>`, queueHtml, false) +
     `<section data-sec="proj"><p class="mut small" data-loading>Carico progetti e agenti…</p></section>`;
+  macP.then((mac) => { const el = $('t-overview').querySelector('[data-sec=mac]'); if (el) el.innerHTML = macHtml(mac); });
   liveP.then((live) => { const el = $('t-overview').querySelector('[data-sec=proj]'); if (el) el.innerHTML = projectRows(live, items); });
   if (cur === 'overview') $('sub').textContent = 'aggiornato alle ' + hhmm(Date.now());
   // Un abbonamento che non risponde non sparisce senza dirlo, come nella tray. L'overview è lenta: arriva dopo, senza bloccare.
@@ -289,7 +292,7 @@ async function renderServices() {
 let logSrc;
 function renderLogs() {
   if (logSrc) return;
-  $('t-logs').innerHTML = '<section><div class="logbox" id="logbox"></div></section>';
+  $('t-logs').innerHTML = '<section><div class="logbox" id="logbox" tabindex="0" role="log" aria-label="Log dell\'hub"></div></section>';
   logSrc = new EventSource('/vdm/api/logs/stream');
   logSrc.onmessage = (m) => { try { const d = JSON.parse(m.data), b = $('logbox'), near = b.scrollTop + b.clientHeight >= b.scrollHeight - 40; b.append(document.createTextNode((d.line || d.msg || '') + '\n')); while (b.childNodes.length > 400) b.removeChild(b.firstChild); if (near) b.scrollTop = b.scrollHeight; } catch { /* riga non leggibile */ } };
 }

@@ -8,7 +8,7 @@
   "engines": { "node": ">=20" },
   "scripts": {
     "start": "node bin/usage-hub.mjs serve",
-    "test": "node --test test/",
+    "test": "sh scripts/tmp-leak-check.sh",
     "test:tmp": "sh scripts/tmp-leak-check.sh",
 "bar": "sh scripts/bar.sh"
   }

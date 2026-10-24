@@ -200,7 +200,7 @@ export function workflowRunCost(runFile, weekShare) {
   }
   for (const u of byId.values()) weighted += weighUsage(u);
   const pct = weekShare ? weekShare(weighted) : null;
-  return { ok: true, agents, weighted: Math.round(weighted), weekPct: pct == null ? null : Math.round(pct * 100) / 100, estimate: true };
+  return { ok: true, agents, weighted: Math.round(weighted), weekPct: pct == null ? null : Math.round(pct * 100) / 100, weekPctExact: pct, estimate: true };
 }
 
 export function findRunFile(runId, projectsDir = path.join(HOME, '.claude/projects')) {

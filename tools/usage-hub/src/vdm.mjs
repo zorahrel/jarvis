@@ -2,7 +2,8 @@
 // Dove non lo vede (cwd "_sys_<hash>") o dove il cwd è la root di OpenClaw, la divisione viene dai log.
 import { weighUsage, projectName } from './usage.mjs';
 
-export const DEFAULT_VDM_URL = 'http://127.0.0.1:3335';
+// USAGE_HUB_VDM_URL: la barra isolata la punta a una porta chiusa, così nessun test arriva al proxy vero
+export const DEFAULT_VDM_URL = process.env.USAGE_HUB_VDM_URL || 'http://127.0.0.1:3335';
 
 async function getJson(fetchImpl, url, ms = 4000) {
   const res = await fetchImpl(url, { signal: AbortSignal.timeout(ms) });

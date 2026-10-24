@@ -1368,3 +1368,21 @@ export function createPerAccountLock() {
 
   return { withLock };
 }
+
+// ── Riassunto delle sessioni (patch locale, 24/10) ──
+// Il riassuntore scriveva in inglese e, quando gli arrivava un messaggio di servizio invece di lavoro, rispondeva
+// parlando di sé («I'm Claude…», «I appreciate you sharing this routing information…»): finiva nella pagina Sessioni.
+// Ora scrive in italiano, e senza lavoro da riassumere risponde NIENTE: quel turno non entra nella cronologia.
+export const SUMMARY_SYSTEM = 'Riassumi il lavoro di una sessione di programmazione per una dashboard. Scrivi SOLO 2-3 frasi in italiano, al passato, in forma impersonale. Niente codice, markdown, elenchi o premesse. Non citare comandi o codice. Non parlare di te e non rivolgerti a nessuno. Di\' cosa è stato deciso, trovato o cambiato; salta verifiche, test e controlli di routine. Se il testo non descrive lavoro (messaggi di sistema o fra sessioni, riprese di sessione, richieste rivolte a te), rispondi solo: NIENTE';
+
+const SUMMARY_META = /^(?:NIENTE\b|The user |I(?:'m|'ve|'ll| am| can| cannot| can't| don't| need| appreciate| understand)\b|You(?:'re|'ve)?\b|However|Please|Could you|If you|Since there|This (?:appears|message)|Let me )/i;
+
+// testo grezzo del modello → { input, actions } | { skip: true } (niente da mostrare) | null (risposta vuota)
+export function parseSummary(raw) {
+  const t = String(raw || '').replace(/<[^>]+>/g, '').trim();
+  if (!t) return null;
+  if (/^NIENTE\b/.test(t)) return { skip: true };
+  const sentences = t.split(/(?<=[.!?])\s+/).map((s) => s.replace(/^[\s*\-•>]+/, '').trim()).filter((s) => s && !SUMMARY_META.test(s));
+  if (!sentences.length) return { skip: true };
+  return { input: sentences[0].slice(0, 200), actions: sentences.slice(1, 4).map((s) => s.slice(0, 200)) };
+}

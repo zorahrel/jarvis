@@ -95,6 +95,10 @@ export function checkSessionUse(projects, report, { now = Date.now() } = {}) {
     if (used.length < all.length) fail.push(`${prov}: ${all.length - used.length} sessioni su ${all.length} senza consumo (${all.filter((a) => !a.use).slice(0, 3).map((a) => a.kind + ' ' + (a.title || '').slice(0, 30)).join('; ')})`);
     if (withPct.length < withTok.length) fail.push(`${prov}: ${withTok.length - withPct.length} sessioni con token ma senza quota della settimana`);
     if (withPct.length && acct == null) fail.push(`${prov}: sessioni con quota ma il report non ha la % usata su cui dividere`);
+    // una quota senza i token pesati non si può ricalcolare: il controllo sotto la salterebbe in silenzio
+    // (solo Claude: per Codex e Muse la quota non viene dai token pesati, weighted resta 0 per costruzione)
+    const blind = prov === 'claude' ? withPct.filter((a) => !(a.use.weighted > 0)) : [];
+    if (blind.length) fail.push(`${prov}: ${blind.length} sessioni con la quota ma senza i token pesati, non si può ricalcolare`);
     // ogni quota ricalcolata dal report coi suoi token pesati: deve tornare (±10%, il report può essere di poco dopo)
     const off = withPct.filter((a) => a.use.weighted > 0).map((a) => ({ a, exp: shareFromReport(report, prov, a.use.weighted) }))
       .filter(({ a, exp }) => exp != null && Math.abs(a.use.pct - exp) > Math.max(0.005, exp * 0.1));
