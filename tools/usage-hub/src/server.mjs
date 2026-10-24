@@ -57,7 +57,8 @@ export function createServer(config, deps = {}) {
     try { cache = deps.inProcess ? await buildReport(config, deps) : await buildReport(config, { ...deps, root: config.root, trackers, fetchImpl: hubFetch }); live = { at: cache.at, projects: projectSummary(cache, loadBudgets(), { labels: loadLabels(), top: Infinity }), computing: false };
       // le sessioni vive lette prima di questo report non avevano i contatori: dopo un riavvio restavano senza consumo
       // fino al giro dopo (giro 10, barra rossa subito dopo il kickstart). Con il report nuovo si rileggono subito.
-      if (runsLive) { agentCache.at = 0; liveAgents(loadQueue()).catch(() => {}); } }
+      // Una scansione già in volo è partita senza report: si aspetta che finisca e se ne fa una nuova.
+      if (runsLive) Promise.resolve(agentScan).then(() => { agentCache.at = 0; return liveAgents(loadQueue()); }).catch(() => {}); }
     catch (err) { live = { ...live, error: err.message, computing: false }; }
   };
   if (runsLive) { setImmediate(refreshLive); setInterval(refreshLive, (config.liveEveryMin || 5) * 60000).unref(); }
