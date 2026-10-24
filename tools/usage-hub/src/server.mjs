@@ -54,7 +54,10 @@ export function createServer(config, deps = {}) {
   const refreshLive = async () => {
     if (live.computing) return;
     live.computing = true;
-    try { cache = deps.inProcess ? await buildReport(config, deps) : await buildReport(config, { ...deps, root: config.root, trackers, fetchImpl: hubFetch }); live = { at: cache.at, projects: projectSummary(cache, loadBudgets(), { labels: loadLabels(), top: Infinity }), computing: false }; }
+    try { cache = deps.inProcess ? await buildReport(config, deps) : await buildReport(config, { ...deps, root: config.root, trackers, fetchImpl: hubFetch }); live = { at: cache.at, projects: projectSummary(cache, loadBudgets(), { labels: loadLabels(), top: Infinity }), computing: false };
+      // le sessioni vive lette prima di questo report non avevano i contatori: dopo un riavvio restavano senza consumo
+      // fino al giro dopo (giro 10, barra rossa subito dopo il kickstart). Con il report nuovo si rileggono subito.
+      if (runsLive) { agentCache.at = 0; liveAgents(loadQueue()).catch(() => {}); } }
     catch (err) { live = { ...live, error: err.message, computing: false }; }
   };
   if (runsLive) { setImmediate(refreshLive); setInterval(refreshLive, (config.liveEveryMin || 5) * 60000).unref(); }
