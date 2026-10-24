@@ -59,23 +59,42 @@ export function shareFromReport(r, provider, weighted) {
   return null;
 }
 
-// Barra della quota per sessione sull'hub vivo (scripts/measure-automations.mjs --live). Rosso se:
-// una sessione di Claude, Codex o Muse con un file non ha il consumo (tolte quelle partite da meno di 6 minuti: il
-// tracker si aggiorna ogni 5), se una con token non ha la quota, o se la somma delle quote di un provider supera
-// la % usata del suo abbonamento più carico (un peso sbagliato, ×100, non passa).
-export function checkSessionUse(projects, paceRows, { now = Date.now() } = {}) {
+// Consumo e quota di ogni sessione viva, con la divisione del report che l'hub ha in mano (la stessa dei progetti).
+// L'hub la chiama a ogni scansione; sta qui, e non in server.mjs, perché un test possa provarla col report vero.
+export function attachSessionUse(agents, trackers, report, { weights = DEFAULT_WEIGHTS, now = Date.now() } = {}) {
+  const shareFor = (provider, weighted) => shareFromReport(report, provider, weighted);
+  for (const a of agents) {
+    const u = sessionUse(a, trackers, { now, weights, shareFor });
+    if (u) { a.use = u; if (u.startedAt < a.startedAt) a.startedAt = u.startedAt; }
+  }
+  return agents;
+}
+
+// La % usata su cui shareFromReport divide: l'account attivo di Claude, la quota di Codex, quella di Muse.
+export function quotaOf(report, provider) {
+  const q = provider === 'claude' ? report?.account : report?.[provider]?.quota;
+  return q && Number.isFinite(q.weekPct) ? q.weekPct : null;
+}
+
+// Barra della quota per sessione sull'hub vivo (scripts/measure-automations.mjs --live), col report di /api/projects.
+// Rosso se una sessione di Claude, Codex o Muse con un file non ha il consumo (tolte quelle partite da meno di 6
+// minuti: il tracker si aggiorna ogni 5), se una con token non ha la quota, o se la somma delle quote di un provider
+// supera la % usata su cui l'hub divide (quotaOf, non il massimo di tutti gli account: un ×100 non passa).
+// Un provider senza sessioni vive lo dice in una riga: la sua quota quel giro non è provata.
+export function checkSessionUse(projects, report, { now = Date.now() } = {}) {
   const fail = [], lines = [];
   const sess = (projects || []).flatMap((p) => ((p.agents && p.agents.list) || []));
   for (const prov of ['claude', 'codex', 'muse']) {
     const all = sess.filter((a) => a.provider === prov && a.kind !== 'coda' && !(now - a.startedAt < 6 * 60000));
-    if (!all.length) continue;
+    if (!all.length) { lines.push(`sessioni ${prov}: nessuna viva, quota per sessione non provata`); continue; }
     const used = all.filter((a) => a.use), withTok = used.filter((a) => a.use.tokens > 0), withPct = withTok.filter((a) => a.use.pct != null);
     const sum = withPct.reduce((x, a) => x + a.use.pct, 0);
-    const acct = Math.max(0, ...(paceRows || []).filter((r) => r.provider === prov && Number.isFinite(r.used)).map((r) => r.used));
-    lines.push(`sessioni ${prov}: ${used.length} su ${all.length} col consumo, ${withPct.length} su ${withTok.length} con la quota, somma ${Math.round(sum * 100) / 100}% su ${acct}% usato`);
+    const acct = quotaOf(report, prov);
+    lines.push(`sessioni ${prov}: ${used.length} su ${all.length} col consumo, ${withPct.length} su ${withTok.length} con la quota, somma ${Math.round(sum * 100) / 100}% su ${acct ?? '?'}% usato`);
     if (used.length < all.length) fail.push(`${prov}: ${all.length - used.length} sessioni su ${all.length} senza consumo (${all.filter((a) => !a.use).slice(0, 3).map((a) => a.kind + ' ' + (a.title || '').slice(0, 30)).join('; ')})`);
     if (withPct.length < withTok.length) fail.push(`${prov}: ${withTok.length - withPct.length} sessioni con token ma senza quota della settimana`);
-    if (acct > 0 && sum > acct + 1) fail.push(`${prov}: le sessioni sommano ${Math.round(sum)}% della settimana, più del ${acct}% usato dall'abbonamento`);
+    if (withPct.length && acct == null) fail.push(`${prov}: sessioni con quota ma il report non ha la % usata su cui dividere`);
+    if (acct != null && sum > acct + 1) fail.push(`${prov}: le sessioni sommano ${Math.round(sum)}% della settimana, più del ${acct}% usato dall'abbonamento`);
   }
   return { fail, lines };
 }

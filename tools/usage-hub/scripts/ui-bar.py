@@ -67,7 +67,7 @@ def serve():
             return proc, url
         except Exception:
             time.sleep(0.2)
-    proc.kill()
+    proc.terminate(); proc.wait(15)  # SIGTERM: la demo toglie la sua cartella
     sys.exit('ROSSO serve --demo non parte')
 
 
@@ -126,6 +126,8 @@ def main():
             b = p.webkit.launch()
             for w in WIDTHS:
                 pg = b.new_context(viewport={'width': w, 'height': 900}).new_page()
+                # lo schema del pannello arriva dopo 2,5 s: il pannello deve mostrare lo scheletro nel frattempo
+                pg.add_init_script("(() => { const f = window.fetch; window.fetch = (u, o) => String(u).includes('/api/automations/graph') ? new Promise((r) => setTimeout(r, 2500)).then(() => f(u, o)) : f(u, o); })()")
                 pg.set_default_timeout(90000)
                 errs = []
                 pg.on('pageerror', lambda e: errs.append(str(e)[:160]))
@@ -173,6 +175,15 @@ def main():
                     out += [t + ': ' + x for x in pg.evaluate('__contained()')]
                     if w <= 560:
                         taps += [t + ': ' + x for x in pg.evaluate('__taps(44)')]
+                # 8. la fascia della demo resta in vista dopo aver scorso fino in fondo
+                band = []
+                for t in ('overview', 'automations', 'usage'):
+                    goto_tab(pg, t)
+                    pg.evaluate('window.scrollTo(0, document.documentElement.scrollHeight)'); pg.wait_for_timeout(200)
+                    pg.add_script_tag(content=CHECKS_JS)
+                    band += [t + ': ' + x for x in pg.evaluate('__band()')]
+                    pg.evaluate('window.scrollTo(0, 0)')
+                check(not band, f'{w}px fascia ESEMPIO in vista dopo lo scorrimento {band}')
                 check(not prov, f'{w}px ogni numero di consumo ha il suo provider {prov[:4]}')
                 check(not out, f'{w}px nessuna cella fuori dalla sua card {out[:4]}')
                 if w <= 560:
@@ -190,11 +201,18 @@ def main():
                     if case == 'pannello':
                         pg.locator('#t-automations .cx-row[data-cx]:not(.cx-hdr)').first.click()
                         pg.wait_for_selector('.cx-panel')
+                        skl = pg.evaluate("!!document.querySelector('.cx-panel .cx-graph .au-skl')")
+                        check(skl, f'{w}px pannello: mentre lo schema arriva c\'è il suo scheletro (non un pannello che sembra finito)')
                         check(wait_loaded(pg), f'{w}px pannello: lo scheletro dello schema sparisce')
+                        drawn = pg.evaluate("document.querySelectorAll('.cx-panel .cx-graph .gflow li').length")
+                        check(drawn >= 3, f'{w}px pannello: lo schema della voce è disegnato ({drawn} passi)')
                         pg.wait_for_timeout(300)
                         pg.add_script_tag(content=CHECKS_JS)
                         cov = pg.evaluate("__onTop('.cx-panel [data-cx-close]')")
                         check(not cov, f'{w}px pannello: «Chiudi» si clicca, niente sopra {cov}')
+                        pg.evaluate("(document.querySelector('.cx-panel') || {}).scrollTop = 99999"); pg.wait_for_timeout(150)
+                        bp = pg.evaluate('__band()')
+                        check(not bp, f'{w}px pannello aperto: fascia ESEMPIO in vista {bp}')
                         pg.evaluate("document.querySelectorAll('.cx-panel details').forEach(d => d.open = true)")
                         if shots:
                             pg.screenshot(path=str(shots / f'pannello-{w}.png'))
@@ -241,7 +259,7 @@ def main():
             pg.context.close()
             b.close()
     finally:
-        proc.kill()
+        proc.terminate(); proc.wait(15)  # SIGTERM: la demo toglie la sua cartella
     print('UI ROSSA: ' + '; '.join(red) if red else 'UI VERDE')
     sys.exit(1 if red else 0)
 

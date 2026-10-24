@@ -567,10 +567,21 @@ details.gmore[open] > summary .gchev { transform:rotate(90deg); }
 
 /* Fascia della demo: in flusso e appiccicata in cima, su ogni vista */
 /* non sticky: sopra il pannello copriva «Chiudi» */
-.demo-band { position:relative; background:#b91c1c; color:#fff; font-weight:700; font-size:13px; text-align:center; padding:6px 16px; }
+/* La fascia della demo resta sempre in vista (scorrendo e col pannello aperto) e non copre niente: è fissa in alto
+   e tutto ciò che sta in cima (pagina, nav laterale, pannello, velo) parte sotto di lei, alto --demo-h (pages.js). */
+body { padding-top:var(--demo-h, 0px); }
+@media (min-width:960px) { header.top { top:var(--demo-h, 0px); height:calc(100vh - var(--demo-h, 0px)); } }
+.cx-scrim, .cx-panel { top:var(--demo-h, 0px); }
+.demo-band { position:fixed; top:0; left:0; right:0; z-index:40; background:#b91c1c; color:#fff; font-weight:700; font-size:13px; text-align:center; padding:6px 16px; }
 
 /* telefono, in coda perché le regole di Automazioni e Diario sopra fissano 28-34 px: comandi alti 44 */
 @media (max-width:560px) {
   .seg button, .cx-seg button, .cx-line .cx-btn, .q input, .cx-q input { min-height:44px; }
   .cx-q .cx-qi { top:15px; }
 }
+
+/* nomi lunghi senza spazi (cartelle, rami) vanno a capo invece di uscire dalla card */
+.tab section, .tab .card { overflow-wrap: anywhere; }
+table.share.m th:nth-child(2) { width:110px; } table.share.m th:nth-child(3) { width:auto; }
+/* in colonne strette l'intestazione con il nome del provider va a capo invece di uscire */
+table.share .pvh { white-space:normal; flex-wrap:wrap; justify-content:flex-end; }

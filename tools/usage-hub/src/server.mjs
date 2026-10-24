@@ -21,7 +21,7 @@ import { enqueue, cancel, loadQueue, tick, recoverRunning, launchDelegate, creat
 import { newState, scanToday } from './sessions.mjs';
 import { projectSummary, saveProjectSetting, loadLabels, labelFor, explainProjects } from './live.mjs';
 import { scanAgents, summarize, attachOpen, loadDesktopSessions, topicsByProject } from './agents.mjs';
-import { sessionUse, shareFromReport } from './session-use.mjs';
+import { attachSessionUse, shareFromReport } from './session-use.mjs';
 import { macMachine, pcMachine, offloadJobs } from './machines.mjs';
 import https from 'node:https';
 import { createMacWatch, attachResources } from './macwatch.mjs';
@@ -198,7 +198,7 @@ export function createServer(config, deps = {}) {
     attachOpen(agents, { desktop: loadDesktopSessions(), topics: terminals.filter((t) => t.source === 'topics') });
     try { attachResources(agents, (await macWatch.snapshot()).trees); } catch { /* senza misure le righe restano senza risorse */ }
     // quanto consuma ogni sessione: dai tracker che l'hub aggiorna già per i progetti
-    for (const a of agents) { const u = sessionUse(a, trackers, { weights: config.weights, weekShare, shareFor }); if (u) { a.use = u; if (u.startedAt < a.startedAt) a.startedAt = u.startedAt; } }
+    attachSessionUse(agents, trackers, cache, { weights: config.weights });
     agentCache = { at: Date.now(), v: { agents, lastSeen: { ...weekSeen.v, ...lastSeen }, topics: topicsByProject(terminals, { groups, ocRoot: path.join(os.homedir(), '.openclaw') }) } };
     return agentCache.v;
   };
@@ -209,8 +209,7 @@ export function createServer(config, deps = {}) {
   const auto = () => (autoApi ||= deps.automations || createAutomations({ background: runsLive }));
   if (runsLive) auto();
   // Quota della settimana di un costo pesato (sessione, giro di workflow), con la stessa divisione dei progetti.
-  // La divisione sta in session-use.mjs (shareFromReport), testata col report vero: qui solo la copia corrente.
-  const shareFor = (provider, weighted) => shareFromReport(cache, provider, weighted);
+  // La divisione sta in session-use.mjs (shareFromReport, attachSessionUse), testata col report vero.
   const weekShare = (weighted) => shareFromReport(cache, 'claude', weighted);
   // «Da cambiare» passa a un agente: una voce in coda con la nota e il modo di chiuderla.
   const changeRequest = (row, card) => enqueue({
@@ -334,7 +333,7 @@ export function createServer(config, deps = {}) {
       if (req.url.startsWith('/api/automations/graph?')) {
         const key = new URL(req.url, 'http://x').searchParams.get('key') || '';
         let card = null; try { card = ((await auto().model()).cards || {})[key] || null; } catch { /* senza modello: solo la definizione */ }
-        const g = graphFor(key, { card });
+        const g = deps.demo && auto().graph ? await auto().graph(key) : graphFor(key, { card });
         return send(g ? 200 : 404, 'application/json', JSON.stringify(g || { ok: false, error: 'nessuno schema per questa voce' }));
       }
       if (req.url === '/api/automations/summary') return send(200, 'application/json', JSON.stringify(await auto().summary()));
@@ -394,7 +393,8 @@ export function createServer(config, deps = {}) {
       }
       // Impostazioni della pagina che stanno nella config locale (fuori dal repo): i link per scrivere a Jarvis.
       if (req.url === '/api/hub-config') {
-        const jv = localConfig().jarvis || {};
+        // in demo i bottoni «Scrivi a Jarvis» puntano a link d'esempio: il numero vero di config.local non esce mai
+        const jv = deps.demo ? { whatsapp: 'https://esempio.it/assistente/whatsapp', discord: 'https://esempio.it/assistente/discord' } : localConfig().jarvis || {};
         return send(200, 'application/json', JSON.stringify({ demo: !!deps.demo, jarvis: { whatsapp: jv.whatsapp || null, discord: jv.discord || null } }));
       }
       // Contesto: cosa leggono gli agenti. Sola lettura, copia di 60 s (il doctor ci mette qualche secondo).

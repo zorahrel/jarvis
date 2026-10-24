@@ -112,7 +112,7 @@ def main():
             shots(b, url, ['overview'], [1440, 375], ['light'], 'r6-esempio-', out)
             if '--video' in sys.argv: tour(b, url, out, d)
         finally:
-            p.kill()
+            p.terminate(); p.wait(15)  # SIGTERM: la demo toglie la sua cartella (SIGKILL la lasciava in $TMPDIR)
         b.close()
     print('\n'.join(bad) or 'nessuno scheletro')
     sys.exit(1 if bad else 0)

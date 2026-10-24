@@ -36,8 +36,23 @@ export function createDemoAutomations({ fixture = 'ok', dir = process.env.USAGE_
     m.feedbackOpen = openItems(state).length;
     return m;
   };
+  // Schema finto per ogni voce della demo (prima rispondeva «nessuno schema» e il pannello non ne mostrava mai uno).
+  const graph = async (key) => {
+    const c = (await model()).cards?.[key];
+    if (!c) return null;
+    const at = c.last?.at ?? now() - 3600000;
+    return {
+      run: { at, ms: 42000, outcome: 'ok' }, from: ['definizione di esempio'],
+      nodes: [
+        { id: 'trigger', kind: 'trigger', label: 'ogni giorno alle 7:00', detail: 'pianificazione di esempio' },
+        { id: 'sources', kind: 'sources', label: '2 fonti', items: [{ label: 'agenda di esempio' }, { label: 'note di esempio' }], detail: 'nominate nel prompt' },
+        { id: 's1', kind: 'step', label: 'raccoglie le voci del giorno', outcome: 'ok', ms: 12000 },
+        { id: 'deliver', kind: 'deliver', label: 'chat di esempio', outcome: 'ok', at: at + 42000 },
+      ],
+    };
+  };
   return {
-    model,
+    model, graph,
     summary: async () => { const m = await model(); return { ...m.verdict, checkedAt: m.checkedAt, sources: m.footer.sources.map((s) => ({ name: s.name, ok: s.ok, at: s.at, pending: !!s.pending })) }; },
     feedback: (row) => append(row, { dir: fbDir }),
     openFeedback: () => openItems(buildState(readAll({ dir: fbDir }).rows, { now: now() })),

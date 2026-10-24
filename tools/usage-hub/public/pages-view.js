@@ -64,6 +64,8 @@
   function humanProject(n) {
     var s = String(n || '');
     if (/^local_[0-9a-f-]{8,}/i.test(s)) return 'Sessione di Claude desktop';
+    if (/^wf_[0-9a-f-]{6,}/i.test(s)) return 'Giri di workflow';
+    if (/^_sys_[0-9a-f]{6,}$/i.test(s)) return 'Cartella di sistema';
     var m = /^openclaw\/([a-z-]+)(?::(.*))?$/.exec(s);
     if (m) {
       var k = m[1], v = (m[2] || '').trim(), bad = !v || ID.test(v) || /^[0-9a-f]{8}$/i.test(v);
@@ -77,6 +79,15 @@
     }
     return s.replace(ID, '').trim() || 'senza nome';
   }
+  // Sessioni (proxy VDM): la cartella diventa un nome umano, i messaggi perdono canali, gruppi e marcatori interni.
+  var noIds = function (t) { return (root.AutomationsView || {}).noIds ? root.AutomationsView.noIds(t) : String(t == null ? '' : t); };
+  function sessionPlace(x) {
+    if (x.repo) return noIds(humanProject(x.repo) + (x.branch ? '/' + x.branch : ''));
+    if (!x.cwd) return '?';
+    var base = String(x.cwd).replace(/[\\/]+$/, '').split(/[\\/]/).pop();
+    return humanProject(base);
+  }
+  function sessionText(t) { return noIds(t); }
   // Consumo di una sessione: token letti dai suoi log e, dove l'hub la sa, la quota della settimana che pesa.
   function tokWords(n) {
     if (!(n > 0)) return '';
@@ -231,7 +242,7 @@
       top + checks + docBox + con + '<div class="stack">' + lists + skills + '</div>' + dup + old;
   }
 
-  var api = { humanTitle: humanTitle, humanProject: humanProject, useWords: useWords, tokWords: tokWords, attesaHtml: attesaHtml, journalHtml: journalHtml, contextHtml: contextHtml, jarvisHref: jarvisHref, jarvisBtn: jarvisBtn, stIcon: stIcon, dayLabel: dayLabel };
+  var api = { humanTitle: humanTitle, humanProject: humanProject, sessionPlace: sessionPlace, sessionText: sessionText, useWords: useWords, tokWords: tokWords, attesaHtml: attesaHtml, journalHtml: journalHtml, contextHtml: contextHtml, jarvisHref: jarvisHref, jarvisBtn: jarvisBtn, stIcon: stIcon, dayLabel: dayLabel };
   root.PagesView = api;
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
 })(globalThis);

@@ -39,8 +39,8 @@ function auRender() {
 // Pannello di dettaglio: si apre su una riga, si chiude con ✕, Esc o clic fuori. Il fuoco torna alla riga.
 function auOpen(key) {
   auUi.sel = key;
+  auGraph(key); // prima del disegno: il pannello nasce con lo scheletro dello schema, non vuoto finché arriva
   auRender();
-  auGraph(key);
   var p = $('t-automations').querySelector('.cx-panel');
   if (p) { var first = p.querySelector('article.au-card') || p.querySelector('.cx-x'); if (first) first.focus({ preventScroll: true }); }
 }

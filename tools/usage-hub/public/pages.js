@@ -13,6 +13,9 @@ hubConfig().then(function (c) {
   b.className = 'demo-band'; b.setAttribute('role', 'note');
   b.textContent = 'ESEMPIO: questa è la demo dell\'hub, voci e numeri sono di prova';
   document.body.prepend(b);
+  // quanto è alta la fascia: pagina, nav e pannello partono sotto (app.css, --demo-h)
+  var h = function () { document.documentElement.style.setProperty('--demo-h', b.offsetHeight + 'px'); };
+  h(); addEventListener('resize', h);
 });
 
 // ---- Ti aspetta (in cima alla Panoramica) ----

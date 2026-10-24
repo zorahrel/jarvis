@@ -24,8 +24,19 @@ export function projectName(dirName, cwd, groups = []) {
   for (const g of groups) {
     if ((g.match || []).some((m) => (cwd && cwd.includes(m)) || dirName.includes(m))) return g.name;
   }
-  if (cwd) return path.basename(cwd.replace(/[\\/]+$/, '')) || cwd;
+  if (cwd) return humanDirName(path.basename(cwd.replace(/[\\/]+$/, '')) || cwd);
   return dirName;
+}
+
+// Cartelle con un id al posto del nome (sessioni desktop, giri di workflow, cartelle di sistema): diventano parole
+// già qui, così nessuna API (/api/projects, /api/live) porta l'id in pagina. Più cartelle dello stesso tipo si sommano.
+const UUID = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i;
+export function humanDirName(base) {
+  if (/^local_[0-9a-f-]{8,}$/i.test(base)) return 'Sessioni di Claude desktop';
+  if (/^wf_[0-9a-f-]{6,}/i.test(base)) return 'Giri di workflow';
+  if (/^_sys_[0-9a-f]{6,}$/i.test(base)) return 'Cartella di sistema';
+  if (UUID.test(base)) return base.replace(UUID, '').replace(/^[-_]+|[-_]+$/g, '') || 'Cartella senza nome';
+  return base;
 }
 
 // Lettura incrementale: per ogni file si ricorda fin dove si è letto e le righe utili già trovate (orario, cwd, token),
@@ -36,7 +47,7 @@ export function createClaudeTracker() {
   const files = new Map(); // percorso → { dirName, sub, offset, rows: [[ts, cwd, input, output, cacheWrite, cacheRead]] }
   // Righe dell'assistente con "usage", lette a blocchi (vedi lines.mjs); il parse serve a riconoscere message.usage.
   const readFile = (file, st, e, keepSince) => {
-    if (st.size < e.offset) { e.offset = 0; e.rows = []; e.ids = new Set(); } // file riscritto da capo
+    if (st.size < e.offset) { e.offset = 0; e.rows = []; e.ids = new Map(); } // file riscritto da capo
     if (st.size === e.offset) return;
     e.offset = forEachLine(file, ['"usage"'], (line) => {
       let m;
@@ -44,11 +55,16 @@ export function createClaudeTracker() {
       const ts = Date.parse(m.timestamp);
       const u = m.message && m.message.usage;
       if (!Number.isFinite(ts) || ts < keepSince || !u) return;
-      // Claude Code scrive una riga per blocco di contenuto (testo, tool_use…) con la stessa usage del messaggio:
-      // contarle tutte gonfiava token e richieste di circa 2 volte (24/10: 1763 righe per 842 messaggi). Una per id.
+      // Claude Code scrive una riga per blocco di contenuto (testo, tool_use…) dello stesso messaggio: contarle tutte
+      // gonfiava token e richieste di circa 2 volte (24/10: 1763 righe per 842 messaggi). Una per id, e vale l'ULTIMA:
+      // fino alla 2.1.304 le righe intermedie hanno output_tokens parziali (9 contro 689), solo l'ultima è il conto finale.
       const id = m.message.id;
-      if (id) { if (e.ids.has(id)) return; e.ids.add(id); }
-      e.rows.push([ts, m.cwd, u.input_tokens || 0, u.output_tokens || 0, u.cache_creation_input_tokens || 0, u.cache_read_input_tokens || 0]);
+      const vals = [u.input_tokens || 0, u.output_tokens || 0, u.cache_creation_input_tokens || 0, u.cache_read_input_tokens || 0];
+      const prev = id && e.ids.get(id);
+      if (prev) { prev.splice(2, 4, ...vals); return; } // stessa riga, orario del primo blocco
+      const row = [ts, m.cwd, ...vals];
+      if (id) e.ids.set(id, row);
+      e.rows.push(row);
     }, { from: e.offset, size: st.size });
   };
   return {
@@ -79,7 +95,7 @@ export function createClaudeTracker() {
         let st; try { st = fs.statSync(file); } catch { continue; }
         if (st.mtimeMs < sinceMs) continue;
         seen.add(file);
-        const e = files.get(file) || { dirName, sub, offset: 0, rows: [], ids: new Set() };
+        const e = files.get(file) || { dirName, sub, offset: 0, rows: [], ids: new Map() };
         files.set(file, e);
         try { readFile(file, st, e, keepSince); } catch { /* illeggibile: si salta */ }
         yield;

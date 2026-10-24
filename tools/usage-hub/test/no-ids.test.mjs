@@ -52,3 +52,27 @@ test('Automazioni, dettagli tecnici: niente «Chiave cron:<uuid>», il sistema p
   assert.doesNotMatch(tech, /<dt>Chiave<\/dt>/);
   assert.doesNotMatch(tech, /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i);
 });
+
+test('projectName: cartelle con un id (local_, wf_, _sys_, uuid) arrivano alle API già come parole', async () => {
+  const { projectName } = await import('../src/usage.mjs');
+  for (const cwd of ['/x/local_5d58bb9d-5000-4466-ac64-6a505dba24a6', '/tmp/wf_233cc80c-e78-1', '/y/_sys_226619bc', '/z/run-7e1ab828-1d47-4d5f-bf35-919a0043ea64'])
+    assert.doesNotMatch(projectName('-d', cwd, []), ID, cwd);
+  assert.equal(projectName('-d', '/x/local_5d58bb9d-5000-4466-ac64-6a505dba24a6', []), 'Sessioni di Claude desktop');
+  assert.equal(projectName('-d', '/x/armonia-site', []), 'armonia-site');
+});
+
+test('testi liberi senza id: «Ti scrive», messaggi delle sessioni, cartelle _sys_ (casi del 24/10)', () => {
+  const LONG = /\d{9,}|<<<|[0-9a-f]{8}-[0-9a-f]{4}-/i;
+  const cases = ['WhatsApp, nel gruppo con id 120363411359994568, lunedì alle 9:00, solo se qualcosa è cambiato',
+    'Discord (canale 1547285789002698864), il 2 del mese alle 9:00',
+    'I acknowledge this is an inter-session message routed from Discord channel 1551637216177168465.',
+    '<<<BEGIN_OPENCLAW_INTERNAL_CONT…', 'scrive in 120363411359994568@g.us'];
+  for (const t of cases) assert.doesNotMatch(PV.sessionText(t), LONG, t);
+  assert.equal(AV.noIds(cases[0]), 'WhatsApp, nel gruppo, lunedì alle 9:00, solo se qualcosa è cambiato');
+  assert.equal(AV.noIds(cases[1]), 'Discord, il 2 del mese alle 9:00');
+  assert.equal(PV.sessionPlace({ cwd: '/Users/x/.openclaw/_sys_226619bc' }), 'Cartella di sistema');
+  assert.equal(PV.sessionPlace({ repo: 'armonia-site', branch: 'main' }), 'armonia-site/main');
+  // il pannello di un'automazione non mostra l'id del gruppo in «Ti scrive»
+  const html = AV.card({ key: 'cron:x', title: 'Prova', provider: 'openclaw', level: 'va', last: {}, means: cases[0], who: 'Jarvis (canale 1547285789002698864)' }, {}, Date.now());
+  assert.match(html, /Ti scrive/); assert.doesNotMatch(html.replace(/<[^>]+>/g, ' '), /\d{12,}/);
+});

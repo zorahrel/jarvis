@@ -166,8 +166,9 @@ document.addEventListener('click', (e) => {
 async function renderSessions() {
   const s = await vdm('/api/sessions');
   if (!s) { $('t-sessions').innerHTML = `<section>${empty('Il proxy VDM non risponde.')}</section>`; return; }
-  const proj = (x) => x.repo ? x.repo + (x.branch ? '/' + x.branch : '') : x.cwd || '?';
-  const tl = (x) => (x.timeline || []).map((t) => `<div class="small ${t.type === 'input' ? '' : 'mut'}" style="${t.type === 'input' ? 'font-weight:600' : 'padding-left:12px'}">${esc(t.text)}</div>`).join('');
+  // luogo e testi delle sessioni passano da PagesView: cartelle con id e messaggi con canali o marcatori diventano parole
+  const proj = (x) => PagesView.sessionPlace(x);
+  const tl = (x) => (x.timeline || []).map((t) => `<div class="small ${t.type === 'input' ? '' : 'mut'}" style="${t.type === 'input' ? 'font-weight:600' : 'padding-left:12px'}">${esc(PagesView.sessionText(t.text))}</div>`).join('');
   const act = (s.active || []).map((x) => {
     const idle = Date.now() - x.lastActiveAt, waiting = idle > 120000;
     return `<div class="card acard ${waiting ? '' : 'active'}"><div class="head">${provIcon('claude')}<span>${esc(x.account)} · ${esc(proj(x))}</span><span class="mut small" style="margin-left:auto">${dur(Date.now() - x.startedAt)}${waiting ? ` · in attesa di input da ${dur(idle)}` : ''}</span></div>${x.currentActivity ? `<div class="small" style="margin-left:26px">${esc(x.currentActivity)}</div>` : ''}<details><summary>cronologia</summary>${tl(x)}</details><div class="small mut" style="margin-left:26px">${esc(short(x.model))} · ${x.requestCount} richieste · ${nfmt(x.totalInputTokens + x.totalOutputTokens)} token</div></div>`;

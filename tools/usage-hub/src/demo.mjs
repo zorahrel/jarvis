@@ -27,7 +27,27 @@ export function makeDemoRoot(now = Date.now()) {
 
 // `usage-hub --demo` vive finché lo ferma qualcuno: la cartella dei log finti va tolta quando esce
 // (ne restavano 1.100 in $TMPDIR). I segnali passano da process.exit perché il default non fa girare 'exit'.
+// Un --demo ucciso con SIGKILL non fa girare 'exit': alla partenza si tolgono le cartelle demo di un'ora fa
+// il cui processo (scritto in .pid da removeOnExit) non c'è più. Una demo ancora accesa resta.
+const alive = (pid) => { try { process.kill(pid, 0); return true; } catch (e) { return e.code === 'EPERM'; } };
+export function sweepStaleDemoRoots(dir = os.tmpdir(), now = Date.now()) {
+  let n = 0;
+  for (const name of fs.readdirSync(dir)) {
+    if (!name.startsWith('usage-hub-demo-')) continue;
+    const p = path.join(dir, name);
+    try {
+      const pid = Number(fs.readFileSync(path.join(p, '.pid'), 'utf8').trim() || 0) || 0;
+      if (pid && alive(pid)) continue;
+      if (now - fs.statSync(p).mtimeMs > 3600000) { fs.rmSync(p, { recursive: true, force: true }); n++; }
+    } catch (e) {
+      if (e.code === 'ENOENT' && fs.existsSync(p) && now - fs.statSync(p).mtimeMs > 3600000) { fs.rmSync(p, { recursive: true, force: true }); n++; }
+    }
+  }
+  return n;
+}
+
 export function removeOnExit(root) {
+  try { fs.writeFileSync(path.join(root, '.pid'), String(process.pid)); } catch { /* senza .pid la pulizia guarda solo l'età */ }
   process.on('exit', () => fs.rmSync(root, { recursive: true, force: true }));
   for (const sig of ['SIGINT', 'SIGTERM', 'SIGHUP']) process.once(sig, () => process.exit(0));
   return root;
@@ -61,9 +81,18 @@ export function addDemoCrowd(root, now = Date.now()) {
   const names = ['cartella_di_prova_con_un_nome_davvero_molto_lungo_e_senza_spazi_per_il_telefono', ...Array.from({ length: 19 }, (_, i) => `esperimento-${i + 1}`)];
   names.forEach((name, i) => {
     const dir = path.join(root, `-work-${name}`); fs.mkdirSync(dir, { recursive: true });
-    const lines = Array.from({ length: 3 + i }, (_, k) => JSON.stringify({ timestamp: new Date(now - 7200000 - k * 1000).toISOString(), cwd: `/work/${name}`,
+    // il nome lungo è il più recente dei fermi, così compare anche fra i primi di Progetti
+    const at = i === 0 ? now - 600000 : now - 7200000;
+    const lines = Array.from({ length: i === 0 ? 60 : 3 + i }, (_, k) => JSON.stringify({ timestamp: new Date(at - k * 1000).toISOString(), cwd: `/work/${name}`,
       message: { id: `c${i}-${k}`, usage: { input_tokens: 10, output_tokens: 40, cache_creation_input_tokens: 100, cache_read_input_tokens: 2000 } } }));
     fs.writeFileSync(path.join(dir, 's.jsonl'), lines.join('\n') + '\n');
+  });
+  // e qualche sessione Muse, così Consumi ha la sua tabella (in demo era «Nessuna attività Muse»)
+  const d = new Date(now), ymd = [String(d.getUTCFullYear()), String(d.getUTCMonth() + 1).padStart(2, '0'), String(d.getUTCDate()).padStart(2, '0')];
+  ['billing-api', 'docs-site', 'infra'].forEach((name, i) => {
+    const dir = path.join(root, 'muse', ...ymd, `sess-${i}`); fs.mkdirSync(dir, { recursive: true });
+    const ev = (k) => JSON.stringify({ payload_type: 'runtime.session', recorded_at: (now - 1800000 - k * 1000) * 1000, payload: { event: { kind: 'model_completed', model: 'muse-1', usage: { input_tokens: 4000 * (3 - i), output_tokens: 900 } } } });
+    fs.writeFileSync(path.join(dir, 'session.jsonl'), [JSON.stringify({ payload_type: 'runtime.session.metadata', payload: { record: { workspace_root: `/work/${name}` } } }), ...Array.from({ length: 4 }, (_, k) => ev(k))].join('\n') + '\n');
   });
   return root;
 }

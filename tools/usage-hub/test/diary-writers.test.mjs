@@ -37,8 +37,12 @@ test('usage-hub check: ogni tipo di avviso va nel diario con la sua voce, nessun
   } finally { if (prev == null) delete process.env.USAGE_HUB_DIARIO; else process.env.USAGE_HUB_DIARIO = prev; }
 });
 
-const QG = path.join(os.homedir(), '.openclaw', 'bin', 'quota-guard.py');
-test('quota-guard.py vero su fixture: oltre il budget scrive una riga nel diario di prova', { skip: !fs.existsSync(QG) && 'quota-guard non installato' }, async () => {
+// Su questo Mac (c'è ~/.openclaw) il guardiano deve esserci: se manca il test cade, non si salta in silenzio.
+// Si salta solo su una macchina senza OpenClaw, e lo dice. QUOTA_GUARD_PY sposta il percorso (mutazioni, prove).
+const QG = process.env.QUOTA_GUARD_PY || path.join(os.homedir(), '.openclaw', 'bin', 'quota-guard.py');
+const NO_OPENCLAW = !process.env.QUOTA_GUARD_PY && !fs.existsSync(path.join(os.homedir(), '.openclaw'));
+test('quota-guard.py vero su fixture: oltre il budget scrive una riga nel diario di prova', { skip: NO_OPENCLAW && 'macchina senza OpenClaw: quota-guard non provato' }, async () => {
+  assert.ok(fs.existsSync(QG), `quota-guard.py assente in ${QG}: il diario degli avvisi di soglia non ha chi lo scrive`);
   const dir = tmp('diario-qg-'), work = tmp('qg-');
   const now = Date.now(), resetS = Math.floor(now / 1000) + 3 * 86400;
   const overview = { providers: [

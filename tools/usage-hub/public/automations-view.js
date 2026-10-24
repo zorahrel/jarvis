@@ -6,6 +6,17 @@
   var TZ = 'Europe/Rome';
 
   // Via i caratteri che rompono l'HTML.
+  // Testo libero senza id: gruppi WhatsApp, canali Discord, uuid e marcatori interni di OpenClaw (anche troncati)
+  // diventano niente. Vale per descrizioni scritte a mano e per i messaggi delle sessioni.
+  function noIds(t) {
+    return String(t == null ? '' : t)
+      .replace(/<<<[A-Z_]*(?:>>>|…|\.\.\.)?/g, '')
+      .replace(/\s*\((?:canale|channel|gruppo|group|chat|id)\s+[\d@a-z.:-]*\d{6,}[\d@a-z.:-]*\)/gi, '')
+      .replace(/\s+(?:con id|with id|channel|canale|chat|id)\s+\d{6,}(?:@[a-z.]+)?/gi, '')
+      .replace(/\b\d{12,}(?:@[a-z.]+)?/gi, '')
+      .replace(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi, '')
+      .replace(/\(\s*\)/g, '').replace(/[ \t]{2,}/g, ' ').replace(/\s+([,.;:)])/g, '$1').trim();
+  }
   function esc(s) {
     return String(s ?? '').replace(/[&<>"]/g, function (c) {
       return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c];
@@ -611,16 +622,16 @@
     if (dw) facts.push('<dt>Consegna</dt><dd class="' + (l.delivered === 'failed' ? 'bad' : '') + '">' + dw + '</dd>');
     if (c.proof && !(c.proof.ok === false && c.reason && c.reason.indexOf(c.proof.words) !== -1)) facts.push('<dt>Prova</dt><dd class="' + (c.proof.ok === false ? 'bad' : '') + '">' + esc(c.proof.words || '') + '</dd>');
     var br = ifBroken(c);
-    facts.push('<dt>Se si rompe</dt><dd' + (br ? '' : ' class="dim"') + '>' + esc(br || 'non scritto') + '</dd>');
-    if (c.who) facts.push('<dt>Esegue</dt><dd>' + esc(c.who) + '</dd>');
-    if (c.means) facts.push('<dt>Ti scrive</dt><dd>' + esc(c.means) + '</dd>');
+    facts.push('<dt>Se si rompe</dt><dd' + (br ? '' : ' class="dim"') + '>' + esc(noIds(br) || 'non scritto') + '</dd>');
+    if (c.who) facts.push('<dt>Esegue</dt><dd>' + esc(noIds(c.who)) + '</dd>');
+    if (c.means) facts.push('<dt>Ti scrive</dt><dd>' + esc(noIds(c.means)) + '</dd>');
     facts.push('<dt>Area</dt><dd>' + esc(area ? area.title : '') + (c.purpose && c.purpose.area ? '' : ' (area stimata)') + '</dd>');
     var pressed = function (v) { return fb.vote && fb.vote.v === v ? ' aria-pressed="true"' : ' aria-pressed="false"'; };
     return '<article class="au-card lv-' + esc(c.level || 'va') + '" tabindex="-1" data-key="' + esc(c.key) + '"' + (c.fp ? ' data-fp="' + esc(c.fp) + '"' : '') + '>' +
       panelHead(c.level === 'te' || c.level === 'rotto' ? c.level : 'va', LEVEL[c.level] || 'Ok', (SYS[c.provider] || c.provider || '—') + ((c.sources || []).length > 1 ? ' · ' + c.sources.length + ' fonti' : '')) +
       '<div class="cx-pb"><h3 id="cx-pt">' + esc(c.title) + '</h3>' +
-      (isProblem(c) && c.reason ? '<p class="au-why ' + esc(c.level) + '">' + esc(c.reason) + '</p>' : '') +
-      (forYou(c) ? '<p class="cx-desc">' + esc(forYou(c)) + '</p>' : '') +
+      (isProblem(c) && c.reason ? '<p class="au-why ' + esc(c.level) + '">' + esc(noIds(c.reason)) + '</p>' : '') +
+      (forYou(c) ? '<p class="cx-desc">' + esc(noIds(forYou(c))) + '</p>' : '') +
       graphHtml(ui && ui.graphs && ui.graphs[c.key], now) +
       '<dl class="cx-dl">' + facts.join('') + '</dl>' +
       feedbackLines(fb).map(function (s) { return '<div class="cx-fbl">' + esc(s) + '</div>'; }).join('') +
@@ -715,7 +726,7 @@
     return verdictHtml(model, ui) + tableHtml(model, ui, now) + footerHtml(model) + panelHtml(model, ui, now);
   }
 
-  var api = { packRows: packRows, modelStory: modelStory, prettyModel: prettyModel, fixHtml: fixHtml, isGate: isGate, render: render, skeleton: skeleton, errorHtml: errorHtml, lastWords: lastWords, deliveredWords: deliveredWords, esc: esc, card: card, graphHtml: graphHtml, stripHtml: stripHtml, areaOf: areaOf, runTokens: runTokens, flowHtml: flowHtml };
+  var api = { noIds: noIds, packRows: packRows, modelStory: modelStory, prettyModel: prettyModel, fixHtml: fixHtml, isGate: isGate, render: render, skeleton: skeleton, errorHtml: errorHtml, lastWords: lastWords, deliveredWords: deliveredWords, esc: esc, card: card, graphHtml: graphHtml, stripHtml: stripHtml, areaOf: areaOf, runTokens: runTokens, flowHtml: flowHtml };
   // Sempre sul globale: così il test con createRequire trova tutto anche se `module.exports` non esce.
   root.AutomationsView = api;
   if (typeof module !== 'undefined' && module.exports) module.exports = api;

@@ -52,9 +52,10 @@ try {
     console.log(`progetti vivi con consumo della settimana: ${withUse.length} (${withUse.slice(0, 3).map((p) => p.name + ' ' + p.total + '%').join(', ')})`);
     if (withUse.length < 3) fail.push(`solo ${withUse.length} progetti vivi con consumo nella tabella (minimo 3)`);
     // e per sessione: ogni sessione col suo consumo e la sua quota, e nessun provider oltre la % usata (session-use.mjs)
-    const pace = await fetch('http://127.0.0.1:3360/api/pace', { signal: AbortSignal.timeout(60000) }).then((r) => r.json()).catch(() => []);
+    // il report su cui l'hub divide la quota (account attivo di Claude, Codex, Muse), non /api/pace con tutti gli account
+    const report = await fetch('http://127.0.0.1:3360/api/projects', { signal: AbortSignal.timeout(60000) }).then((r) => r.json()).catch(() => null);
     const { checkSessionUse } = await import('../src/session-use.mjs');
-    const su = checkSessionUse((live && live.projects) || [], Array.isArray(pace) ? pace : []);
+    const su = checkSessionUse((live && live.projects) || [], report);
     for (const l of su.lines) console.log(l);
     if (!su.lines.length) fail.push('nessuna sessione viva da misurare: la quota per sessione non si può provare');
     fail.push(...su.fail);
