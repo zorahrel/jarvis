@@ -32,3 +32,17 @@ test('node col percorso, o la parola dentro un nome: niente', () => {
   assert.equal(cmd(['sh', '-lc', 'python3 /x/node-check.py']).length, 0);
   assert.equal(cmd(['sh', '-lc', 'ls node_modules']).length, 0);
 });
+
+// 24/10 09:30: il cron gira dentro il gateway e pgrep su macOS esclude gli antenati, quindi «gateway spento» falso.
+const pg = (argv) => findings({ now: Date.now(), jobs: [{ id: 'b290d40e-0000-0000-0000-000000000000', name: 'verifica opus', enabled: true, payload: { kind: 'command', argv }, schedule: { kind: 'at' } }], runsByJob: {}, delivered: {} }).filter((o) => o.kind === 'pgrep cieco');
+
+test('pgrep senza -a che cerca OpenClaw: segnalato', () => {
+  assert.equal(pg(['cron-clean', 'x', 'sh', '-c', "pid=$(pgrep -f 'openclaw/dist/index.js' | head -1)"]).length, 1);
+});
+
+test('pgrep -a, launchctl, o pgrep su altro: niente', () => {
+  assert.equal(pg(['sh', '-c', "pgrep -af 'openclaw/dist/index.js'"]).length, 0);
+  assert.equal(pg(['sh', '-c', "pgrep -a -f openclaw"]).length, 0);
+  assert.equal(pg(['sh', '-c', "launchctl list | awk '$3==\"ai.openclaw.gateway\"'"]).length, 0);
+  assert.equal(pg(['sh', '-c', 'pgrep -f whisper; openclaw cron list']).length, 0);
+});

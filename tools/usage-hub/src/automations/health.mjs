@@ -49,6 +49,9 @@ export function findings(f) {
     // login): la salute delle 8:45 è caduta su node:sqlite, e altri sei cron giravano lì senza saperlo.
     const argv = j.payload?.kind === 'command' && Array.isArray(j.payload.argv) ? j.payload.argv.join(' ') : '';
     if (/(^|[\s;&|(`])node\s/.test(argv)) out.push({ kind: 'node vecchio', line: `${name(j)}: chiama «node» senza percorso, con sh -lc parte il Node 18 di /usr/local/bin: usa /opt/homebrew/bin/node` });
+    // 24/10 09:30: «Gateway OpenClaw spento» falso ad Attilio. Il cron gira dentro il gateway e pgrep su macOS
+    // esclude i propri antenati: cercare il gateway con pgrep senza -a non lo trova mai.
+    if (/\bpgrep\b(?![^\n|;&]*\s-\w*a)[^\n|;&]*openclaw/.test(argv)) out.push({ kind: 'pgrep cieco', line: `${name(j)}: cerca OpenClaw con pgrep senza -a, ma il cron gira dentro il gateway e pgrep non vede i suoi antenati: usa pgrep -a o launchctl list ai.openclaw.gateway` });
   }
   if (f.scratchLen > 4000) out.push({ kind: 'heartbeat', line: `scratch dell'heartbeat a ${Math.round(f.scratchLen / 1000)} KB: con compiti chiusi dentro il modello gira sempre; vuoto = nessun turno` });
   for (const d of f.doctor || []) out.push({ kind: 'doctor', line: `doctor ${d.severity}: ${d.checkId} — ${(d.message || '').slice(0, 140)}` });
