@@ -318,3 +318,15 @@ test('una voce sola cancellata dal telefono chiude la sua card, senza cancellarl
   await s.go();
   assert.equal(remsIn(s.reminders).length, 3, 'la voce cancellata non viene ricreata');
 });
+
+// ── Diario: il formato concordato con l'hub ──────────────────────────────────
+
+test('il diario scrive nel file del giorno a Roma, con i campi che l\'hub legge', async () => {
+  const { diario } = await import('./diario.mjs');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'diario-'));
+  const now = Date.parse('2026-10-23T22:30:00Z'); // 00:30 del 24 a Roma
+  diario([{ kind: 'nuova', text: 'da Promemoria su Topics: X', ref: 'R1' }, { kind: 'giro saltato', text: 'Topics giù' }, { kind: 'errore', text: 'no' }], { dir, now });
+  const rows = fs.readFileSync(path.join(dir, '2026-10-24.jsonl'), 'utf8').trim().split('\n').map((l) => JSON.parse(l));
+  assert.deepEqual(rows[0], { ts: now, source: 'task-sync', text: 'da Promemoria su Topics: X', kind: 'nuova', ref: 'R1', outcome: 'ok' });
+  assert.deepEqual(rows.map((r) => r.outcome), ['ok', 'skipped', 'error']);
+});
