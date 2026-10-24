@@ -211,17 +211,9 @@
     return '<span class="cx-g ' + (bad ? 'err' : 'ok') + '" aria-hidden="true"></span><span class="sr">' + (bad ? 'ultimo giro fallito' : 'regolare') + '</span>';
   }
 
-  // ---- Da fare: solo ciò che aspetta una mossa di Attilio, come card evento ----
-  // Cosa fare, in una frase: dipende da chi la esegue e da com'è ferma.
-  function todoAction(c) {
-    if (c.level === 'te') {
-      var m = /passo «([^»]+)»/.exec(c.reason || '');
-      // Un cancello di workflow si sblocca dove gira; il resto si decide coi pulsanti del pannello.
-      return m ? 'Dai l\'ok al passo «' + m[1] + '» in ' + (SYS[c.provider] || 'OpenClaw') + ', oppure fermalo.' : 'Apri i dettagli e decidi: va bene così, da cambiare, o non avvisarmi più.';
-    }
-    if (c.provider === 'github') return 'Apri il giro su GitHub e guarda il primo passo rosso.';
-    if (c.last && c.last.delivered === 'failed') return 'Il giro è riuscito ma il messaggio non ti è arrivato: controlla il canale.';
-    return 'Apri i dettagli: lo schema dice quale passo si è fermato.';
+  // ---- Da sistemare: le automazioni ferme. Chi decide (un cancello di workflow) sta in «Ti aspetta», in Panoramica. ----
+  function isGate(c) {
+    return c.level === 'te' && /passo «[^»]+»/.test(c.reason || '');
   }
   // Fallimenti di fila dalla storia: una lista solo se sono più di uno.
   function failStreak(c) {
@@ -230,29 +222,40 @@
     for (const x of h) { if (x.outcome !== 'error') break; out.push(x.at); }
     return out;
   }
-  var LINK_WORD = { github: 'Apri su GitHub', openclaw: 'Apri in OpenClaw', lobster: 'Apri in OpenClaw' };
-  function todoCard(c, now) {
-    var te = c.level === 'te';
-    var streak = te ? [] : failStreak(c);
-    var url = c.tech && c.tech.url;
-    var list = streak.length > 1
-      ? '<p class="td-streak">Fallita le ultime ' + streak.length + ' volte: ' + streak.slice(0, 5).map(function (t) { return dm(t); }).join(', ') + (streak.length > 5 ? '…' : '') + '</p>'
-      : '';
-    return '<article class="bx td b-4 ' + (te ? 'te' : 'rotto') + '">' +
-      '<div class="td-h"><span class="td-ic">' + ic(te ? 'hand' : 'circle-x') + '</span><span class="td-k">' + (te ? 'Ti aspetta' : 'Si è rotta') + '</span>' +
-      (c.since && !/alle \d/.test(c.reason || '') ? '<span class="td-when">' + esc(lastWords({ at: c.since }, now)) + '</span>' : '') + '</div>' +
-      '<h3 class="bx-t">' + esc(c.title) + '</h3>' +
-      '<p class="td-what">' + esc(c.reason || '') + (ifBroken(c) ? '. ' + esc(ifBroken(c).replace(/^Attilio potrebbe/, 'Finché resta così potresti')) : '') + '</p>' +
-      list +
-      '<p class="td-do">' + esc(todoAction(c)) + '</p>' +
-      '<div class="td-act"><button class="cx-btn" data-cx="' + esc(c.key) + '">Vedi dettagli</button>' +
-      (url ? '<a class="cx-btn ghost" href="' + esc(url) + '" target="_blank" rel="noopener">' + esc(LINK_WORD[c.provider] || 'Apri') + ic('external-link') + '</a>' : '') + '</div></article>';
+  // «Scrivi a Jarvis»: il link viene dalla config locale (ui.cfg), il testo dice già di cosa si parla.
+  function jarvisLink(ui, c) {
+    var j = (ui && ui.cfg && ui.cfg.jarvis) || {};
+    var text = 'Automazione «' + c.title + '» (' + c.key + '): ' + (c.reason || '');
+    var h = j.whatsapp ? j.whatsapp + (j.whatsapp.indexOf('?') === -1 ? '?' : '&') + 'text=' + encodeURIComponent(text) : j.discord || null;
+    return h ? '<a class="btn" href="' + esc(h) + '" target="_blank" rel="noopener">' + ic('message-circle') + 'Scrivi a Jarvis</a>' : '';
   }
-  // Le card «da fare», in testa alla griglia: chi aspetta un ok prima, poi le rotte, le più recenti per prime.
-  function todoHtml(model, now) {
-    var items = allCards(model).filter(isProblem).sort(function (a, b) { return (a.level === 'te' ? 0 : 1) - (b.level === 'te' ? 0 : 1) || (b.since || 0) - (a.since || 0); });
-    if (!items.length) return '<article class="bx calm b-4"><h3 class="bx-t">' + ic('check') + 'Niente da fare</h3><p>Nessuna automazione aspetta te e nessuna è rotta.</p></article>';
-    return items.map(function (c) { return todoCard(c, now); }).join('');
+  // «Risolvi tu»: manda un agente; se ce n'è già uno sulla voce, lo dice invece del bottone.
+  function fixBtn(ui, c) {
+    var f = ui && ui.fixing && ui.fixing[c.key];
+    if (f) return '<span class="tag t-run">' + ic('loader-circle') + (f === 'running' ? 'Un agente ci lavora' : 'Agente in coda') + '</span>';
+    return '<button class="btn pri" data-fix="' + esc(c.key) + '">' + ic('wand-sparkles') + 'Risolvi tu</button>';
+  }
+  function fixRow(c, ui, now) {
+    var streak = c.level === 'rotto' ? failStreak(c) : [];
+    var url = c.provider === 'github' && c.tech && c.tech.url;
+    return '<div class="fx">' +
+      '<span class="fx-ic ' + (c.level === 'rotto' ? 'bad' : 'warn') + '">' + ic(c.level === 'rotto' ? 'circle-x' : 'triangle-alert') + '</span>' +
+      '<div class="fx-b"><button class="fx-t" data-cx="' + esc(c.key) + '">' + esc(c.title) + '</button>' +
+      '<p class="fx-w">' + esc(c.reason || '') + (streak.length > 1 ? ' · fallita le ultime ' + streak.length + ' volte' : '') + '</p>' +
+      (ifBroken(c) ? '<p class="fx-s">' + esc(ifBroken(c).replace(/^Attilio potrebbe/, 'Finché resta così potresti')) + '</p>' : '') + '</div>' +
+      '<div class="fx-a">' + fixBtn(ui, c) + jarvisLink(ui, c) +
+      (url ? '<a class="btn ghost" href="' + esc(url) + '" target="_blank" rel="noopener">GitHub' + ic('external-link') + '</a>' : '') + '</div></div>';
+  }
+  function fixHtml(model, ui, now) {
+    var items = allCards(model).filter(function (c) { return isProblem(c) && !isGate(c); })
+      .sort(function (a, b) { return (a.level === 'rotto' ? 0 : 1) - (b.level === 'rotto' ? 0 : 1) || (b.since || 0) - (a.since || 0); });
+    var gates = allCards(model).filter(isGate).length;
+    var note = gates ? '<p class="bx-d">' + gates + (gates === 1 ? ' decisione aspetta' : ' decisioni aspettano') + ' te: sono in <a href="#overview">Panoramica</a>.</p>' : '';
+    if (!items.length) return '<article class="bx calm b-4"><h3 class="bx-t">' + ic('circle-check') + 'Niente da sistemare</h3><p>Nessuna automazione è ferma.</p>' + note + '</article>';
+    return '<article class="bx fix b-12"><header class="bx-h"><span class="cx-ghi">' + ic('wrench') + '</span><h3 class="bx-t">Da sistemare</h3>' +
+      '<span class="cx-cnt"><span>' + items.length + '</span></span></header>' +
+      '<p class="bx-d">«Risolvi tu» manda un agente con tutto il contesto della voce; parte quando freno e ritmo lo permettono, e l\'esito arriva nel Diario.</p>' + note +
+      '<div class="bx-list">' + items.map(function (c) { return fixRow(c, ui, now); }).join('') + '</div></article>';
   }
   // Striscia delle 24 ore (stile Cronitor): finestra da 22 h fa a 2 h avanti, un segno per quarto d'ora
   // con giri, colorato per l'esito peggiore; linea dell'ora attuale; il prossimo giro come segno vuoto.
@@ -428,7 +431,7 @@
     }).filter(function (x) { return x.rows.length; })
       // Le aree con un problema vengono prima, poi le più grandi.
       .sort(function (x, y) { return (y.pb ? 1 : 0) - (x.pb ? 1 : 0) || y.all.length - x.all.length; });
-    var h = packRows((searching ? '' : todoHtml(model, now)) + areas.map(function (x) { return areaCard(x.a, x.all, x.rows, ui, now); }).join('') + jobsCard(model, ui, now));
+    var h = packRows((searching ? '' : fixHtml(model, ui, now)) + areas.map(function (x) { return areaCard(x.a, x.all, x.rows, ui, now); }).join('') + jobsCard(model, ui, now));
     if (!areas.length && searching) {
       h += '<div class="bx cx-empty b-12"><b>Niente da mostrare</b>' + ((ui.q || '').trim() ? 'Nessuna automazione contiene «' + esc(ui.q.trim()) + '».' : 'Nessuna voce con questo filtro.') + ' <button class="cx-btn" data-au-clear="1">Togli il filtro</button></div>';
     }
@@ -466,7 +469,7 @@
     if (srcs.length > 1) rows.push('<dt>Fonti</dt><dd>' + srcs.map(function (s) { return esc(s.key); }).join('<br>') + '</dd>');
     var cmd = t.command || t.prompt;
     return '<details class="tech"><summary>Dettagli tecnici</summary><dl class="cx-dl">' + rows.join('') + '</dl>' +
-      (cmd ? '<pre>' + esc(cmd) + '</pre>' : '') + (t.url ? '<a href="' + esc(t.url) + '">Apri in OpenClaw</a>' : '') + '</details>';
+      (cmd ? '<pre>' + esc(cmd) + '</pre>' : '') + (t.url && c.provider === 'github' ? '<a href="' + esc(t.url) + '" target="_blank" rel="noopener">Vedi il giro su GitHub</a>' : '') + '</details>';
   }
 
   // ---- Chi risponde: il nodo modello raccontato in parole ----
@@ -606,7 +609,8 @@
       graphHtml(ui && ui.graphs && ui.graphs[c.key], now) +
       '<dl class="cx-dl">' + facts.join('') + '</dl>' +
       feedbackLines(fb).map(function (s) { return '<div class="cx-fbl">' + esc(s) + '</div>'; }).join('') +
-      '<div class="au-act"><button class="cx-btn pri" data-fb="ok" aria-keyshortcuts="v"' + pressed('ok') + '>Va bene <kbd>V</kbd></button>' +
+      (isProblem(c) && !isGate(c) ? '<div class="cx-fixa">' + fixBtn(ui, c) + jarvisLink(ui, c) + '</div>' : (isGate(c) ? '' : '<div class="cx-fixa">' + jarvisLink(ui, c) + '</div>')) +
+      '<div class="au-act"><button class="cx-btn' + (isProblem(c) && !isGate(c) ? '' : ' pri') + '" data-fb="ok" aria-keyshortcuts="v"' + pressed('ok') + '>Va bene <kbd>V</kbd></button>' +
       '<button class="cx-btn" data-fb="cambia" aria-keyshortcuts="c"' + pressed('cambia') + '>Da cambiare <kbd>C</kbd></button>' +
       '<button class="cx-btn" data-fb="nota" aria-keyshortcuts="n">Nota <kbd>N</kbd></button>' +
       '<button class="cx-btn" data-fb="segnala" aria-keyshortcuts="s">Segnala <kbd>S</kbd></button>' +
@@ -696,7 +700,7 @@
     return verdictHtml(model, ui) + tableHtml(model, ui, now) + footerHtml(model) + panelHtml(model, ui, now);
   }
 
-  var api = { packRows: packRows, modelStory: modelStory, prettyModel: prettyModel, todoHtml: todoHtml, render: render, skeleton: skeleton, errorHtml: errorHtml, lastWords: lastWords, deliveredWords: deliveredWords, esc: esc, card: card, graphHtml: graphHtml, stripHtml: stripHtml, areaOf: areaOf, runTokens: runTokens, flowHtml: flowHtml };
+  var api = { packRows: packRows, modelStory: modelStory, prettyModel: prettyModel, fixHtml: fixHtml, isGate: isGate, render: render, skeleton: skeleton, errorHtml: errorHtml, lastWords: lastWords, deliveredWords: deliveredWords, esc: esc, card: card, graphHtml: graphHtml, stripHtml: stripHtml, areaOf: areaOf, runTokens: runTokens, flowHtml: flowHtml };
   // Sempre sul globale: così il test con createRequire trova tutto anche se `module.exports` non esce.
   root.AutomationsView = api;
   if (typeof module !== 'undefined' && module.exports) module.exports = api;

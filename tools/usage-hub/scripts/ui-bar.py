@@ -18,7 +18,7 @@ AUDIT_JS = (HOME / '.claude/jarvis/scripts/ui-audit.js').read_text().replace(
     'var el = all[i];', 'var el = all[i]; if (el.ownerSVGElement) continue;', 1)
 assert 'ownerSVGElement' in AUDIT_JS, 'ui-audit.js è cambiato: il filtro delle icone non si applica più'
 CLIP_JS = (ROOT / 'scripts/ui-clip.js').read_text()
-TABS = ['automations', 'sessions', 'accounts', 'usage', 'overview', 'projects', 'activity', 'services', 'settings', 'logs']
+TABS = ['overview', 'journal', 'automations', 'sessions', 'projects', 'activity', 'context', 'accounts', 'usage', 'services', 'settings', 'logs']
 WIDTHS = (1440, 700, 375)
 LONG = 'sottotitolo di prova lunghissimo ' * 14
 red = []
@@ -51,7 +51,8 @@ def serve():
     port = free_port()
     d = pathlib.Path(tempfile.mkdtemp(prefix='ui-bar-'))
     env = dict(os.environ, USAGE_HUB_DEMO_AUTOMATIONS='problemi', USAGE_HUB_FEEDBACK_DIR=str(d / 'feedback'),
-               USAGE_HUB_QUEUE=str(d / 'queue.json'), USAGE_HUB_QUEUE_LOG=str(d / 'queue.log'))
+               USAGE_HUB_QUEUE=str(d / 'queue.json'), USAGE_HUB_QUEUE_LOG=str(d / 'queue.log'),
+               USAGE_HUB_ATTESA=str(d / 'ti-aspetta.jsonl'), USAGE_HUB_CONTEXT_CHECK=str(d / 'check.json'))
     proc = subprocess.Popen(['node', 'bin/usage-hub.mjs', 'serve', '--demo', '--port', str(port)], cwd=ROOT, env=env,
                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     url = f'http://127.0.0.1:{port}'

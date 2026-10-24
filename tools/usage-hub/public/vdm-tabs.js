@@ -69,7 +69,7 @@ async function renderAccounts() {
   const ps = pf.probeStats, q = pf.queueStats;
   const head = [`${pf.profiles.length} account`, (STRAT[pf.rotationStrategy] || [pf.rotationStrategy])[0], ps && ps.probeCount7d ? `${nfmt(ps.probeCount7d)} sonde in 7 giorni · circa ${nfmt(ps.inputTokens + ps.outputTokens)} token di overhead` : '',
     q && q.balanceMode && (q.balanceInflight || q.balanceWaiting) ? `Balance: ${q.balanceInflight} in corso${q.balanceWaiting ? `, ${q.balanceWaiting} in attesa di uno slot` : ''}` : q && !q.balanceMode && (q.inflight || q.queued) ? `Coda: ${q.inflight} in corso, ${q.queued} in fila` : ''].filter(Boolean).join(' · ');
-  $('sub').textContent = head;
+  if (cur === 'accounts') $('sub').textContent = head;
   const banner = pf.allExhausted ? `<section class="status bad">${IC.hand}<div><b>Tutti gli account sono esauriti</b><span class="mut small">Il primo si libera: ${esc(pf.earliestReset || 'sconosciuto')}</span></div></section>` : '';
   const cards = pf.profiles.map((p) => {
     const n = esc(p.name), rl = p.rateLimits, off = !!p.disabled, cap = p.cap || { override: {}, effective: {} }, ov = cap.override || {}, ef = cap.effective || {};

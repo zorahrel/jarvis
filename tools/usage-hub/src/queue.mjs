@@ -20,12 +20,13 @@ function save(items, file) {
   fs.renameSync(tmp, file);
 }
 
-export function enqueue({ task, dir, project, cls, priority, waitUntil }, { file = queueFile(), now = Date.now() } = {}) {
+// ref: la voce dell'hub a cui il lavoro si riferisce (es. la chiave di un'automazione per «Risolvi tu»).
+export function enqueue({ task, dir, project, cls, priority, waitUntil, ref }, { file = queueFile(), now = Date.now() } = {}) {
   if (!task || typeof task !== 'string') throw new Error('task mancante');
   if (priority && !(priority in RANK)) throw new Error('priorità: alta, normale, bassa');
   const items = loadQueue(file);
   const item = { id: crypto.randomBytes(3).toString('hex'), task, dir: dir || os.homedir(), project: project || '', cls: cls || null,
-    priority: priority || null, status: 'queued', createdAt: now, waitUntil: waitUntil || null };
+    priority: priority || null, status: 'queued', createdAt: now, waitUntil: waitUntil || null, ...(ref ? { ref: String(ref) } : {}) };
   save([...items, item], file);
   return item;
 }

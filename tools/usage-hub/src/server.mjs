@@ -34,6 +34,11 @@ import { makeResolver, readCronNames } from './openclaw.mjs';
 import { createAutomations, findRunFile, workflowRunCost } from './automations/index.mjs';
 import { validate as validateFeedback } from './automations/feedback.mjs';
 import { operatore } from './operatore.mjs';
+import { readAttesa, writeAttesa, validateAttesa, fromAutomations } from './attesa.mjs';
+import { journal } from './journal.mjs';
+import { fixTask } from './fix.mjs';
+import { readAll as readFeedback } from './automations/feedback.mjs';
+import { localConfig } from './local-config.mjs';
 
 export function createServer(config, deps = {}) {
   // Nei test (fetch finto o root di prova) il report si calcola nel processo, come prima.
@@ -206,6 +211,32 @@ export function createServer(config, deps = {}) {
     }
     return pcCache.data;
   };
+  // Pagina Contesto: report in copia di 60 s; contraddizioni da un agente, salvate in un file di cache.
+  let ctxCache = null;
+  // agents-doctor ci mette secondi (minuti col Mac carico): gira dietro, la pagina usa l'ultimo esito o dice «in corso».
+  let doctorLast = null; let doctorBusy = null;
+  const doctorCached = async () => {
+    if (!doctorBusy && (!doctorLast || Date.now() - doctorLast.at > 5 * 60000)) {
+      const run = (deps.contextOpts && deps.contextOpts.runDoctor) || (await import('./context.mjs')).defaultDoctor;
+      doctorBusy = run().then((r) => { doctorLast = { at: Date.now(), r }; ctxCache = null; }).finally(() => { doctorBusy = null; });
+    }
+    if (deps.contextOpts && deps.contextOpts.runDoctor && doctorBusy) await doctorBusy; // nei test: l'esito subito
+    return doctorLast ? doctorLast.r : { code: null, stdout: '', pending: true };
+  };
+  const checkFile = () => process.env.USAGE_HUB_CONTEXT_CHECK || path.join(os.homedir(), '.cache', 'claude-usage-hub', 'context-check.json');
+  const readCheck = () => { try { return JSON.parse(fs.readFileSync(checkFile(), 'utf8')); } catch { return { at: null, items: [] }; } };
+  const writeCheck = (o) => { fs.mkdirSync(path.dirname(checkFile()), { recursive: true }); fs.writeFileSync(checkFile(), JSON.stringify(o)); };
+  const startCheck = (files) => {
+    const prev = readCheck();
+    writeCheck({ ...prev, running: true, startedAt: Date.now() });
+    const prompt = `Leggi questi file di istruzioni per agenti: ${files.join(', ')}. Cerca le contraddizioni: due regole, nello stesso file o in file diversi, che chiedono cose opposte sullo stesso tema (non doppioni, non sfumature). ` +
+      'Rispondi SOLO con una riga JSON, niente altro: {"items":[{"a":{"file":"<percorso con ~>","text":"<la regola, max 160 caratteri>"},"b":{"file":"…","text":"…"},"why":"<perché si contraddicono, una frase>"}]}. Al massimo 10 voci; nessuna contraddizione = {"items":[]}. Non riportare numeri di telefono né email.';
+    execFile(path.join(ROOT, 'bin', 'delegate'), ['--class', 'taste', '-C', os.homedir(), prompt], { timeout: 15 * 60000, maxBuffer: 4 << 20 }, (err, out) => {
+      const m = String(out || '').match(/\{"items":\s*\[[\s\S]*\]\s*\}/);
+      let items = null; try { items = m ? JSON.parse(m[0]).items : null; } catch { items = null; }
+      writeCheck(items ? { at: Date.now(), items, running: false } : { ...prev, running: false, error: err ? err.message.slice(0, 200) : 'risposta senza JSON', failedAt: Date.now() });
+    });
+  };
   let compName = null;
   const computerName = () => {
     if (compName == null) { try { compName = execFileSync('/usr/sbin/scutil', ['--get', 'ComputerName'], { timeout: 2000 }).toString().trim(); } catch { compName = ''; } }
@@ -309,6 +340,63 @@ export function createServer(config, deps = {}) {
         }
         const open = /[?&]open=1/.test(req.url);
         return send(200, 'application/json', JSON.stringify(open ? auto().openFeedback() : { open: auto().openFeedback().length }));
+      }
+      // «Ti aspetta»: GET le voci aperte (registro + cancelli dei workflow), POST apre o chiude ({kind:'chiudi', ref}).
+      if (req.url === '/api/attesa') {
+        if (req.method === 'POST') {
+          const b = await readJson();
+          const err = validateAttesa(b);
+          if (err) return send(400, 'application/json', JSON.stringify({ error: err }));
+          return send(200, 'application/json', JSON.stringify({ ok: true, row: writeAttesa(b) }));
+        }
+        let model = null; try { model = await auto().model(); } catch { /* senza automazioni restano le voci del registro */ }
+        const items = [...readAttesa(), ...fromAutomations(model)].sort((a, b) => a.at - b.at);
+        return send(200, 'application/json', JSON.stringify({ at: Date.now(), items }));
+      }
+      // Diario: ?days=N (max 30). Tutto ciò che è successo, già in parole.
+      if (req.url.startsWith('/api/diario')) {
+        const days = Math.min(30, Math.max(1, Number(new URL(req.url, 'http://x').searchParams.get('days')) || 7));
+        let model = null; try { model = await auto().model(); } catch { /* il diario mostra il resto */ }
+        let fb = []; try { fb = readFeedback(deps.feedbackDir ? { dir: deps.feedbackDir } : {}).rows; } catch { /* registro illeggibile */ }
+        return send(200, 'application/json', JSON.stringify({ at: Date.now(), days, items: journal({ model, queue: loadQueue(), feedback: fb, days }) }));
+      }
+      // Risolvi tu: {key} → un lavoro in coda con il contesto della voce; parte subito se freno e ritmo lo permettono.
+      if (req.url === '/api/fix' && req.method === 'POST') {
+        const { key } = await readJson();
+        let card = null; try { card = ((await auto().model()).cards || {})[key] || null; } catch { /* sotto */ }
+        if (!card) return send(404, 'application/json', JSON.stringify({ error: 'voce non trovata: ' + key }));
+        const busy = loadQueue().find((q) => q.ref === key && (q.status === 'queued' || q.status === 'running'));
+        if (busy) return send(200, 'application/json', JSON.stringify({ ok: true, item: busy, already: true }));
+        const item = enqueue(fixTask(card));
+        notifier.push(`Risolvi tu ${item.id}: ${card.title}`);
+        if (!deps.noLive && !deps.inProcess && !deps.noQueue) setImmediate(queueTick);
+        return send(200, 'application/json', JSON.stringify({ ok: true, item }));
+      }
+      // Impostazioni della pagina che stanno nella config locale (fuori dal repo): i link per scrivere a Jarvis.
+      if (req.url === '/api/hub-config') {
+        const jv = localConfig().jarvis || {};
+        return send(200, 'application/json', JSON.stringify({ jarvis: { whatsapp: jv.whatsapp || null, discord: jv.discord || null } }));
+      }
+      // Contesto: cosa leggono gli agenti. Sola lettura, copia di 60 s (il doctor ci mette qualche secondo).
+      if (req.url === '/api/contesto') {
+        if (!ctxCache || Date.now() - ctxCache.at > 60000) {
+          const { contextReport } = await import('./context.mjs');
+          const res = await doctorCached();
+          const body = await contextReport({ ...(deps.contextOpts || {}), runDoctor: async () => res });
+          if (res.pending) body.doctor = { ok: false, checks: [], error: null, pending: true };
+          ctxCache = { at: Date.now(), body };
+        }
+        return send(200, 'application/json', JSON.stringify({ ...ctxCache.body, contradictions: readCheck() }));
+      }
+      // Contraddizioni tra le regole: le legge un agente (giudizio, non regex), su richiesta; il risultato resta in cache.
+      if (req.url === '/api/contesto/check' && req.method === 'POST') {
+        const cur = readCheck();
+        if (cur.running && Date.now() - cur.startedAt < 20 * 60000) return send(200, 'application/json', JSON.stringify({ ok: true, already: true }));
+        if (deps.noQueue || deps.inProcess) return send(200, 'application/json', JSON.stringify({ ok: false, error: 'in demo il controllo non parte' }));
+        let files = []; try { files = ((ctxCache && ctxCache.body) || await (await import('./context.mjs')).contextReport()).files.filter((f) => !f.generatedFrom && !String(f.path).includes('›')).map((f) => f.path); } catch { /* sotto */ }
+        if (!files.length) return send(500, 'application/json', JSON.stringify({ error: 'nessun file da leggere' }));
+        startCheck(files);
+        return send(200, 'application/json', JSON.stringify({ ok: true }));
       }
       if (req.url === '/api/services') {
         if (!svcCache || Date.now() - svcCache.at > 60000) svcCache = await servicesSnapshot();

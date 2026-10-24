@@ -4,3 +4,5 @@ project-labels.json
 state.json
 *.log
 .DS_Store
+# screenshot e video delle prove UI: contengono dati veri (account, cartelle), restano in locale
+docs/ux/

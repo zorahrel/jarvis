@@ -144,16 +144,22 @@ test('(i) striscia delle 24 ore: un segno per quarto d\'ora, esito peggiore, ora
   assert.match(V.stripHtml([], null, now), /nessun giro/);
 });
 
-test('(j) Da fare: solo chi aspetta o è rotto, come card con la mossa da fare; a sistema sano una riga calma', () => {
-  const h = V.todoHtml(pb, pb.checkedAt);
-  const n = [...pb.needsYou, ...pb.broken].filter((c) => c.level !== 'nascosto').length;
-  assert.equal((h.match(/<article class="bx td /g) || []).length, n);
-  assert.equal((h.match(/class="td-do"/g) || []).length, n);
-  // Chi aspetta un ok sul passo dice quale passo.
-  assert.match(h, /Dai l'ok al passo «approva-invio»/);
-  // La card apre il pannello: stesso data-cx della riga.
-  assert.match(h, /<button class="cx-btn" data-cx="/);
-  assert.match(V.todoHtml(ok, ok.checkedAt), /Niente da fare/);
+test('(j) Da sistemare: le automazioni ferme con «Risolvi tu»; il cancello di un workflow sta in Panoramica; niente «Apri in OpenClaw»', () => {
+  const h = V.fixHtml(pb, { cfg: { jarvis: { whatsapp: 'https://wa.me/390000000000' } } }, pb.checkedAt);
+  const all = [...pb.needsYou, ...pb.broken].filter((c) => c.level !== 'nascosto');
+  const gates = all.filter(V.isGate);
+  assert.ok(gates.length >= 1, 'la fixture ha un cancello di workflow');
+  assert.equal((h.match(/class="fx"/g) || []).length, all.length - gates.length);
+  assert.equal((h.match(/data-fix="/g) || []).length, all.length - gates.length);
+  assert.match(h, /aspetta te: sono in <a href="#overview">Panoramica/);
+  // «Scrivi a Jarvis» porta il messaggio già scritto; senza link in config il bottone non c'è.
+  assert.match(h, /href="https:\/\/wa\.me\/390000000000\?text=Automazione/);
+  assert.doesNotMatch(V.fixHtml(pb, {}, pb.checkedAt), /Scrivi a Jarvis/);
+  // Un agente già al lavoro sulla voce: niente secondo bottone.
+  const k = all.find((c) => !V.isGate(c)).key;
+  assert.match(V.fixHtml(pb, { fixing: { [k]: 'running' } }, pb.checkedAt), /Un agente ci lavora/);
+  assert.match(V.fixHtml(ok, {}, ok.checkedAt), /Niente da sistemare/);
+  assert.doesNotMatch(render(pb, { now: pb.checkedAt, sel: pb.needsYou[0].key }), /Apri in OpenClaw/);
 });
 
 test('(k) chi risponde: il nodo modello in parole, con il perché e il ripiego', () => {

@@ -1,7 +1,7 @@
 // Scheda «Automazioni»: rete, eventi, tastiera. Gira nel browser (usa j e $ di app.js).
 // Stato tenuto qui: modello, ripasso, «da ieri» e costi già chiesti.
 var auModel = null;
-var auUi = { review: { open: false, key: null }, seen: { newKeys: [], changedKeys: [] }, costs: {}, filter: 'all', q: '', by: 'sistema', offline: false, sel: null, open: {}, graphs: {} };
+var auUi = { review: { open: false, key: null }, seen: { newKeys: [], changedKeys: [] }, costs: {}, filter: 'all', q: '', by: 'sistema', offline: false, sel: null, open: {}, graphs: {}, fixing: {} };
 try { if (localStorage.getItem('automations.by') === 'esito') auUi.by = 'esito'; } catch (e) { /* senza storage resta «per sistema» */ }
 var auUndoRef = null;
 
@@ -14,7 +14,7 @@ function auToday() {
 }
 
 function auUiNow() {
-  return { now: auModel.checkedAt, review: auUi.review, seen: auUi.seen, costs: auUi.costs, filter: auUi.filter, q: auUi.q, by: auUi.by, offline: auUi.offline, sel: auUi.sel, open: auUi.open, graphs: auUi.graphs };
+  return { now: auModel.checkedAt, review: auUi.review, seen: auUi.seen, costs: auUi.costs, filter: auUi.filter, q: auUi.q, by: auUi.by, offline: auUi.offline, sel: auUi.sel, open: auUi.open, graphs: auUi.graphs, fixing: auUi.fixing, cfg: hubCfg };
 }
 
 // Ridisegna tenendo il fuoco sulla stessa card: con la tastiera non si perde il posto a ogni salvataggio o giro dei 60 s.
@@ -77,7 +77,11 @@ async function renderAutomations() {
   if (document.activeElement && document.activeElement.tagName === 'TEXTAREA') return;
   // Primo caricamento: segnaposto subito, invece di una pagina vuota fino alla risposta.
   if (!auModel && !el.querySelector('[data-sec]')) el.innerHTML = AutomationsView.skeleton();
-  var m = await j('/api/automations');
+  // Insieme al modello: i lavori «Risolvi tu» già in coda o in corso, e i link per scrivere a Jarvis.
+  var got = await Promise.all([j('/api/automations'), j('/api/queue'), hubConfig()]);
+  var m = got[0];
+  auUi.fixing = {};
+  for (const q of (got[1] && got[1].items) || []) if (q.ref && (q.status === 'queued' || q.status === 'running')) auUi.fixing[q.ref] = q.status;
   if (!m) {
     // Con una vista di prima la tengo e lo dico in cima; senza, errore con «Riprova».
     if (auModel) { auUi.offline = true; auRender(); }
@@ -370,6 +374,19 @@ document.getElementById('t-automations').addEventListener('click', function (e) 
     else if (r === 'prev') auReviewGo(-1);
     else if (r === 'next') auReviewGo(1);
     else if (r === 'close') { auUi.review = { open: false, key: null }; auRender(); }
+    return;
+  }
+  var fx = t.closest('[data-fix]');
+  if (fx) {
+    var key = fx.dataset.fix;
+    fx.disabled = true;
+    fetch('/api/fix', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ key: key }) })
+      .then(function (r) { return r.json(); }).catch(function () { return null; })
+      .then(function (r) {
+        if (r && r.ok) { auUi.fixing[key] = r.item && r.item.status === 'running' ? 'running' : 'queued'; auToast(r.already ? 'Un agente è già su questa voce' : 'Affidata a un agente: l\'esito arriva nel Diario'); }
+        else auToast('Non partito: ' + ((r && r.error) || 'hub non raggiungibile'));
+        auRender();
+      });
     return;
   }
   var fb = t.closest('[data-fb]');

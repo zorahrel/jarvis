@@ -154,7 +154,16 @@ function macHtml(m) {
 }
 
 async function renderOverview() {
-  const [live, gates, queue, pace, heavy, alerts, mac] = await Promise.all(['/api/live', '/api/gates', '/api/queue', '/api/pace', '/api/heavy', '/api/alerts', '/api/mac'].map((u) => j(u)));
+  // «Ti aspetta» compare subito; quote, Mac e progetti (lenti sotto carico) arrivano dopo, sotto.
+  let done = false;
+  const waitP = attesaSection();
+  waitP.then((w) => { if (!done && !$('t-overview').querySelector('[data-sec=wait]')) $('t-overview').innerHTML = w + '<p class="mut small">Carico quote, agenti e Mac…</p>'; });
+  let [wait, live, gates, queue, pace, heavy, alerts, mac] = await Promise.all([waitP, ...['/api/live', '/api/gates', '/api/queue', '/api/pace', '/api/heavy', '/api/alerts', '/api/mac'].map((u) => j(u, { signal: AbortSignal.timeout(u === '/api/gates' ? 8000 : 20000) }))]);
+  done = true;
+  // Sotto carico il freno può metterci 30 s: la Panoramica non lo aspetta oltre 8 s, il resto non oltre 20.
+  // un errore dell'hub arriva come oggetto {error}: per quote e ritmo vale «nessun dato», non un crash
+  if (!Array.isArray(pace)) pace = null;
+  if (gates && !gates.classes) gates = null;
   const items = (queue && queue.items) || [], waiting = items.filter((x) => x.status === 'queued' || x.status === 'running');
   const over = (heavy && heavy.over) || [], braked = Object.entries((gates && gates.providers) || {}).filter(([, v]) => v.state === 'frenato').map(([k]) => PROV[k]);
   // Stesso verdetto della tray: si nomina l'account, perché un provider può correre su un account ed essere libero su un altro.
@@ -163,7 +172,7 @@ async function renderOverview() {
   const bg = gates && gates.classes && gates.classes.batch, deferred = bg ? (bg.go ? 'rimandabili su ' + (bg.provider === 'free' ? 'canali gratis' : PROV[bg.provider] || bg.provider) : 'rimandabili fermi') : '';
   const qtxt = waiting.length ? `in coda ${waiting.length}` : '';
   let st;
-  if (!gates) st = ['warn', 'Hub non raggiungibile', 'Stato del freno ignoto'];
+  if (!gates) st = ['warn', 'Freno non letto', 'il motore della delega non ha risposto in 8 s: riprovo tra un minuto'];
   else if (braked.length) st = ['bad', Object.entries(gates.providers).filter(([, v]) => v.state === 'frenato').map(([k, v]) => PROV[k] + (v.waitUntil ? ' fino alle ' + untilShort(v.waitUntil) : '')).join(' · ') + (braked.length > 1 ? ' frenati' : ' frenato'), [overTxt[0], deferred, qtxt].filter(Boolean).join(' · ')];
   else if (overTxt.length) st = ['warn', overTxt[0], [overTxt[1], deferred, qtxt].filter(Boolean).join(' · ')];
   else st = ['', 'Tutto in linea', ['nessun freno', qtxt].filter(Boolean).join(' · ')];
@@ -180,7 +189,7 @@ async function renderOverview() {
   }).join('') || empty('Nessun dato di quota');
   const brake = gates ? `<table><thead><tr><th>Classe di lavoro</th><th>Va su</th><th>Perché</th></tr></thead><tbody>${Object.entries(gates.classes).map(([k, v]) => `<tr><td>${CLASSES[k] || k}</td><td class="${v.go ? 'ok' : 'warn'}">${v.go ? (v.provider === 'free' ? 'canali gratis' : PROV[v.provider] || v.provider) : 'fermo'}</td><td class="mut small">${esc(v.reason)}</td></tr>`).join('')}</tbody></table><p class="small mut">Le sessioni aperte non vengono mai bloccate: si ferma solo il lavoro rimandabile.</p>` : '';
   const queueHtml = waiting.length ? `<table><tbody>${waiting.map((x) => `<tr><td>${esc(x.task.slice(0, 90))}</td><td>${esc(x.project || '–')}</td><td class="${x.status === 'running' ? 'ok' : 'info'}">${x.status === 'running' ? 'in corso' : 'in attesa' + (x.waitUntil ? ' fino alle ' + hhmm(x.waitUntil) : '')}</td></tr>`).join('')}</tbody></table>` : empty('Nessun lavoro in attesa.');
-  $('t-overview').innerHTML =
+  $('t-overview').innerHTML = wait +
     `<section class="status ${st[0]}">${st[0] ? IC.hand : IC.check}<div><b>${st[1]}</b><span class="mut small">${st[2]}</span></div></section>` +
     macHtml(mac) +
     (firing.length ? `<section>${firing.map((e) => `<div class="bad small">${esc(e.message)}</div>`).join('')}</section>` : '') +
@@ -188,7 +197,7 @@ async function renderOverview() {
     card(`${IC.gauge} Come funziona il freno <span class="mut small">${braked.length ? 'frenati: ' + braked.join(', ') : 'nessun freno'}</span>`, brake, false) +
     card(`${IC.tray} Coda <span class="mut small">${waiting.length ? waiting.length + ' in attesa' : 'vuota'}</span>`, queueHtml, false) +
     `<section>${projectRows(live, items)}</section>`;
-  $('sub').textContent = 'aggiornato alle ' + hhmm(Date.now());
+  if (cur === 'overview') $('sub').textContent = 'aggiornato alle ' + hhmm(Date.now());
   // Un abbonamento che non risponde non sparisce senza dirlo, come nella tray. L'overview è lenta: arriva dopo, senza bloccare.
   j('/api/overview').then((ov) => {
     const seen = new Set((pace || []).map((a) => a.provider)), el = $('acc-missing');
@@ -275,21 +284,27 @@ function renderLogs() {
 }
 
 // ---------- tab ----------
-const TABS = { overview: renderOverview, projects: renderProjects, accounts: renderAccounts, usage: renderUsage, sessions: renderSessions, activity: renderActivity, settings: renderSettings, services: renderServices, automations: renderAutomations, logs: renderLogs };
+const TABS = { overview: renderOverview, journal: renderJournal, context: renderContext, projects: renderProjects, accounts: renderAccounts, usage: renderUsage, sessions: renderSessions, activity: renderActivity, settings: renderSettings, services: renderServices, automations: renderAutomations, logs: renderLogs };
 let cur;
-function show(t) {
-  if (!TABS[t]) t = 'overview';
-  cur = t; location.hash = t;
+function show(h) {
+  // «#automations/<chiave>» apre la scheda con il pannello di quella voce (link del Diario e di «Ti aspetta»).
+  let [t, sel] = String(h || '').split(/\/(.*)/s);
+  if (!TABS[t]) { t = 'overview'; sel = ''; }
+  if (sel && t === 'automations') auUi.sel = decodeURIComponent(sel);
+  cur = t; if (location.hash.slice(1) !== h) history.replaceState(null, '', '#' + t);
+  const btn = document.querySelector(`#nav button[data-t="${t}"] span`);
+  $('ptitle').textContent = btn ? btn.textContent : '';
   // Il sottotitolo è della tab: cambiando tab si azzera, e sta fuori dall'header, così non può schiacciare la nav.
   if (document.body.dataset.tab !== t) $('sub').textContent = '';
   document.body.dataset.tab = t;
   document.querySelectorAll('#nav button').forEach((b) => { b.classList.toggle('on', b.dataset.t === t); if (b.dataset.t === t) b.setAttribute('aria-current', 'page'); else b.removeAttribute('aria-current'); });
   document.querySelectorAll('.tab').forEach((d) => d.classList.toggle('on', d.id === 't-' + t));
   TABS[t]();
+  if (sel && t === 'automations') auGraph(auUi.sel);
 }
 $('nav').addEventListener('click', (e) => { const b = e.target.closest('button'); if (b) show(b.dataset.t); });
 window.addEventListener('hashchange', () => { const t = location.hash.slice(1); if (t !== cur) show(t); });
 if (EMBED) { const post_ = () => parent.postMessage({ hubHeight: document.documentElement.scrollHeight + 8 }, '*'); new ResizeObserver(post_).observe(document.body); }
-show(location.hash.slice(1) || 'automations');
-setInterval(() => { if (['overview', 'projects', 'accounts', 'sessions', 'activity', 'automations'].includes(cur) && !document.activeElement.matches('input,select')) TABS[cur](); }, 60000);
+show(location.hash.slice(1) || 'overview');
+setInterval(() => { if (['overview', 'journal', 'projects', 'accounts', 'sessions', 'activity', 'automations'].includes(cur) && !document.activeElement.matches('input,select')) TABS[cur](); }, 60000);
 vdm('/api/sessions').then((s) => { if (s) { $('nsess').hidden = !(s.active || []).length; $('nsess').textContent = (s.active || []).length; } });
