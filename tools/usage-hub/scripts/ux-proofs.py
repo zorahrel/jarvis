@@ -64,11 +64,18 @@ def live_extras(b, out):
         pg.goto(LIVE + '/#overview', wait_until='domcontentloaded'); wait_loaded(pg, f'progetti {w}', 60)
         pg.wait_for_selector('table.proj')
         pg.evaluate("document.querySelectorAll('table.proj details').forEach((d, i) => { if (i < 3) d.open = true })"); pg.wait_for_timeout(500)
-        pg.locator('table.proj').first.screenshot(path=str(out / f'r5-progetti-consumo-{w}.png'))
+        pg.locator('table.proj').first.screenshot(path=str(out / f'r6-progetti-consumo-{w}.png'))
+        pg.context.close()
+    # Consumi con «Altri N» aperto: nomi senza chiavi, provider sui numeri, percentuali dentro la card
+    for w in (1440, 375):
+        pg = b.new_context(viewport={'width': w, 'height': 900}).new_page(); pg.set_default_timeout(120000)
+        pg.goto(LIVE + '/#usage', wait_until='domcontentloaded'); wait_loaded(pg, f'consumi {w}', 60)
+        pg.wait_for_selector('table.share'); pg.evaluate("document.querySelectorAll('#t-usage details').forEach(d => d.open = true)"); pg.wait_for_timeout(500)
+        pg.screenshot(path=str(out / f'r6-consumi-{w}.png'), full_page=True)
         pg.context.close()
     pg = b.new_context(viewport={'width': 1440, 'height': 900}).new_page(); pg.set_default_timeout(120000)
     pg.goto(LIVE + '/#automations', wait_until='domcontentloaded'); wait_loaded(pg, 'computer e app', 60)
-    pg.wait_for_selector('[data-area="computer-app"]'); pg.locator('[data-area="computer-app"]').screenshot(path=str(out / 'r5-computer-app-live.png'))
+    pg.wait_for_selector('[data-area="computer-app"]'); pg.locator('[data-area="computer-app"]').screenshot(path=str(out / 'r6-computer-app-live.png'))
     pg.context.close()
 
 
@@ -84,13 +91,13 @@ def tour(b, url, out, d):
     pg.locator('input[data-j-q]').type('prova', delay=90); pg.wait_for_timeout(800)
     pg.locator('input[data-j-q]').fill(''); pg.locator('[data-j-f=all]').click(); pg.wait_for_timeout(600)
     pg.locator('#nav button[data-t=automations]').click(); step('automazioni'); pg.wait_for_timeout(1500)
-    pg.locator('#t-automations .cx-row[data-cx]:not(.cx-hdr)').first.click(); pg.wait_for_selector('.cx-panel'); pg.wait_for_timeout(2500)
+    pg.locator('#t-automations .cx-row[data-cx]:not(.cx-hdr)').first.click(); pg.wait_for_selector('.cx-panel'); step('pannello'); pg.wait_for_timeout(2500)
     pg.keyboard.press('Escape'); pg.wait_for_timeout(800)
     pg.mouse.wheel(0, 900); pg.wait_for_timeout(1500); pg.mouse.wheel(0, -900); pg.wait_for_timeout(600)
     pg.locator('#nav button[data-t=context]').click(); step('contesto'); pg.wait_for_timeout(2500)
     pg.mouse.wheel(0, 900); pg.wait_for_timeout(1800)
     ctx.close()
-    shutil.copy(sorted(vid.glob('*.webm'))[-1], out / 'r5-giro.webm')
+    shutil.copy(sorted(vid.glob('*.webm'))[-1], out / 'r6-giro.webm')
 
 
 def main():
@@ -98,11 +105,11 @@ def main():
     d = pathlib.Path(tempfile.mkdtemp(prefix='ux-proofs-'))
     with sync_playwright() as pw:
         b = pw.webkit.launch()
-        shots(b, LIVE, ['overview', 'journal', 'automations', 'context'], [1440, 700, 375], ['light', 'dark'], 'r5-', out)
+        shots(b, LIVE, ['overview', 'journal', 'automations', 'context'], [1440, 700, 375], ['light', 'dark'], 'r6-', out)
         live_extras(b, out)
         p, url = demo_server(d)
         try:
-            shots(b, url, ['overview'], [1440, 375], ['light'], 'r5-esempio-', out)
+            shots(b, url, ['overview'], [1440, 375], ['light'], 'r6-esempio-', out)
             if '--video' in sys.argv: tour(b, url, out, d)
         finally:
             p.kill()

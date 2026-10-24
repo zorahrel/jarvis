@@ -5,7 +5,7 @@
   --bg:#f6f6f7; --surface:#fff; --surface-2:#f3f3f5; --surface-3:#e9e9ed; --line:#e5e5e9; --line-2:#d4d4da;
   --fg:#17171a; --fg-2:#3d3d44; --mut:#62626b; --faint:#a1a1a9;
   --ok:#15803d; --warn:#a14805; --bad:#c42020; --run:#1d5fd1; --info:#1d5fd1; --accent:#1d5fd1;
-  --track:#e6e6ea; --pill:var(--surface-2); --card:var(--surface); --on-accent:#fff; --te:var(--warn);
+  --track:#e6e6ea; --pill:var(--surface-2); --card:var(--surface); --on-accent:#fff; --te:var(--warn); --on-warn:#fff;
   --x-free:#0d9488; --x-muse:#2563eb; --x-codex:#7c3aed; --x-claude:#c2410c;
   --shadow:0 1px 2px rgba(20,20,30,.04);
   --r:10px; --r-s:7px;
@@ -14,6 +14,7 @@
 @media (prefers-color-scheme: dark) { :root {
   --bg:#0c0c0d; --surface:#141416; --surface-2:#1b1b1e; --surface-3:#242428; --line:#25252a; --line-2:#34343b;
   --fg:#ededf0; --fg-2:#c6c6cd; --mut:#9b9ba5; --faint:#5f5f68;
+  --on-warn:#17171a;
   --ok:#4ade80; --warn:#f5b43c; --bad:#ff6b63; --run:#6aa5ff; --info:#6aa5ff; --accent:#6aa5ff;
   --track:#2a2a30; --on-accent:#0c0c0d; --shadow:none;
   --x-free:#2dd4bf; --x-muse:#60a5fa; --x-codex:#a78bfa; --x-claude:#f0915a;
@@ -32,7 +33,10 @@ a { color:var(--accent); text-decoration:none; } a:hover { text-decoration:under
 .ic.sol { fill:currentColor; stroke:none; }
 .ic.brand { display:inline-block; background:var(--brand,currentColor); -webkit-mask:var(--m) center/contain no-repeat; mask:var(--m) center/contain no-repeat; }
 .b-claude { --m:url(/brand/claude.png); --brand:#D97757; } .b-codex { --m:url(/brand/codex.png); } .b-muse { --m:url(/brand/muse.png); --brand:#0082FB; }
-@media (prefers-color-scheme: dark) { .b-muse { --brand:#4DA3FF; } }
+@media (prefers-color-scheme: dark) { .b-muse { --brand:#4DA3FF; }
+
+  /* in scuro il tono pieno è già chiaro: scurirlo lo spegnerebbe */
+  .pill { color:var(--tone,var(--fg-2)); } .cx-chip.te { color:var(--warn); } .cx-chip.rotto { color:var(--bad); } .cx-chip.va { color:var(--ok); } }
 
 /* ===== Guscio: sidebar a sinistra, contenuto a destra ===== */
 .shell { display:grid; grid-template-columns:224px minmax(0,1fr); min-height:100vh; }
@@ -50,7 +54,8 @@ nav button .ic { color:var(--mut); }
 nav button:hover { background:var(--surface-2); color:var(--fg); }
 nav button.on { background:var(--surface-3); color:var(--fg); font-weight:560; }
 nav button.on .ic { color:var(--fg); }
-nav .badge { margin-left:auto; min-width:20px; height:18px; padding:0 6px; border-radius:99px; display:inline-grid; place-items:center; font-size:11.5px; font-weight:600; color:var(--warn); background:color-mix(in srgb,var(--warn) 14%,transparent); }
+/* badge pieno: testo sul colore pieno regge il contrasto (tinta chiara + arancio dava 4,1:1) */
+nav .badge { margin-left:auto; flex:none; min-width:20px; height:18px; padding:0 6px; border-radius:99px; display:inline-grid; place-items:center; font-size:11.5px; font-weight:650; color:var(--on-warn); background:var(--warn); }
 nav .badge[hidden] { display:none; }
 main { min-width:0; width:100%; max-width:1240px; padding:26px 32px 64px; }
 .ph { display:flex; align-items:baseline; flex-wrap:wrap; gap:4px 14px; margin:0 0 20px; }
@@ -66,7 +71,8 @@ body.embed header.top { display:none; } body.embed .shell { display:block; }
   .shell { display:block; }
   header.top { position:static; height:auto; overflow:visible; border-right:0; border-bottom:1px solid var(--line); }
   .top-in { gap:10px; padding:12px; }
-  nav { display:grid; grid-template-columns:repeat(auto-fill,minmax(128px,1fr)); gap:4px; }
+  /* 150 px: «Panoramica» con l'icona e il badge sta dentro il bottone (a 128 il badge usciva sotto «Diario») */
+  nav { display:grid; grid-template-columns:repeat(auto-fill,minmax(150px,1fr)); gap:4px; }
   .ng { display:contents; } .ngt { display:none; }
   nav button { background:var(--surface); border:1px solid var(--line); }
   main { padding:18px 14px 48px; }
@@ -87,8 +93,13 @@ td { padding:8px 10px 8px 0; border-bottom:1px solid var(--line); vertical-align
 .num { text-align:right; white-space:nowrap; } th.num { text-align:right; }
 .mut { color:var(--mut); } .small { font-size:12.5px; }
 td.ok, .state.ok, b.ok, span.ok, div.ok { color:var(--ok); } td.warn, .state.warn, span.warn, div.warn { color:var(--warn); } td.bad, span.bad, div.bad, p.bad { color:var(--bad); } td.info, .state.info, span.info { color:var(--run); }
+/* dopo span.ok/td.ok (stessa specificità): la pillola tiene il tono scurito, in chiaro sopra 4,5:1 */
+span.pill, td .pill, div.pill { color:color-mix(in srgb,var(--tone,var(--fg-2)) 78%,#000); }
+@media (prefers-color-scheme: dark) { span.pill, td .pill, div.pill { color:var(--tone,var(--fg-2)); } }
+p a, li a, .small a { text-decoration:underline; text-underline-offset:2px; }
 /* Pillola: tono di fondo, niente contorno */
-.pill { display:inline-flex; align-items:center; gap:5px; font-size:12px; font-weight:550; padding:1px 9px; border-radius:99px; white-space:nowrap; color:var(--tone,var(--fg-2)); background:color-mix(in srgb,var(--tone,var(--mut)) 13%,transparent); }
+/* in chiaro il testo della pillola è il tono scurito del 22%: sulla sua tinta il tono pieno stava sotto 4,5:1 */
+.pill { display:inline-flex; align-items:center; gap:5px; font-size:12px; font-weight:550; padding:1px 9px; border-radius:99px; white-space:nowrap; color:color-mix(in srgb,var(--tone,var(--fg-2)) 78%,#000); background:color-mix(in srgb,var(--tone,var(--mut)) 13%,transparent); }
 .pill.mut { color:var(--mut); }
 .head { display:flex; align-items:center; gap:8px; font-weight:600; } .head .pill { margin-left:auto; }
 /* su telefono il nome e i badge vanno a capo invece di uscire dalla card */
@@ -238,6 +249,10 @@ span.spk { background:none; }
 .proj td:first-child { width:46%; } .proj .state { white-space:nowrap; } .proj .state .ic { width:15px; height:15px; }
 .agent { font-size:12.5px; padding:2px 0; } .agent .t { display:block; color:var(--mut); overflow-wrap:anywhere; }
 .proj .pv { display:none; }
+.pvh { display:inline-flex; align-items:center; gap:4px; white-space:nowrap; } .pvh .ic { width:14px; height:14px; }
+/* Consumi per progetto: larghezze fisse, il nome va a capo e la % resta dentro la card anche a 375 */
+table.share { table-layout:fixed; width:100%; } table.share td:first-child { overflow-wrap:anywhere; }
+table.share th:nth-child(2) { width:26%; } table.share th:nth-child(3) { width:84px; }
 .warnline { color:var(--warn); font-size:12.5px; margin-top:4px; }
 .dim td:first-child { opacity:.55; }
 .tile img { display:block; }
@@ -263,9 +278,19 @@ span.spk { background:none; }
 table.svc { table-layout:fixed; width:100%; } .svc th:nth-child(2) { width:110px; } .svc th:nth-child(3) { width:150px; } .svc th:nth-child(4) { width:190px; } .svc td { overflow-wrap:anywhere; }
 @media (max-width:760px) {
   .hide-s { display:none; }
+  table.share th:nth-child(2) { width:22%; } table.share th:nth-child(3) { width:72px; }
   .bars { margin-left:0; grid-template-columns:60px 1fr 64px 80px; gap:5px 8px; } .spk { width:80px; } .bars > .mut:last-child, .bars > span.mut { display:none; }
   .two { grid-template-columns:1fr; }
   .trl details.tr > summary, .br { grid-template-columns:1fr 80px 50px; }
+}
+/* telefono: ogni comando alto almeno 44 px (nav, bottoni, tendine, campi, «Altri N») */
+@media (max-width:560px) {
+  nav button, .btn, .cx-btn, button.b, .tab button, input[type=number], input[type=text], input[type=search], details > summary, details.more > summary { min-height:44px; }
+  details > summary { display:flex; align-items:center; }
+  /* WebKit ignora l'altezza delle tendine native: aspetto proprio, freccia disegnata */
+  select { -webkit-appearance:none; appearance:none; height:44px; padding-right:28px; background:var(--surface) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%2362626b' stroke-width='2.5'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E") no-repeat right 10px center; }
+  /* interruttori: l'area che si tocca è alta 44, il disegno resta 20 */
+  .sw { height:44px; } .sw i { top:12px; bottom:12px; }
 }
 @media (max-width:560px) {
   table.proj, table.proj tbody, table.proj tr, table.proj td, table.svc { display:block; width:auto; }
@@ -425,9 +450,9 @@ table.svc { table-layout:fixed; width:100%; } .svc th:nth-child(2) { width:110px
 .cx-desc { color:var(--fg-2); margin:0 0 16px; }
 .cx-bits { color:var(--mut); margin:0 0 14px; }
 .cx-chip { display:inline-flex; align-items:center; gap:6px; height:22px; font-size:12px; font-weight:550; padding:0 9px; border-radius:99px; color:var(--fg-2); background:var(--surface-2); }
-.cx-chip.te { color:var(--warn); background:color-mix(in srgb,var(--warn) 13%,transparent); }
-.cx-chip.rotto { color:var(--bad); background:color-mix(in srgb,var(--bad) 11%,transparent); }
-.cx-chip.va { color:var(--ok); background:color-mix(in srgb,var(--ok) 12%,transparent); }
+.cx-chip.te { color:color-mix(in srgb,var(--warn) 78%,#000); background:color-mix(in srgb,var(--warn) 13%,transparent); }
+.cx-chip.rotto { color:color-mix(in srgb,var(--bad) 78%,#000); background:color-mix(in srgb,var(--bad) 11%,transparent); }
+.cx-chip.va { color:color-mix(in srgb,var(--ok) 78%,#000); background:color-mix(in srgb,var(--ok) 12%,transparent); }
 .cx-dl { display:grid; grid-template-columns:112px minmax(0,1fr); gap:8px 12px; margin:0 0 16px; }
 .cx-dl dt { color:var(--mut); line-height:20px; } .cx-dl dd { margin:0; overflow-wrap:anywhere; line-height:20px; } .cx-dl dd.bad, .cx-dl .bad { color:var(--bad); }
 .cx-dl dd:has(.cx-ticks) { display:flex; gap:6px; align-items:center; }
@@ -541,4 +566,11 @@ details.gmore[open] > summary .gchev { transform:rotate(90deg); }
 .cx-tbl { background:var(--surface); border:1px solid var(--line); border-radius:12px; overflow:hidden; }
 
 /* Fascia della demo: in flusso e appiccicata in cima, su ogni vista */
-.demo-band { position:sticky; top:0; z-index:50; background:#b91c1c; color:#fff; font-weight:700; font-size:13px; text-align:center; padding:6px 16px; }
+/* non sticky: sopra il pannello copriva «Chiudi» */
+.demo-band { position:relative; background:#b91c1c; color:#fff; font-weight:700; font-size:13px; text-align:center; padding:6px 16px; }
+
+/* telefono, in coda perché le regole di Automazioni e Diario sopra fissano 28-34 px: comandi alti 44 */
+@media (max-width:560px) {
+  .seg button, .cx-seg button, .cx-line .cx-btn, .q input, .cx-q input { min-height:44px; }
+  .cx-q .cx-qi { top:15px; }
+}

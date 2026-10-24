@@ -21,7 +21,7 @@ import { enqueue, cancel, loadQueue, tick, recoverRunning, launchDelegate, creat
 import { newState, scanToday } from './sessions.mjs';
 import { projectSummary, saveProjectSetting, loadLabels, labelFor, explainProjects } from './live.mjs';
 import { scanAgents, summarize, attachOpen, loadDesktopSessions, topicsByProject } from './agents.mjs';
-import { sessionUse } from './session-use.mjs';
+import { sessionUse, shareFromReport } from './session-use.mjs';
 import { macMachine, pcMachine, offloadJobs } from './machines.mjs';
 import https from 'node:https';
 import { createMacWatch, attachResources } from './macwatch.mjs';
@@ -177,10 +177,17 @@ export function createServer(config, deps = {}) {
     req.on('error', () => resolve([])); req.on('timeout', () => { req.destroy(); resolve([]); });
   });
   let agentCache = { at: 0, v: { agents: [], lastSeen: {}, topics: {} } }; let weekSeen = { at: 0, v: {} };
+  // Copia sempre pronta: scaduta (45 s) si risponde con quella e si riscansiona dietro; si aspetta solo la prima volta.
+  // Col Mac carico la scansione a freddo costava fino a 9 s alla Panoramica (verifica del 24/10).
+  let agentScan = null, agentReady = false;
   const liveAgents = async (queue) => {
     if (deps.demoAgents) return { agents: deps.demoAgents(), lastSeen: {}, topics: {} };
-    if (Date.now() - agentCache.at < 45000) return agentCache.v;
-    agentCache = { ...agentCache, at: Date.now() }; // niente scansioni parallele se due menu si aprono insieme
+    if (agentReady && Date.now() - agentCache.at < 45000) return agentCache.v;
+    agentScan ||= scanLiveAgents(queue).then(() => { agentReady = true; }).catch(() => {}).finally(() => { agentScan = null; });
+    if (!agentReady) await agentScan;
+    return agentCache.v;
+  };
+  const scanLiveAgents = async (queue) => {
     const groups = config.groups || [];
     const resolve = await openclawResolve();
     if (Date.now() - weekSeen.at > 10 * 60000) weekSeen = { at: Date.now(), v: scanAgents({ groups, seenDays: 7, resolve }).lastSeen };
@@ -189,26 +196,20 @@ export function createServer(config, deps = {}) {
     attachOpen(agents, { desktop: loadDesktopSessions(), topics: terminals.filter((t) => t.source === 'topics') });
     try { attachResources(agents, (await macWatch.snapshot()).trees); } catch { /* senza misure le righe restano senza risorse */ }
     // quanto consuma ogni sessione: dai tracker che l'hub aggiorna già per i progetti
-    for (const a of agents) { const u = sessionUse(a, trackers, { weights: config.weights, weekShare, shareFor }); if (u) a.use = u; }
+    for (const a of agents) { const u = sessionUse(a, trackers, { weights: config.weights, weekShare, shareFor }); if (u) { a.use = u; if (u.startedAt < a.startedAt) a.startedAt = u.startedAt; } }
     agentCache = { at: Date.now(), v: { agents, lastSeen: { ...weekSeen.v, ...lastSeen }, topics: topicsByProject(terminals, { groups, ocRoot: path.join(os.homedir(), '.openclaw') }) } };
     return agentCache.v;
   };
+  if (runsLive) { setTimeout(() => liveAgents(loadQueue()).catch(() => {}), 3000).unref(); setInterval(() => liveAgents(loadQueue()).catch(() => {}), 40000).unref(); }
   // Automazioni: fonti lette a richiesta con copia di 60 s; GitHub e PC solo in background (mai nel percorso della richiesta).
   // Nei test e in --demo si crea alla prima richiesta; nell'hub vivo subito, così GitHub e PC partono col primo giro dietro.
   let autoApi = null;
   const auto = () => (autoApi ||= deps.automations || createAutomations({ background: runsLive }));
   if (runsLive) auto();
-  // Quota settimanale di un costo pesato, come per i progetti: share dei token pesati della settimana × % dell'account.
-  // Quota della settimana di una sessione, con la stessa divisione dei progetti: token pesati della sessione sul totale
-  // pesato della settimana di quel provider, per la % usata dell'abbonamento. Muse conta i token riportati dal servizio.
-  const shareFor = (provider, weighted) => {
-    const r = cache; if (!r || !(weighted > 0)) return null;
-    if (provider === 'claude') return weekShare(weighted);
-    if (provider === 'codex') { const ps = (r.codex && r.codex.projects) || [], q = r.codex && r.codex.quota; const tot = ps.reduce((a, p) => a + (p.tokens || 0), 0); return tot && q && q.weekPct != null ? (weighted / tot) * q.weekPct : null; }
-    if (provider === 'muse') { const m = r.muse, ps = (m && m.projects) || [], q = m && m.quota; if (!ps.length || ps[0].unit !== 'tokens') return null; const tot = ps.reduce((a, p) => a + (p.tokens || 0), 0); return tot && q && q.weekPct != null ? (weighted / tot) * q.weekPct : null; }
-    return null;
-  };
-  const weekShare = (weighted) => { const r = cache; if (!r || !r.projects) return null; const tot = r.projects.reduce((a, p) => a + (p.tokens || 0), 0); return tot && r.account ? (weighted / tot) * r.account.weekPct : null; };
+  // Quota della settimana di un costo pesato (sessione, giro di workflow), con la stessa divisione dei progetti.
+  // La divisione sta in session-use.mjs (shareFromReport), testata col report vero: qui solo la copia corrente.
+  const shareFor = (provider, weighted) => shareFromReport(cache, provider, weighted);
+  const weekShare = (weighted) => shareFromReport(cache, 'claude', weighted);
   // «Da cambiare» passa a un agente: una voce in coda con la nota e il modo di chiuderla.
   const changeRequest = (row, card) => enqueue({
     task: `Automazione «${(card && card.title) || row.key}» (${row.key}): Attilio ha detto «da cambiare». La sua nota: «${row.note}». ` +
@@ -498,6 +499,7 @@ export function createServer(config, deps = {}) {
         return send(200, 'application/json', JSON.stringify({ rules: config.alerts.rules || [], firing: evaluateRules(r, config.alerts.rules) }));
       }
       // Il proxy VDM (account, impostazioni, sessioni) resta il motore; la sua pagina non c'è più: la dashboard è questa.
+      if (req.url.startsWith('/vdm/') && deps.demo) return send(503, 'application/json', JSON.stringify({ error: 'in demo il proxy VDM (account veri) non si legge' }));
       if (req.url.startsWith('/vdm/')) {
         const up = http.request({ host: '127.0.0.1', port: (config.vdm && config.vdm.port) || 3335, path: req.url.slice(4), method: req.method, headers: { 'content-type': req.headers['content-type'] || 'application/json' } }, (r) => {
           res.writeHead(r.statusCode, { 'content-type': r.headers['content-type'] || 'application/json', 'cache-control': 'no-cache' });

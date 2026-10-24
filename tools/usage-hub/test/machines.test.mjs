@@ -37,10 +37,11 @@ test('sessionUse: solo il giro attuale, ultima ora a parte, quota solo per Claud
   assert.equal(u.tokens, 110 + 270 + 2);
   assert.equal(u.hourTokens, 270 + 2);
   assert.ok(u.pct > u.hourPct);
+  // un inizio stimato troppo tardi (coda del file) non taglia il giro: l'inizio vero viene dalle righe, il buco di 2 ore lo chiude
   const late = sessionUse({ provider: 'claude', file: '/a.jsonl', startedAt: now - 1000 }, { claude: { files } }, { now });
-  assert.equal(late, null);
+  assert.equal(late.tokens, 270 + 2); assert.equal(late.startedAt, now - 600000);
   const cx = sessionUse({ provider: 'codex', file: '/c', startedAt: 0 }, { codex: { files: new Map([['/c', { rows: [[now, 500, 0, 0, 0]] }]]) } }, { now });
-  assert.deepEqual(cx, { tokens: 500, hourTokens: 500, pct: null, hourPct: null });
+  assert.deepEqual(cx, { tokens: 500, hourTokens: 500, pct: null, hourPct: null, startedAt: now });
   assert.equal(sessionUse({ provider: 'claude', startedAt: 0 }, {}), null);
 });
 

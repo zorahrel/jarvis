@@ -36,7 +36,7 @@ export function createClaudeTracker() {
   const files = new Map(); // percorso → { dirName, sub, offset, rows: [[ts, cwd, input, output, cacheWrite, cacheRead]] }
   // Righe dell'assistente con "usage", lette a blocchi (vedi lines.mjs); il parse serve a riconoscere message.usage.
   const readFile = (file, st, e, keepSince) => {
-    if (st.size < e.offset) { e.offset = 0; e.rows = []; } // file riscritto da capo
+    if (st.size < e.offset) { e.offset = 0; e.rows = []; e.ids = new Set(); } // file riscritto da capo
     if (st.size === e.offset) return;
     e.offset = forEachLine(file, ['"usage"'], (line) => {
       let m;
@@ -44,6 +44,10 @@ export function createClaudeTracker() {
       const ts = Date.parse(m.timestamp);
       const u = m.message && m.message.usage;
       if (!Number.isFinite(ts) || ts < keepSince || !u) return;
+      // Claude Code scrive una riga per blocco di contenuto (testo, tool_use…) con la stessa usage del messaggio:
+      // contarle tutte gonfiava token e richieste di circa 2 volte (24/10: 1763 righe per 842 messaggi). Una per id.
+      const id = m.message.id;
+      if (id) { if (e.ids.has(id)) return; e.ids.add(id); }
       e.rows.push([ts, m.cwd, u.input_tokens || 0, u.output_tokens || 0, u.cache_creation_input_tokens || 0, u.cache_read_input_tokens || 0]);
     }, { from: e.offset, size: st.size });
   };
@@ -65,6 +69,8 @@ export function createClaudeTracker() {
             // <sessione>/subagents/*.jsonl: lavoro dei subagent. Quasi tutte le sessioni non ne hanno.
             if (!listDir(file).includes('subagents')) continue;
             for (const sf of listDir(path.join(file, 'subagents'))) if (sf.endsWith('.jsonl')) list.push([path.join(file, 'subagents', sf), dirName, true]);
+            // e un livello in più per i workflow: subagents/workflows/<wf>/agent-*.jsonl (prima non si leggevano mai)
+            for (const wf of listDir(path.join(file, 'subagents', 'workflows'))) for (const sf of listDir(path.join(file, 'subagents', 'workflows', wf))) if (sf.endsWith('.jsonl')) list.push([path.join(file, 'subagents', 'workflows', wf, sf), dirName, true]);
           }
         }
       }
@@ -73,7 +79,7 @@ export function createClaudeTracker() {
         let st; try { st = fs.statSync(file); } catch { continue; }
         if (st.mtimeMs < sinceMs) continue;
         seen.add(file);
-        const e = files.get(file) || { dirName, sub, offset: 0, rows: [] };
+        const e = files.get(file) || { dirName, sub, offset: 0, rows: [], ids: new Set() };
         files.set(file, e);
         try { readFile(file, st, e, keepSince); } catch { /* illeggibile: si salta */ }
         yield;

@@ -29,7 +29,7 @@ test('serve --demo con l\'HOME vero: nessun account, cartella o nome utente di q
     const user = os.userInfo().username, home = os.homedir();
     const esc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     const real = new RegExp([user, home, '.openclaw', 'jarvis'].map(esc).join('|'), 'i');
-    for (const u of ['/api/overview', '/api/live', '/api/pace', '/api/gates', '/api/mac', '/api/contesto', '/api/diario?days=7', '/api/attesa', '/api/services', '/api/projects', '/api/heavy', '/api/machines', '/api/pc']) {
+    for (const u of ['/api/overview', '/api/live', '/api/pace', '/api/gates', '/api/mac', '/api/contesto', '/api/diario?days=7', '/api/attesa', '/api/services', '/api/projects', '/api/heavy', '/api/machines', '/api/pc', '/vdm/api/profiles', '/vdm/api/settings']) {
       const body = await (await fetch(url + u, { signal: AbortSignal.timeout(60000) })).text();
       const m = body.match(real);
       assert.equal(m, null, `${u} contiene «${m && body.slice(Math.max(0, m.index - 40), m.index + 40)}»`);

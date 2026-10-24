@@ -121,8 +121,10 @@ function projectRows(live, items) {
       // su telefono l'intestazione sparisce: ogni numero porta con sé icona e nome del provider
       cols.map((k) => `<td class="num ${p[k] > 0 ? '' : 'mut'}"><span class="pv">${IC[k]} ${PROV[k]}</span>${pct(p[k])}</td>`).join('') +
       `<td class="state ${s.cls}" title="${esc(r)}">${IC[s.icon]} ${esc(s.text)}</td></tr>`; };
-  return `<table class="proj"><thead><tr><th>Progetto${cols.length ? ' · % della settimana' : ''}</th>${cols.map((k) => `<th class="num">${IC[k]}</th>`).join('')}<th>Stato</th></tr></thead><tbody>${alive.map((p) => row(p, false)).join('')}</tbody></table>` +
-    (dead.length ? `<details><summary>Nascosti dal menu (${dead.length}): fermi da 7 giorni o cartella sparita</summary><table class="proj"><tbody>${dead.map((p) => row(p, true)).join('')}</tbody></table></details>` : '');
+  // l'intestazione dice icona e nome del provider, e si ripete nella tabella dei nascosti
+  const head = `<thead><tr><th>Progetto${cols.length ? ' · % della settimana' : ''}</th>${cols.map((k) => `<th class="num"><span class="pvh">${IC[k]} ${PROV[k]}</span></th>`).join('')}<th>Stato</th></tr></thead>`;
+  return `<table class="proj">${head}<tbody>${alive.map((p) => row(p, false)).join('')}</tbody></table>` +
+    (dead.length ? `<details><summary>Nascosti dal menu (${dead.length}): fermi da 7 giorni o cartella sparita</summary><table class="proj">${head}<tbody>${dead.map((p) => row(p, true)).join('')}</tbody></table></details>` : '');
 }
 
 // Il Mac come un account: una barra per misura con la tacca alla soglia di «impegnato» e il grafico delle 24 h.
@@ -161,7 +163,9 @@ async function renderOverview() {
   let done = false;
   const waitP = attesaSection();
   waitP.then((w) => { if (!done && !$('t-overview').querySelector('[data-sec=wait]')) $('t-overview').innerHTML = w + '<p class="mut small" data-loading>Carico quote, agenti e Mac…</p>'; });
-  let [wait, live, gates, queue, pace, heavy, alerts, mac] = await Promise.all([waitP, ...['/api/live', '/api/gates', '/api/queue', '/api/pace', '/api/heavy', '/api/alerts', '/api/mac'].map((u) => j(u, { signal: AbortSignal.timeout(u === '/api/gates' ? 8000 : 20000) }))]);
+  // I progetti (agenti vivi, la lettura più lenta a freddo) arrivano per ultimi nel loro riquadro: il resto non li aspetta.
+  const liveP = j('/api/live', { signal: AbortSignal.timeout(20000) });
+  let [wait, gates, queue, pace, heavy, alerts, mac] = await Promise.all([waitP, ...['/api/gates', '/api/queue', '/api/pace', '/api/heavy', '/api/alerts', '/api/mac'].map((u) => j(u, { signal: AbortSignal.timeout(u === '/api/gates' ? 8000 : 20000) }))]);
   done = true;
   // Sotto carico il freno può metterci 30 s: la Panoramica non lo aspetta oltre 8 s, il resto non oltre 20.
   // un errore dell'hub arriva come oggetto {error}: per quote e ritmo vale «nessun dato», non un crash
@@ -199,7 +203,8 @@ async function renderOverview() {
     `<section>${accounts}<div id="acc-missing"></div></section>` +
     card(`${IC.gauge} Come funziona il freno <span class="mut small">${braked.length ? 'frenati: ' + braked.join(', ') : 'nessun freno'}</span>`, brake, false) +
     card(`${IC.tray} Coda <span class="mut small">${waiting.length ? waiting.length + ' in attesa' : 'vuota'}</span>`, queueHtml, false) +
-    `<section>${projectRows(live, items)}</section>`;
+    `<section data-sec="proj"><p class="mut small" data-loading>Carico progetti e agenti…</p></section>`;
+  liveP.then((live) => { const el = $('t-overview').querySelector('[data-sec=proj]'); if (el) el.innerHTML = projectRows(live, items); });
   if (cur === 'overview') $('sub').textContent = 'aggiornato alle ' + hhmm(Date.now());
   // Un abbonamento che non risponde non sparisce senza dirlo, come nella tray. L'overview è lenta: arriva dopo, senza bloccare.
   j('/api/overview').then((ov) => {
@@ -241,9 +246,9 @@ document.addEventListener('change', async (e) => {
 // ---------- Consumi ----------
 function extraPanels(report, overview) {
   const rp = (report && report.projects) || [], mx = Math.max(1, ...rp.map((x) => x.weekPct));
-  const shareRow = (x) => `<tr><td>${esc(PagesView.humanProject(x.name))}</td><td style="width:26%">${bar(x.weekPct / mx * 100, x.weekPct > 80 ? 'bad' : x.weekPct > 50 ? 'warn' : '')}</td><td class="num">${pct(x.weekPct)}</td><td class="num hide-s">${x.requests}</td><td class="num hide-s">${x.subWeekPct != null ? pct(x.subWeekPct) + ' · ' + x.subRequests : '–'}</td><td class="num hide-s">${nfmt(x.tokens || 0)}</td><td class="hide-s mut small">${when(x.lastAt)}</td></tr>`;
+  const shareRow = (x) => `<tr><td>${esc(PagesView.humanProject(x.name))}</td><td>${bar(x.weekPct / mx * 100, x.weekPct > 80 ? 'bad' : x.weekPct > 50 ? 'warn' : '')}</td><td class="num">${pct(x.weekPct)}</td><td class="num hide-s">${x.requests}</td><td class="num hide-s">${x.subWeekPct != null ? pct(x.subWeekPct) + ' · ' + x.subRequests : '–'}</td><td class="num hide-s">${nfmt(x.tokens || 0)}</td><td class="hide-s mut small">${when(x.lastAt)}</td></tr>`;
   // «Altri N» ripete l'intestazione: aperto, ogni colonna dice ancora cosa conta
-  const shareHead = '<thead><tr><th>Cartella</th><th></th><th class="num">% sett.</th><th class="num hide-s">Rich.</th><th class="num hide-s" title="la parte lanciata da sottoagenti">di cui sottoagenti</th><th class="num hide-s">Token</th><th class="hide-s">Ultima</th></tr></thead>';
+  const shareHead = '<thead><tr><th>Cartella</th><th></th><th class="num"><span class="pvh">' + IC.claude + ' % sett.</span></th><th class="num hide-s">Rich.</th><th class="num hide-s" title="la parte lanciata da sottoagenti">di cui sottoagenti</th><th class="num hide-s">Token</th><th class="hide-s">Ultima</th></tr></thead>';
   const share = rp.length ? `<table class="share">${shareHead}<tbody>${rp.slice(0, 15).map(shareRow).join('')}</tbody></table>${rp.length > 15 ? `<details><summary>Altri ${rp.length - 15}</summary><table class="share">${shareHead}<tbody>${rp.slice(15).map(shareRow).join('')}</tbody></table></details>` : ''}` : empty('Report non ancora pronto: riprova tra poco.');
   const mu = report && report.muse;
   const muse = mu ? `${mu.quota ? `<p class="small mut">${esc(mu.quota.label)}: <b>${mu.quota.weekPct}%</b> della settimana (azzera ${when(mu.quota.weekResetsAt)}) · 5 ore ${mu.quota.fiveHourPct}%</p>` : ''}${mu.projects && mu.projects.length ? `<table><tbody>${mu.projects.map((p) => `<tr><td>${esc(PagesView.humanProject(p.name))}</td><td class="num">${pct(p.weekPct)}</td><td class="num hide-s">${p.requests} rich.</td><td class="num hide-s">${nfmt(p.tokens || 0)}</td><td class="hide-s mut small">${when(p.lastAt)}</td></tr>`).join('')}</tbody></table>` : empty('Nessuna attività Muse.')}` : empty('Dato Muse non disponibile.');

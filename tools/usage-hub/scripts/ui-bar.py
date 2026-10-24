@@ -6,7 +6,10 @@
 #      (il baco del 24/10: il sottotitolo di Account schiacciava la nav a larghezza 0);
 #   2. nessun testo tagliato (overflow, ellipsis, clip) e niente scroll orizzontale, su tutte le tab;
 #   3. ui-audit a 0 per misalign, overflow e overlap sulla scheda Automazioni, chiusa e col pannello aperto;
-#   4. axe senza violazioni serie o critiche.
+#   4. axe senza violazioni serie o critiche su ogni tab, in chiaro e in scuro;
+#   5. ogni numero di consumo dice il suo provider, niente cella fuori dalla sua card, comandi alti 44 px a 375;
+#   6. il badge di «Ti aspetta» dentro il suo bottone (600 e 900 px), «Chiudi» del pannello non coperto;
+#   7. la Panoramica con /api/attesa lenta 6 s e /api/live lenta 12 s: la barra aspetta la pagina vera, non il segnaposto.
 import os, pathlib, socket, subprocess, sys, tempfile, time, urllib.request, json
 from playwright.sync_api import sync_playwright
 
@@ -18,6 +21,7 @@ AUDIT_JS = (HOME / '.claude/jarvis/scripts/ui-audit.js').read_text().replace(
     'var el = all[i];', 'var el = all[i]; if (el.ownerSVGElement) continue;', 1)
 assert 'ownerSVGElement' in AUDIT_JS, 'ui-audit.js è cambiato: il filtro delle icone non si applica più'
 CLIP_JS = (ROOT / 'scripts/ui-clip.js').read_text()
+CHECKS_JS = (ROOT / 'scripts/ui-checks.js').read_text()
 TABS = ['overview', 'journal', 'automations', 'sessions', 'projects', 'activity', 'context', 'accounts', 'usage', 'services', 'settings', 'logs']
 WIDTHS = (1440, 700, 375)
 LONG = 'sottotitolo di prova lunghissimo ' * 14
@@ -50,10 +54,11 @@ def free_port():
 def serve():
     port = free_port()
     d = pathlib.Path(tempfile.mkdtemp(prefix='ui-bar-'))
-    env = dict(os.environ, USAGE_HUB_DEMO_AUTOMATIONS='problemi', USAGE_HUB_FEEDBACK_DIR=str(d / 'feedback'),
-               USAGE_HUB_QUEUE=str(d / 'queue.json'), USAGE_HUB_QUEUE_LOG=str(d / 'queue.log'),
-               USAGE_HUB_ATTESA=str(d / 'ti-aspetta.jsonl'), USAGE_HUB_CONTEXT_CHECK=str(d / 'check.json'), USAGE_HUB_DIARIO=str(d / 'diario'))
-    proc = subprocess.Popen(['node', 'bin/usage-hub.mjs', 'serve', '--demo', '--port', str(port)], cwd=ROOT, env=env,
+    # come le prove: HOME finto e --no-live, la demo inventa da sé «Ti aspetta», diario, quote e Mac
+    (d / 'home').mkdir()
+    env = {k: v for k, v in os.environ.items() if not k.startswith('USAGE_HUB_')}
+    env.update(HOME=str(d / 'home'), USAGE_HUB_DEMO_AUTOMATIONS='problemi', USAGE_HUB_CONTEXT_CHECK=str(d / 'check.json'))
+    proc = subprocess.Popen(['node', 'bin/usage-hub.mjs', 'serve', '--demo', '--no-live', '--port', str(port)], cwd=ROOT, env=env,
                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     url = f'http://127.0.0.1:{port}'
     for _ in range(150):
@@ -87,6 +92,25 @@ def wait_loaded(pg, secs=40):
             return True
         pg.wait_for_timeout(250)
     return False
+
+
+AXE_RUN = "async () => (await axe.run(document, {runOnly: ['wcag2a', 'wcag2aa']})).violations.filter(v => ['serious', 'critical'].includes(v.impact)).map(v => v.id + ':' + v.nodes.slice(0, 2).map(n => n.target).join('|'))"
+AXE_TABS = ['overview', 'journal', 'automations', 'context', 'usage', 'projects', 'accounts', 'sessions', 'services']
+
+
+def goto_tab(pg, t):
+    pg.evaluate(f"location.hash='{t}'")
+    pg.wait_for_timeout(300)
+    return wait_loaded(pg)
+
+
+def axe_tabs(pg, axe, tabs):
+    bad = []
+    for t in tabs:
+        goto_tab(pg, t)
+        pg.add_script_tag(content=axe)
+        bad += [t + ':' + x for x in pg.evaluate(AXE_RUN)]
+    return bad
 
 
 def main():
@@ -138,6 +162,24 @@ def main():
                         cuts.append(t + ': scroll orizzontale')
                 check(not stuck, f'{w}px ogni tab finisce di caricare entro 40 s {stuck}')
                 check(not cuts, f'{w}px nessun testo tagliato su {len(TABS)} tab {cuts[:4]}')
+                # 5. provider, card, comandi: Panoramica, Progetti e Consumi con i «Altri N» aperti
+                prov, out, taps = [], [], []
+                for t in TABS:
+                    goto_tab(pg, t)
+                    pg.evaluate("document.querySelectorAll('.tab.on details').forEach(d => d.open = true)")
+                    pg.wait_for_timeout(150)
+                    pg.add_script_tag(content=CHECKS_JS)
+                    prov += [t + ': ' + x for x in pg.evaluate('__provLabels()')]
+                    out += [t + ': ' + x for x in pg.evaluate('__contained()')]
+                    if w <= 560:
+                        taps += [t + ': ' + x for x in pg.evaluate('__taps(44)')]
+                check(not prov, f'{w}px ogni numero di consumo ha il suo provider {prov[:4]}')
+                check(not out, f'{w}px nessuna cella fuori dalla sua card {out[:4]}')
+                if w <= 560:
+                    check(not taps, f'{w}px comandi alti almeno 44 px ({len(taps)} sotto) {taps[:5]}')
+                if axe:
+                    v = axe_tabs(pg, axe, AXE_TABS)
+                    check(not v, f'{w}px axe su {len(AXE_TABS)} tab in chiaro: nessuna violazione seria {v[:4]}')
                 # 3-4. Automazioni chiusa e col pannello aperto
                 pg.evaluate("location.hash='automations'")
                 pg.wait_for_selector('#t-automations [data-sec=table]')
@@ -148,7 +190,11 @@ def main():
                     if case == 'pannello':
                         pg.locator('#t-automations .cx-row[data-cx]:not(.cx-hdr)').first.click()
                         pg.wait_for_selector('.cx-panel')
-                        pg.wait_for_timeout(1500)
+                        check(wait_loaded(pg), f'{w}px pannello: lo scheletro dello schema sparisce')
+                        pg.wait_for_timeout(300)
+                        pg.add_script_tag(content=CHECKS_JS)
+                        cov = pg.evaluate("__onTop('.cx-panel [data-cx-close]')")
+                        check(not cov, f'{w}px pannello: «Chiudi» si clicca, niente sopra {cov}')
                         pg.evaluate("document.querySelectorAll('.cx-panel details').forEach(d => d.open = true)")
                         if shots:
                             pg.screenshot(path=str(shots / f'pannello-{w}.png'))
@@ -165,6 +211,36 @@ def main():
                         check(not v, f'{w}px axe {case}: nessuna violazione seria {v}')
                 check(not errs, f'{w}px nessun errore JS {errs[:2]}')
                 pg.context.close()
+                # 4. in scuro: contrasto e il resto di axe
+                if axe:
+                    pd = b.new_context(viewport={'width': w, 'height': 900}, color_scheme='dark').new_page()
+                    pd.set_default_timeout(90000)
+                    pd.goto(url + '/#overview', wait_until='domcontentloaded')
+                    v = axe_tabs(pd, axe, AXE_TABS)
+                    check(not v, f'{w}px axe su {len(AXE_TABS)} tab in scuro: nessuna violazione seria {v[:4]}')
+                    pd.context.close()
+            # 6. badge dentro il bottone dove la nav è una griglia
+            for w in (600, 900):
+                pg = b.new_context(viewport={'width': w, 'height': 900}).new_page()
+                pg.goto(url + '/#overview', wait_until='domcontentloaded')
+                pg.wait_for_selector('#nwait:not([hidden])', timeout=60000)
+                pg.add_script_tag(content=CHECKS_JS)
+                bb = pg.evaluate('__badge()')
+                check(not bb, f'{w}px badge di «Ti aspetta» dentro il bottone {bb}')
+                pg.context.close()
+            # 7. Panoramica lenta: la barra deve aspettare la pagina vera, non fotografare il segnaposto
+            pg = b.new_context(viewport={'width': 1440, 'height': 900}).new_page()
+            pg.set_default_timeout(90000)
+            def slow(route, ms):
+                time.sleep(ms / 1000)
+                route.continue_()
+            pg.route('**/api/attesa', lambda r: slow(r, 6000))
+            pg.route('**/api/live', lambda r: slow(r, 12000))
+            pg.goto(url + '/#overview', wait_until='domcontentloaded')
+            done = wait_loaded(pg, 60)
+            real = pg.evaluate("!!document.querySelector('#t-overview section.status') && !/Carico quote/.test(document.getElementById('t-overview').innerText)")
+            check(done and real, f'Panoramica lenta (attesa +6 s, live +12 s): la barra aspetta la pagina vera (caricata {done}, vera {real})')
+            pg.context.close()
             b.close()
     finally:
         proc.kill()
