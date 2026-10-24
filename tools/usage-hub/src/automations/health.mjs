@@ -45,6 +45,10 @@ export function findings(f) {
     // la configurazione. «last» non vuole destinatario.
     const d = j.delivery;
     if (d?.mode === 'announce' && d.channel && d.channel !== 'last' && !d.to) out.push({ kind: 'senza destinatario', line: `${name(j)}: avvisa su ${d.channel} senza destinatario, l'avviso non arriva: openclaw cron edit ${j.id} --to …` });
+    // 24/10: con sh -lc un «node» senza percorso è il Node 18 del 2023 in /usr/local/bin (prima di Homebrew nel PATH di
+    // login): la salute delle 8:45 è caduta su node:sqlite, e altri sei cron giravano lì senza saperlo.
+    const argv = j.payload?.kind === 'command' && Array.isArray(j.payload.argv) ? j.payload.argv.join(' ') : '';
+    if (/(^|[\s;&|(`])node\s/.test(argv)) out.push({ kind: 'node vecchio', line: `${name(j)}: chiama «node» senza percorso, con sh -lc parte il Node 18 di /usr/local/bin: usa /opt/homebrew/bin/node` });
   }
   if (f.scratchLen > 4000) out.push({ kind: 'heartbeat', line: `scratch dell'heartbeat a ${Math.round(f.scratchLen / 1000)} KB: con compiti chiusi dentro il modello gira sempre; vuoto = nessun turno` });
   for (const d of f.doctor || []) out.push({ kind: 'doctor', line: `doctor ${d.severity}: ${d.checkId} — ${(d.message || '').slice(0, 140)}` });

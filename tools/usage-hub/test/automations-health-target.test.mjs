@@ -18,3 +18,17 @@ test('con destinatario, su «last» o senza avviso: niente', () => {
   assert.equal(run({ mode: 'none', channel: 'last' }).length, 0);
   assert.equal(run(undefined).length, 0);
 });
+
+// 24/10: «sh -lc node …» gira col Node 18 di /usr/local/bin, la salute delle automazioni è caduta su node:sqlite.
+const cmd = (argv) => findings({ now: Date.now(), jobs: [{ id: 'fd4c35a4-0000-0000-0000-000000000000', name: 'cron-health', enabled: true, payload: { kind: 'command', argv }, schedule: { kind: 'cron' } }], runsByJob: {}, delivered: {} }).filter((o) => o.kind === 'node vecchio');
+
+test('cron che chiama node senza percorso: segnalato', () => {
+  assert.equal(cmd(['sh', '-lc', 'node /x/cron-health.mjs']).length, 1);
+  assert.equal(cmd(['cron-clean', 'Salute', 'sh', '-lc', 'cd /x && node y.mjs']).length, 1);
+});
+
+test('node col percorso, o la parola dentro un nome: niente', () => {
+  assert.equal(cmd(['sh', '-lc', '/opt/homebrew/bin/node /x/cron-health.mjs']).length, 0);
+  assert.equal(cmd(['sh', '-lc', 'python3 /x/node-check.py']).length, 0);
+  assert.equal(cmd(['sh', '-lc', 'ls node_modules']).length, 0);
+});
