@@ -14,6 +14,7 @@ account): «weekly limit resets Oct 25 at 9am» → «dopo il reset del 25/10 al
 in coda (anche più di uno, se lavora in parallelo), e né il transcript né i sottoagenti che lavorano per quel tool scrivono
 da 20 minuti → una voce «Ti aspetta» per tool (tipo decisione), una volta sola; si chiude da sola quando il tool
 riceve il risultato o la sessione si archivia. Tool più vecchi di 48 ore non contano. Una sessione letta male non si tocca.
+Una sessione sparita del tutto (né metadati né transcript in nessuna cartella d'account) per tre giri di fila chiude la sua voce; se torna, il conteggio riparte.
 Stato per sessione:tool in «attesa» dello state JSON.
 Le sessioni dell'Agent SDK (OpenClaw, delegate, cron) non c'entrano: ripiego e ripresa li gestisce chi le lancia.
 Elenco in <note della Regia>/sessioni-limite.md, riga nel diario quando qualcosa diventa riprendibile, stato in
@@ -29,6 +30,7 @@ STATE = os.environ.get("SESSIONI_LIMITE_STATE", os.path.join(H, ".claude", "jarv
 REGIA = os.environ.get("REGIA_NOTES", os.path.join(H, "Library/Application Support/Claude/side-session-notes/local_5d58bb9d-5000-4466-ac64-6a505dba24a6"))
 HUB = os.environ.get("SESSIONI_HUB_URL", "http://127.0.0.1:3360/api/attesa")
 ATTESA_MIN = 20 * 60  # quiete del transcript prima di dire «aspetta Attilio»: sotto, il tool può essere in corso
+GIRI_SPARITA = 3  # giri di fila in cui una sessione non c'è più (né metadati né transcript) prima di chiudere la sua voce
 PAROLE = {"AskUserQuestion": "ti ha fatto una domanda", "Bash": "un comando", "Edit": "modificare un file",
           "MultiEdit": "modificare un file", "Write": "modificare un file", "request_access": "usare un'app",
           "request_directory": "accedere a una cartella", "change_directory": "accedere a una cartella"}
@@ -266,6 +268,7 @@ def in_attesa(now):
     ha il suo risultato."""
     out, resolved, archived = {}, set(), set()
     picked, unreadable = desktop_copies()
+    present = set(picked) | unreadable  # con un file dei metadati, anche se illeggibile: la sessione c'è
     for sid, c in picked.items():
         if sid in unreadable:
             continue
@@ -285,9 +288,9 @@ def in_attesa(now):
         quiete = quiete_di(tr, now, set(pend))
         for id_, (at, nome) in pend.items():
             out[f"{sid}:{id_}"] = {"sessione": sid, "titolo": d.get("title") or "", "stop": at,
-                                   "cosa": cosa(nome), "quiete": quiete}
+                                   "cosa": cosa(nome), "quiete": quiete, "cli": d.get("cliSessionId") or ""}
         resolved.update(f"{sid}:{id_}" for id_ in tool_ids(msgs) if id_ not in pend)
-    return out, resolved, archived
+    return out, resolved, archived, present
 
 
 def attesa(body):
@@ -324,7 +327,7 @@ def posta(stato, chiave, body):
 def main():
     now = time.time()
     xs = giro(now)
-    ferme, resolved, archived = in_attesa(now)
+    ferme, resolved, archived, present = in_attesa(now)
     if "--dry-run" in sys.argv:
         print(json.dumps({"limite": xs, "aspetta": [p for p in ferme.values() if p["quiete"] >= ATTESA_MIN]},
                          indent=1, ensure_ascii=False))
@@ -343,6 +346,7 @@ def main():
                                          "note": "nessuna sessione ferma sulla spesa"}) is not None:
             stato.pop("voce")
     attese = stato.setdefault("attesa", {})
+    cli_of = stato.setdefault("cli", {})  # sessione → id del transcript, per riconoscerla anche senza metadati
     for k, p in sorted(ferme.items()):
         if k in attese or p["quiete"] < ATTESA_MIN:
             continue
@@ -351,10 +355,25 @@ def main():
                              "link": f"claude://claude.ai/epitaxy/{p['sessione']}", "from": "sessioni-limite"})
         if r is not None:
             attese[k] = (r.get("row") or {}).get("id") or ""
+            cli_of[p["sessione"]] = p["cli"]
     for k in [k for k in attese if k not in ferme and (k in resolved or k.partition(":")[0] in archived)]:  # risultato arrivato, o archiviata
         if attese[k] and posta(stato, "chiudi " + k, {"kind": "chiudi", "ref": attese[k]}) is None:
             continue  # il hub non ha chiuso: resta in lista, il giro dopo riprova
         attese.pop(k)
+    assenti = stato.setdefault("assenti", {})  # voce → giri di fila in cui la sua sessione è sparita del tutto
+    for k in list(attese):  # anche le voci in ferme: una sessione che torna azzera il conteggio
+        sid = k.partition(":")[0]
+        if sid in present or transcript_of(cli_of.get(sid)):
+            assenti.pop(k, None)  # torna, anche solo con un file: il conteggio riparte da zero
+            continue
+        assenti[k] = assenti.get(k, 0) + 1
+        if assenti[k] < GIRI_SPARITA:
+            continue
+        if attese[k] and posta(stato, "chiudi " + k, {"kind": "chiudi", "ref": attese[k], "by": "sessioni-limite",
+                                                      "note": "sessione sparita: né metadati né transcript"}) is None:
+            continue  # il hub non ha chiuso: resta in lista, il giro dopo riprova
+        attese.pop(k)
+        assenti.pop(k)
     if os.path.isdir(REGIA):
         nota = os.path.join(REGIA, "sessioni-limite.md")
         if xs:
@@ -377,6 +396,9 @@ def main():
     vive = set(ferme) | set(attese) | {"chiudi " + k for k in attese} | ({"spesa"} if spesa else set()) \
         | ({"chiudi spesa"} if stato.get("voce") else set())
     stato["fallite"] = [c for c in stato.get("fallite", []) if c in vive]  # niente falliti di sessioni ormai ferme o chiuse
+    stato["assenti"] = {k: n for k, n in assenti.items() if k in attese}
+    aperte = {k.partition(":")[0] for k in attese}
+    stato["cli"] = {s: c for s, c in cli_of.items() if s in aperte}
     stato.update({"giro": int(now), "ferme": len(xs), "riprendibili": chiavi, "spesa": len(spesa)})
     os.makedirs(os.path.dirname(STATE), exist_ok=True)
     json.dump(stato, open(STATE, "w"), indent=1)

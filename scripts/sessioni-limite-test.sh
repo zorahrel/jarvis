@@ -151,6 +151,16 @@ def voci():
     return [r for r in RICHIESTE if r["body"].get("tipo")]
 
 
+def chiusure():
+    return [r for r in RICHIESTE if r["body"].get("kind") == "chiudi"]
+
+
+def sparisci(tmp):
+    """La sessione sparisce del tutto: né metadati né transcript, in nessuna cartella d'account."""
+    os.remove(os.path.join(tmp, "desktop", "acc", "prog", "local_aaaa.json"))
+    os.remove(os.path.join(tmp, "projects", "-Users-x", CLI + ".jsonl"))
+
+
 def titolo_ok(t):
     return t.endswith(": aspetta una tua risposta") and "Quadra per commercialisti" in t
 
@@ -390,6 +400,40 @@ with tempfile.TemporaryDirectory() as tmp:
     gira(tmp)
     esiti.append(check("(u) voce non passata, poi sessione risolta → «fallite» si svuota",
                        bool(prima_fallite) and not stato(tmp).get("fallite"), f"prima={prima_fallite} dopo={stato(tmp).get('fallite')}"))
+
+# (v) sessione sparita del tutto (né metadati né transcript in nessuna cartella d'account): la voce si chiude solo al terzo giro
+with tempfile.TemporaryDirectory() as tmp:
+    RICHIESTE.clear()
+    scena(tmp, [tool_uso("toolu_domanda", "AskUserQuestion", 1500)], quiete_s=1500)
+    gira(tmp)
+    sparisci(tmp)
+    gira(tmp)
+    gira(tmp)
+    dopo_due = len(chiusure())
+    gira(tmp)
+    esiti.append(check("(v) sparita: due giri → nessuna chiusura", dopo_due == 0, f"chiusure dopo 2 giri={dopo_due}"))
+    esiti.append(check("(v) sparita: tre giri → una sola chiusura, con l'id della voce, e lo stato si svuota",
+                       len(chiusure()) == 1 and chiusure()[0]["body"].get("ref") == "att-1" and not stato(tmp).get("attesa"),
+                       f"chiusure={[r['body'] for r in chiusure()]} stato={stato(tmp).get('attesa')}"))
+
+# (w) sparita, poi torna, poi sparisce di nuovo: il contatore riparte da zero, due giri non chiudono
+with tempfile.TemporaryDirectory() as tmp:
+    RICHIESTE.clear()
+    scena(tmp, [tool_uso("toolu_domanda", "AskUserQuestion", 1500)], quiete_s=1500)
+    gira(tmp)
+    sparisci(tmp)
+    gira(tmp)
+    gira(tmp)
+    scena(tmp, [tool_uso("toolu_domanda", "AskUserQuestion", 1500)], quiete_s=1500)
+    gira(tmp)
+    sparisci(tmp)
+    gira(tmp)
+    gira(tmp)
+    esiti.append(check("(w) sparita, torna, sparisce: due giri dopo il ritorno → nessuna chiusura",
+                       len(chiusure()) == 0, f"chiusure={[r['body'] for r in chiusure()]}"))
+    gira(tmp)
+    esiti.append(check("(w) il terzo giro dopo il ritorno chiude",
+                       len(chiusure()) == 1, f"chiusure={[r['body'] for r in chiusure()]}"))
 
 HUB.shutdown()
 ok = all(esiti)
