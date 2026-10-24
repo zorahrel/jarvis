@@ -1,27 +1,29 @@
 #!/bin/bash
 # Porta unica per delegare un compito: chi chiama non sceglie modello né abbonamento.
-#   delegate [-C dir] [--class taste|mechanical] [--dry-run] "compito"
+#   delegate [-C dir] [--class taste|mechanical|verify] [--writer chi] [--dry-run] "compito"
+# --class verify --writer <muse|codex|free|claude:opus|…>: verifica su un esecutore diverso da chi ha scritto (Haiku 5.5 prima).
 # Il hub (:3360/api/route) fa classificare il compito a Jev e chiede al gate del pacing chi può lavorare.
 # Esegue: free → canali gratis (free-router) · muse → museagent · codex → codex exec · claude → claude -p (Opus per il gusto con margine, Sonnet per il gusto frenato, Haiku per il meccanico).
 # Frenato: il lavoro entra nella coda del hub (:3360/api/queue), che lo rilancia da solo; stampa id e ora stimata, exit 11.
 # Con --no-queue niente coda: exit 10 = frenato, riprova più tardi. Hub giù → museagent, come il freno di prima.
-dir="$PWD"; cls=""; dry=0; queue=1
+dir="$PWD"; cls=""; writer=""; dry=0; queue=1
 while [ $# -gt 1 ]; do
   case "$1" in
     -C) dir="$2"; shift 2 ;;
     --class) cls="$2"; shift 2 ;;
+    --writer) writer="$2"; shift 2 ;;
     --dry-run) dry=1; shift ;;
     --no-queue) queue=0; shift ;;
     *) break ;;
   esac
 done
 task="$1"
-[ -z "$task" ] && { echo 'uso: delegate [-C dir] [--class taste|mechanical] [--dry-run] [--no-queue] "compito"' >&2; exit 2; }
+[ -z "$task" ] && { echo 'uso: delegate [-C dir] [--class taste|mechanical|verify] [--writer chi] [--dry-run] [--no-queue] "compito"' >&2; exit 2; }
 cd "$dir" || exit 2
 project=$(basename "$(git rev-parse --show-toplevel 2>/dev/null || pwd)")
 
 r=$(curl -s --max-time 30 -G http://127.0.0.1:3360/api/route --data-urlencode "task=$task" \
-      --data-urlencode "project=$project" ${cls:+--data-urlencode "class=$cls"} 2>/dev/null)
+      --data-urlencode "project=$project" ${cls:+--data-urlencode "class=$cls"} ${writer:+--data-urlencode "writer=$writer"} 2>/dev/null)
 provider=$(jq -r '.provider // empty' <<<"$r" 2>/dev/null)
 go=$(jq -r '.go' <<<"$r" 2>/dev/null)
 if [ -z "$go" ] || [ "$go" = null ]; then
@@ -31,8 +33,8 @@ echo "delegate: $(jq -r '"\(.cls // "?") (\(.by // "-"), strumenti \(.tools | to
 if [ "$go" = false ]; then
   eta=$(jq -r '.waitUntil // empty | . / 1000 | strftime("%a %d %H:%M")' <<<"$r")
   if [ $queue -eq 1 ]; then
-    q=$(jq -n --arg t "$task" --arg d "$PWD" --arg p "$project" --argjson c "$(jq '.cls // null' <<<"$r")" --argjson w "$(jq '.waitUntil // null' <<<"$r")" \
-          '{task:$t, dir:$d, project:$p, cls:$c, waitUntil:$w}' \
+    q=$(jq -n --arg t "$task" --arg d "$PWD" --arg p "$project" --argjson c "$(jq '.cls // null' <<<"$r")" --argjson w "$(jq '.waitUntil // null' <<<"$r")" --arg wr "$writer" \
+          '{task:$t, dir:$d, project:$p, cls:$c, waitUntil:$w} + (if $wr != "" then {writer:$wr} else {} end)' \
         | curl -s --max-time 10 -X POST http://127.0.0.1:3360/api/queue -H 'Content-Type: application/json' -d @- 2>/dev/null)
     id=$(jq -r '.id // empty' <<<"$q" 2>/dev/null)
     if [ -n "$id" ]; then echo "delegate: frenato, accodato come $id${eta:+, stima dopo $eta} (il hub lo lancia da solo)" >&2; exit 11; fi

@@ -1,0 +1,148 @@
+#!/usr/bin/env node
+// Coda notturna della board (P07): la notte i lavori reversibili della board Topics che non aspettano Attilio entrano
+// nella coda della delega del hub, che li lancia col gate del pacing (gli account con quota ferma lavorano, la riserva
+// di Attilio resta sua). Niente secondo motore: qui si sceglie COSA mettere in coda e si riporta l'esito sulla card.
+//
+//   board-notte --giro        ogni 30 minuti (cron OpenClaw «board-notte»): fra l'1 e le 7 mette in coda le card marcate;
+//                             dalle 7 riporta sulla card l'esito dei lavori finiti e la manda in review
+//   board-notte --dry-run     quali card entrerebbero adesso, senza toccare niente
+//   board-notte --resoconto   una riga per il brief del mattino, vuota se stanotte non è successo niente
+//
+// Entra solo una card in backlog con nella descrizione le righe `notte: sì` e `dir: <cartella>` (le scrive
+// scripts/board-card --notte, o una persona), senza etichetta `decisione`, senza domanda aperta né blocchi, e senza
+// parole da canale di clienti o da soldi nel testo. Al massimo MAX card a notte; una card già lavorata non rientra
+// finché la sua descrizione non cambia.
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import crypto from 'node:crypto';
+import https from 'node:https';
+import { execFileSync } from 'node:child_process';
+import { loadQueue, cardLogFile, isNight } from '../src/queue.mjs';
+
+const TOPICS = process.env.TOPICS_URL || 'https://127.0.0.1:3333';
+const CA = process.env.TOPICS_CA || path.join(os.homedir(), 'Projects/topics-app/certs/ca-cert.pem');
+const HUB = process.env.USAGE_HUB_URL || 'http://127.0.0.1:3360';
+const STATE = process.env.BOARD_NOTTE_STATE || path.join(os.homedir(), '.cache', 'claude-usage-hub', 'board-notte.json');
+const MAX = 6;
+// Mai di notte senza nessuno: messaggi a persone, pubblicazioni, soldi. Meglio una card saltata che un invio.
+export const CANALI = /\b(invi[ao]|inviare|mand[ai]|mandare|spedisc[ia]|pubblic[ao]|pubblicare|posta(re)? su|e-?mail a|mail a|whatsapp|linkedin|newsletter|outreach|pag(a|are|amento)|bonifico|fattur[ae]|client[ei])\b/i;
+
+let token = null;
+const topicsToken = () => token ??= execFileSync('security', ['find-generic-password', '-s', 'topics', '-a', 'agent-token', '-w'], { encoding: 'utf8' }).trim();
+function topics(method, p, body) {
+  let ca; try { ca = fs.readFileSync(CA); } catch { ca = undefined; }
+  const url = new URL(p, TOPICS);
+  const payload = body === undefined ? undefined : JSON.stringify(body);
+  return new Promise((resolve, reject) => {
+    const req = https.request({ method, hostname: url.hostname, port: url.port, path: url.pathname + url.search, ca, timeout: 15000,
+      headers: { 'x-agent-token': topicsToken(), ...(payload ? { 'content-type': 'application/json', 'content-length': Buffer.byteLength(payload) } : {}) } }, (res) => {
+      let d = ''; res.on('data', (c) => (d += c));
+      res.on('end', () => (res.statusCode >= 400 ? reject(new Error(`Topics ${method} ${url.pathname}: ${res.statusCode} ${d.slice(0, 160)}`)) : resolve(d ? JSON.parse(d) : {})));
+    });
+    req.on('timeout', () => req.destroy(new Error('Topics: nessuna risposta in 15 s')));
+    req.on('error', reject);
+    if (payload) req.write(payload);
+    req.end();
+  });
+}
+
+const loadState = () => { try { return JSON.parse(fs.readFileSync(STATE, 'utf8')); } catch { return {}; } };
+const saveState = (s) => { fs.mkdirSync(path.dirname(STATE), { recursive: true }); fs.writeFileSync(STATE, JSON.stringify(s, null, 1)); };
+const hash = (t) => crypto.createHash('sha1').update(t || '').digest('hex').slice(0, 12);
+const ref = (c) => `card:${c.projectId}/${c.id}`;
+
+// Perché una card non entra stanotte; null = entra.
+export function escluso(c, { queue = [], state = {} } = {}) {
+  const desc = c.description || '';
+  if (c.archived || c.parentTaskId || c.status !== 'backlog') return 'non in backlog';
+  if (!/^notte:\s*s[iì]\s*$/im.test(desc)) return 'senza notte: sì';
+  const dir = (desc.match(/^dir:\s*(.+)$/im) || [])[1]?.trim();
+  if (!dir || !fs.existsSync(dir.replace(/^~/, os.homedir()))) return 'dir assente';
+  if (c.awaitingAnswer || c.blockedBy || c.blockedByTaskId) return 'aspetta qualcosa';
+  if ((c.labels || []).some((l) => (l.label || l) === 'decisione')) return 'è una decisione';
+  if (CANALI.test(`${c.text}\n${desc}`)) return 'tocca persone o soldi';
+  if (queue.some((q) => q.ref === ref(c) && (q.status === 'queued' || q.status === 'running'))) return 'già in coda';
+  if (state[c.id] && state[c.id].hash === hash(desc)) return 'già lavorata';
+  return null;
+}
+
+export function compito(c) {
+  const desc = (c.description || '').replace(/^(notte|dir):.*$/gim, '').trim();
+  const dir = (c.description.match(/^dir:\s*(.+)$/im) || [])[1].trim();
+  return [`Card della board Topics «${c.text}».`, desc, '',
+    `Lavora in ${dir}. È lavoro notturno e non c'è nessuno a cui chiedere: solo cose reversibili, niente messaggi a persone, niente invii,`,
+    'niente spese, niente push su repo pubblici. Committa nel repo locale, senza righe Co-Authored-By. Se ti serve una scelta di Attilio fermati.',
+    'Chiudi con queste tre righe, ultime dell\'output:', 'ESITO: fatto | bloccato: <perché>', 'PROVA: <comando ed exit code, o misura>', 'COMMIT: <sha o nessuno>'].join('\n');
+}
+
+async function accoda(dry) {
+  const [{ tasks = [] }, queue, state] = [await topics('GET', '/api/all-boards/tasks'), loadQueue(), loadState()];
+  const prese = [];
+  // Il tetto vale per notte, non per giro: il cron passa ogni 30 minuti.
+  const giaStanotte = Object.values(state).filter((s) => s.at > Date.now() - 8 * 3600000).length;
+  for (const c of tasks) {
+    if (giaStanotte + prese.length >= MAX) break;
+    const why = escluso(c, { queue, state });
+    if (why) continue;
+    const dir = c.description.match(/^dir:\s*(.+)$/im)[1].trim().replace(/^~/, os.homedir());
+    if (dry) { prese.push(`(prova) ${c.text}`); continue; }
+    const r = await fetch(`${HUB}/api/queue`, { method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ task: compito(c), dir, project: path.basename(dir), priority: 'bassa', ref: ref(c), night: true }) });
+    if (!r.ok) throw new Error(`coda del hub: HTTP ${r.status}`);
+    const item = await r.json();
+    await topics('PATCH', `/api/boards/${c.projectId}/tasks/${c.id}`, { status: 'in_progress' });
+    await topics('POST', `/api/boards/${c.projectId}/tasks/${c.id}/comments`, { content: `In coda per stanotte (coda della delega, lavoro ${item.id}). L'esito arriva qui verso le 7.`, quiet: true });
+    state[c.id] = { hash: hash(c.description), item: item.id, board: c.projectId, title: c.text, at: Date.now() };
+    prese.push(c.text);
+  }
+  if (!dry) saveState(state);
+  if (prese.length) console.log(`Coda notturna: ${prese.length} card dalla board (${prese.join(' · ')})`);
+}
+
+// Le tre righe finali che il compito chiede; se mancano, l'ultima riga non vuota del log.
+export function leggiEsito(log) {
+  const pick = (k) => (log.match(new RegExp(`^${k}:\\s*(.+)$`, 'gim')) || []).pop()?.replace(new RegExp(`^${k}:\\s*`, 'i'), '').trim();
+  const esito = pick('ESITO'); const prova = pick('PROVA'); const commit = pick('COMMIT');
+  const ultima = log.split('\n').map((l) => l.trim()).filter((l) => l && !/^\[\d{4}-/.test(l)).pop() || '';
+  return { esito: esito || null, prova: prova || null, commit: commit || null, ultima: ultima.slice(0, 200) };
+}
+
+async function chiudi() {
+  const queue = loadQueue(); const state = loadState();
+  for (const [id, s] of Object.entries(state)) {
+    if (s.chiusa) continue;
+    const item = queue.find((q) => q.id === s.item);
+    if (!item || (item.status !== 'done' && item.status !== 'failed')) continue;
+    let log = ''; try { log = fs.readFileSync(cardLogFile(item.id), 'utf8'); } catch { /* log assente: lo si dice */ }
+    const e = leggiEsito(log);
+    const ok = item.status === 'done' && !/^bloccat/i.test(e.esito || '');
+    const righe = [`Stanotte (${item.provider || '?'}, exit ${item.exit ?? '?'}): ${ok ? 'fatto' : 'non chiuso'}.`,
+      e.esito && `Esito: ${e.esito}`, e.prova ? `Prova: ${e.prova}` : 'Prova: nessuna nelle righe finali, va guardata.', e.commit && `Commit: ${e.commit}`,
+      !e.esito && e.ultima && `Ultima riga: ${e.ultima}`, `Log: ${cardLogFile(item.id)}`].filter(Boolean);
+    await topics('POST', `/api/boards/${s.board}/tasks/${id}/comments`, { content: righe.join('\n'), quiet: true });
+    // In review anche quando è bloccata: la vede Attilio col perché, invece di restare in corso per sempre.
+    await topics('PATCH', `/api/boards/${s.board}/tasks/${id}`, { status: 'review' });
+    Object.assign(s, { chiusa: Date.now(), ok, esito: e.esito });
+  }
+  saveState(state);
+}
+
+function resoconto() {
+  const since = Date.now() - 18 * 3600000;
+  const ch = Object.values(loadState()).filter((s) => s.chiusa && s.chiusa > since);
+  if (!ch.length) return;
+  const ok = ch.filter((s) => s.ok); const ko = ch.filter((s) => !s.ok);
+  const parti = [ok.length && `${ok.length} in review (${ok.map((s) => s.title.replace(/^\[[^\]]+\]\s*/, '')).join(' · ')})`, ko.length && `${ko.length} non ${ko.length === 1 ? 'chiusa' : 'chiuse'}`].filter(Boolean);
+  console.log(`🌙 Stanotte dalla board: ${parti.join(', ')}`);
+}
+
+const isMain = process.argv[1] && fs.realpathSync(process.argv[1]) === fs.realpathSync(new URL(import.meta.url).pathname);
+if (isMain) {
+  const a = process.argv.slice(2);
+  // Di notte solo in coda; gli esiti dalle 7: una card in review fa partire una riga WhatsApp ad Attilio (task-sync),
+  // e alle 4 del mattino non serve a nessuno.
+  const giro = async () => { if (isNight()) await accoda(false); else await chiudi(); };
+  (a.includes('--giro') ? giro() : a.includes('--chiudi') ? chiudi() : a.includes('--resoconto') ? Promise.resolve(resoconto()) : accoda(true))
+    .catch((e) => { console.log(`board-notte: ${e.message}`); process.exit(1); });
+}

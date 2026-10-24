@@ -133,7 +133,26 @@ export function modelFor(g, cls, rows, projectInfo, tools = true) {
   return { model: 'sonnet', modelReason: `gusto ma Claude frenato: ritmo ${String(pace).replace('.', ',')} > 1, priorità ${priority}` };
 }
 
-export async function route(rows, task, { project = '', projectInfo = null, classify = classifyChain, cls: forced = null, overrides = [] } = {}) {
+// Verifica: chi verifica non è chi ha scritto (Attilio, 18/10; un modello che giudica il proprio output si dà ragione).
+// Prima Claude Haiku 5.5, economico e di un'altra famiglia rispetto a Muse e Codex; se ha scritto Haiku, o Claude è
+// frenato, il primo esecutore libero che non sia quello di chi ha scritto. Mai i canali gratis: rispondono a parole e
+// non possono lanciare il test, e una verifica che non esegue niente non prova niente. writer = muse | codex | free |
+// claude:<opus|sonnet|haiku>; «claude» senza modello vale Haiku, il modello del meccanico.
+export function routeVerify(rows, writer = '', { projectInfo = null, overrides = [] } = {}) {
+  const [wp, wm] = String(writer || '').toLowerCase().split(':');
+  const sameClaude = wp === 'claude' && (wm || 'haiku') === 'haiku';
+  const base = { cls: 'verify', tools: true, by: 'forced', gateClass: 'massivo', writer: writer || null };
+  if (!sameClaude) {
+    const g = gate(rows, 'massivo', { project: projectInfo, skip: ['free', 'muse', 'codex'], overrides });
+    if (g.go) return { ...g, ...base, model: 'haiku', effort: 'medium', modelReason: 'verifica su Haiku 5.5: un modello diverso da chi ha scritto' };
+  }
+  const skip = [...new Set(['free', wp, ...(sameClaude ? ['claude'] : [])].filter(Boolean))];
+  const g = gate(rows, 'massivo', { project: projectInfo, skip, overrides });
+  return { ...g, ...modelFor(g, 'mechanical', rows, projectInfo, true), ...base };
+}
+
+export async function route(rows, task, { project = '', projectInfo = null, classify = classifyChain, cls: forced = null, overrides = [], writer = '' } = {}) {
+  if (forced === 'verify') return routeVerify(rows, writer, { projectInfo, overrides });
   let c;
   if (forced) c = { cls: forced, tools: true, by: 'forced' };
   else if (isPrivate(task, project)) c = { ...classifyByRules(task), by: 'rules (dati personali)' };

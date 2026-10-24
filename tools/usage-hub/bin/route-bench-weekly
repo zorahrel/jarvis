@@ -1,7 +1,7 @@
 #!/bin/bash
 # Controllo settimanale del decisore della delega (cron OpenClaw, zero token): rifà il banco su tutti i decisori
 # e confronta con la settimana prima. Stampa un messaggio solo se cambia qualcosa che conta; altrimenti niente.
-H="$HOME/Projects/claude-usage-hub"; S="$HOME/.cache/route-bench"; mkdir -p "$S"
+H="$(cd "$(dirname "$0")/.." && pwd)"; S="${ROUTE_BENCH_STATE:-$HOME/.cache/route-bench}"; mkdir -p "$S"   # ROUTE_BENCH_STATE solo per le prove
 now="$S/now.json"; last="$S/last.json"
 ROUTE_BENCH_JSON="$now" node "$H/bin/route-bench.mjs" > "$S/run.log" 2>&1
 [ -s "$now" ] || { echo "Banco decisori della delega non partito: $(tail -1 "$S/run.log")"; exit 0; }
@@ -12,11 +12,16 @@ models() {  # modelli online dei candidati, per accorgersi dei nuovi
   done | sort
 }
 models > "$S/models-now.txt"
-python3 - "$now" "$last" "$S/models-now.txt" "$S/models-last.txt" <<'PY'
+# Primi 5 per il codice su Artificial Analysis (aa-top, cache 6 h), senza le varianti di effort tra parentesi.
+# Un nome nuovo di Anthropic o OpenAI cambia la domanda «con cosa lavora la delega» (claude -p e codex exec usano quelli).
+aa-top --by coding -n 5 --json 2>/dev/null | jq -r '.[] | "\(.creator)\t\(.name | sub(" *\\(.*\\)$"; ""))"' | sort -u > "$S/aa-now.txt"
+python3 - "$now" "$last" "$S/models-now.txt" "$S/models-last.txt" "$S/aa-now.txt" "$S/aa-last.txt" <<'PY'
 import json, os, sys
 now = json.load(open(sys.argv[1])); last = json.load(open(sys.argv[2])) if os.path.exists(sys.argv[2]) else None
 mnow = set(open(sys.argv[3]).read().split("\n")) - {""}
 mlast = set(open(sys.argv[4]).read().split("\n")) - {""} if os.path.exists(sys.argv[4]) else mnow
+anow = set(open(sys.argv[5]).read().split("\n")) - {""}
+alast = set(open(sys.argv[6]).read().split("\n")) - {""} if os.path.exists(sys.argv[6]) else anow
 r = now["results"]; b = now["best"]
 msg = []
 if last and last["best"] != b:
@@ -28,7 +33,12 @@ if last and set(now["jevModels"]) != set(last["jevModels"]):
 new = sorted(mnow - mlast)
 if new:
     msg.append(f"modelli nuovi su Groq/Cerebras da provare nel banco: {', '.join(new[:8])}")
+usati = ("Anthropic", "OpenAI")
+nuovi_aa = sorted(l.split("\t", 1)[1] for l in anow - alast if l.split("\t", 1)[0] in usati)
+if nuovi_aa:
+    msg.append(f"su Artificial Analysis entra nei primi 5 per il codice {', '.join(nuovi_aa)}: la delega usa ancora Opus 5.5, Sonnet 5.5, Haiku 5.5 e gpt-6-luna")
 if msg:
     print("Decisore della delega, controllo settimanale: " + "; ".join(msg) + ". Dettagli: ~/.cache/route-bench/run.log")
 PY
 mv "$now" "$last"; mv "$S/models-now.txt" "$S/models-last.txt"
+[ -s "$S/aa-now.txt" ] && mv "$S/aa-now.txt" "$S/aa-last.txt"   # AA giù: si tiene la settimana prima

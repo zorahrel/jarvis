@@ -1,0 +1,166 @@
+#!/usr/bin/env python3
+"""Sessioni di Claude Code (desktop e terminale) ferme su un limite d'uso, e quando si possono riprendere (P03).
+
+  sessioni-limite [--dry-run]
+
+Diversa da ~/bin/sessioni-ferme (le sessioni che aspettano una RISPOSTA di Attilio): qui l'ultimo messaggio è un
+errore di limite e la sessione da 20 minuti non si muove. Misura del 24/10: in una settimana 7 sessioni del desktop
+ferme così, tutte con «weekly limit resets Oct 25 at 9am» nel testo: non serve una spesa, serve riprenderle dopo il
+reset, o subito se nel frattempo un'altra sessione del desktop ha di nuovo risposto (account cambiato o quota tornata).
+  · con un'ora di reset → elenco per la Regia, «riprendibile ora» o «dalle <ora>»: le riprende lei con un messaggio
+  · limite di spesa senza reset → una voce «Ti aspetta» (tipo spesa): è una spesa, decide Attilio; si chiude da sola
+Le sessioni dell'Agent SDK (OpenClaw, delegate, cron) non c'entrano: ripiego e ripresa li gestisce chi le lancia.
+Elenco in <note della Regia>/sessioni-limite.md, riga nel diario quando qualcosa diventa riprendibile, stato in
+~/.claude/jarvis/state/sessioni-limite.json. Gira ogni 30 minuti (cron OpenClaw «sessioni-limite»). Exit 0.
+"""
+import datetime as dt, glob, json, os, re, subprocess, sys, time, urllib.request
+
+H = os.path.expanduser("~")
+ROOT = os.path.join(H, ".claude", "projects")
+STATE = os.environ.get("SESSIONI_LIMITE_STATE", os.path.join(H, ".claude", "jarvis", "state", "sessioni-limite.json"))
+REGIA = os.environ.get("REGIA_NOTES", os.path.join(H, "Library/Application Support/Claude/side-session-notes/local_5d58bb9d-5000-4466-ac64-6a505dba24a6"))
+HUB = "http://127.0.0.1:3360/api/attesa"
+DIARIO = os.path.join(H, ".claude", "jarvis", "scripts", "task-sync", "diario.mjs")
+LIMITE = re.compile(r"hit your (?:\w+ )?limit|usage limit|spend limit|limit (?:will )?resets?", re.I)
+SPESA = re.compile(r"spend limit", re.I)
+RESET = re.compile(r"resets? (?:on )?(?:([A-Z][a-z]{2}) (\d{1,2}) at )?(\d{1,2})(?::(\d{2}))?\s*(am|pm)", re.I)
+MESI = {m: i for i, m in enumerate("jan feb mar apr may jun jul aug sep oct nov dec".split(), 1)}
+
+
+def reset_at(testo, stop):
+    """L'ora del reset scritta nel messaggio (ora locale del Mac, Europe/Rome), o None."""
+    m = RESET.search(testo)
+    if not m:
+        return None
+    mese, giorno, ora, minuti, ap = m.groups()
+    h = int(ora) % 12 + (12 if ap.lower() == "pm" else 0)
+    base = dt.datetime.fromtimestamp(stop)
+    if mese:
+        r = base.replace(month=MESI[mese.lower()], day=int(giorno), hour=h, minute=int(minuti or 0), second=0, microsecond=0)
+        if r.timestamp() < stop - 86400:  # «Jan 2» scritto a dicembre
+            r = r.replace(year=r.year + 1)
+    else:
+        r = base.replace(hour=h, minute=int(minuti or 0), second=0, microsecond=0)
+        if r.timestamp() <= stop:
+            r += dt.timedelta(days=1)
+    return r.timestamp()
+
+
+def coda(f):
+    """Messaggi di user e assistant nella coda del file, dal più recente."""
+    st = os.stat(f)
+    with open(f, "rb") as fh:
+        inizio = max(0, st.st_size - 64000)
+        fh.seek(inizio)
+        righe = fh.read().decode("utf8", "ignore").splitlines()[1 if inizio else 0:]  # la prima riga tagliata a metà
+    out = []
+    for l in reversed(righe):
+        try:
+            e = json.loads(l)
+        except ValueError:
+            continue
+        if e.get("type") in ("assistant", "user"):
+            out.append(e)
+    return out
+
+
+def testo(e):
+    c = (e.get("message") or {}).get("content", "")
+    if isinstance(c, list):
+        c = " ".join(x.get("text", "") for x in c if isinstance(x, dict))
+    return str(c)
+
+
+def ts(e):
+    try:
+        return dt.datetime.fromisoformat(e["timestamp"].replace("Z", "+00:00")).timestamp()
+    except Exception:
+        return 0
+
+
+def giro(now):
+    ferme, ultimo_ok = [], 0
+    for f in glob.glob(os.path.join(ROOT, "*", "*.jsonl")):
+        idle = now - os.stat(f).st_mtime
+        if idle > 48 * 3600:
+            continue
+        msgs = coda(f)
+        if not msgs or (msgs[0].get("entrypoint") or "") == "sdk-cli":
+            continue
+        e = msgs[0]
+        # l'ultima risposta buona del desktop o del terminale dice se adesso l'account risponde
+        ok = next((m for m in msgs if m.get("type") == "assistant" and not m.get("isApiErrorMessage")), None)
+        if ok:
+            ultimo_ok = max(ultimo_ok, ts(ok))
+        t = testo(e)
+        if idle < 20 * 60 or e.get("type") != "assistant" or not e.get("isApiErrorMessage") or not LIMITE.search(t):
+            continue
+        stop = ts(e) or os.stat(f).st_mtime
+        with open(f, "rb") as fh:  # il primo prompt sta in testa al file, spesso fuori dalla coda letta sopra
+            pianificata = b"<scheduled-task name=" in fh.read(20000)
+        ferme.append({"sessione": os.path.basename(f)[:-6], "cwd": e.get("cwd") or "", "entrypoint": e.get("entrypoint") or "?",
+                      "stop": int(stop), "reset": reset_at(t, stop), "spesa": bool(SPESA.search(t)),
+                      "pianificata": pianificata})
+    for x in ferme:
+        if x["reset"] and x["reset"] <= now:
+            x["quando"] = "ora (reset passato)"
+        elif ultimo_ok > x["stop"]:
+            x["quando"] = "ora (un'altra sessione ha già risposto dopo)"
+        elif x["reset"]:
+            x["quando"] = "dalle " + time.strftime("%d/%m %H:%M", time.localtime(x["reset"]))
+        else:
+            x["quando"] = "dopo una spesa"  # limite di spesa senza reset: decide Attilio
+    return sorted(ferme, key=lambda x: x["stop"])
+
+
+def attesa(body):
+    req = urllib.request.Request(HUB, data=json.dumps(body).encode(), headers={"content-type": "application/json"})
+    with urllib.request.urlopen(req, timeout=10) as r:
+        return json.loads(r.read() or b"{}")
+
+
+def main():
+    now = time.time()
+    xs = giro(now)
+    if "--dry-run" in sys.argv:
+        print(json.dumps(xs, indent=1, ensure_ascii=False))
+        return 0
+    stato = json.load(open(STATE)) if os.path.exists(STATE) else {}
+    spesa = [x for x in xs if x["quando"] == "dopo una spesa"]
+    ora = [x for x in xs if x["quando"].startswith("ora")]
+    try:
+        if spesa and not stato.get("voce"):
+            r = attesa({"tipo": "spesa", "title": f"{len(spesa)} sessioni di Claude ferme sul limite di spesa, senza un reset",
+                        "why": "Ripartono solo alzando il limite su claude.ai/settings/usage o cambiando account; elenco nella nota sessioni-limite della Regia.",
+                        "link": "https://claude.ai/settings/usage", "from": "sessioni-limite"})
+            stato["voce"] = (r.get("row") or {}).get("id")
+        elif not spesa and stato.get("voce"):
+            attesa({"kind": "chiudi", "ref": stato.pop("voce"), "by": "sessioni-limite", "note": "nessuna sessione ferma sulla spesa"})
+    except Exception as e:
+        print(f"sessioni-limite: Ti aspetta non raggiunto ({e})")
+    if os.path.isdir(REGIA):
+        nota = os.path.join(REGIA, "sessioni-limite.md")
+        if xs:
+            righe = ["# Sessioni di Claude Code ferme su un limite", "",
+                     f"Aggiornato {time.strftime('%d/%m %H:%M')} da ~/.claude/jarvis/scripts/sessioni-limite, ogni 30 minuti. "
+                     "«Riprendibile ora»: un messaggio «continua» alla sessione (le pianificate le rifà il prossimo giro, di solito basta "
+                     "quello). «Dopo una spesa»: decide Attilio, è in Ti aspetta.", ""]
+            for x in xs:
+                righe.append(f"- riprendibile {x['quando']} · ferma dal {time.strftime('%d/%m %H:%M', time.localtime(x['stop']))} · "
+                             f"{x['entrypoint']}{' · pianificata' if x['pianificata'] else ''} · {x['cwd'] or '?'} · sessione {x['sessione']}")
+            open(nota, "w").write("\n".join(righe) + "\n")
+        elif os.path.exists(nota):
+            os.remove(nota)  # niente di fermo: una nota vecchia direbbe il falso
+    chiavi = sorted(x["sessione"] for x in ora)
+    if chiavi and chiavi != stato.get("riprendibili"):
+        msg = f"{len(ora)} sessioni di Claude ferme su un limite sono di nuovo riprendibili (nota sessioni-limite della Regia)"
+        subprocess.run(["node", DIARIO, msg, "--source", "sessioni-limite"], capture_output=True, timeout=30)
+        print(msg)
+    stato.update({"giro": int(now), "ferme": len(xs), "riprendibili": chiavi, "spesa": len(spesa)})
+    os.makedirs(os.path.dirname(STATE), exist_ok=True)
+    json.dump(stato, open(STATE, "w"), indent=1)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

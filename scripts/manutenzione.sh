@@ -55,6 +55,14 @@ else skip quadra-verify "Prova di ripristino di Quadra" "solo la domenica"; fi
 if [ "$DOW" = 1 ] || [ "$ONLY" = attilio-evoluzione ]; then
   step attilio-evoluzione "Modello di Attilio aggiornato" 20 /bin/bash "$HOME/.claude/jarvis/private/attilio/bin/settimanale.sh"
 else skip attilio-evoluzione "Modello di Attilio aggiornato" "solo il lunedì"; fi
+# 6b. Direttive scritte da un lato solo (Jarvis o Claude Code): confronto con Haiku, la lista ad Attilio in Ti aspetta
+if [ "$DOW" = 1 ] || [ "$ONLY" = attilio-direttive ]; then
+  step attilio-direttive "Direttive allineate tra Jarvis e Claude Code" 15 /usr/bin/python3 -I "$HOME/.claude/jarvis/private/attilio/bin/direttive.py"
+else skip attilio-direttive "Direttive allineate tra Jarvis e Claude Code" "solo il lunedì"; fi
+# 6c. I tre residenti più pesanti del Mac (footprint vero): per ognuno nuovo una card nella coda notturna
+if [ "$DOW" = 1 ] || [ "$ONLY" = residenti ]; then
+  step residenti "Residenti più pesanti del Mac" 10 /usr/bin/python3 "$HOME/.claude/jarvis/scripts/mac-health/residenti-settimanali"
+else skip residenti "Residenti più pesanti del Mac" "solo il lunedì"; fi
 # 7. Backup nel repo privato: per ultimo, così prende anche quello che i passi prima hanno scritto
 step private-backup "Backup nel repo privato" 30 /bin/bash "$HOME/.claude/jarvis/private/sync.sh" --commit
 

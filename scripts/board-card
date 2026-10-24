@@ -1,0 +1,107 @@
+#!/usr/bin/env python3
+"""Crea una card sulla board Topics una volta sola per chiave: chi la chiama ogni settimana non fa doppioni.
+
+  board-card --key K --title T [--desc D] [--board B] [--notte --dir PATH]
+  board-card --chiudi ID --prova "comando → exit 0, o la misura letta"
+
+--notte aggiunge alla descrizione le righe `notte: sì` e `dir: PATH`: la card entra nella coda notturna
+(claude-usage-hub, bin/board-notte), che la lavora la notte con `delegate` e la rimette in review con l'esito.
+Mettila solo su lavoro reversibile che non aspetta Attilio: niente invii, niente canali di clienti, niente spese.
+
+Se la chiave ha già una card ancora aperta non fa niente (stampa l'id ed esce 0); se quella card è chiusa ne
+crea una nuova. Stato in ~/.claude/jarvis/state/board-card.json. Exit 2 = Topics non risponde.
+
+--chiudi spunta una voce a lavoro finito, e senza --prova non lo fa (P04: «fatto» = prova): la prova va in un commento
+sulla card, poi una sottovoce passa in done e una card intera in review, perché la chiude l'occhio di Attilio.
+Attenzione: chiusa una sottovoce, Topics può portare in review anche la card madre (visto il 24/10 con 1 voce su 2),
+e una card in review arriva ad Attilio su WhatsApp via task-sync. Mai collaudarlo su card vere o di notte.
+"""
+import argparse, json, os, ssl, subprocess, sys, urllib.request
+
+BASE = os.environ.get("TOPICS_URL", "https://127.0.0.1:3333")
+CA = os.environ.get("TOPICS_CA", os.path.expanduser("~/Projects/topics-app/certs/ca-cert.pem"))
+STATE = os.environ.get("BOARD_CARD_STATE", os.path.expanduser("~/.claude/jarvis/state/board-card.json"))
+BOARD = "topics-app-ar3jt5"  # dove la Regia tiene i lavori «[Jarvis]»; quella di Attilio finisce nei Promemoria
+
+
+def token():
+    return subprocess.run(["security", "find-generic-password", "-s", "topics", "-a", "agent-token", "-w"],
+                          capture_output=True, text=True).stdout.strip()
+
+
+def api(method, path, body=None):
+    ctx = ssl.create_default_context(cafile=CA) if os.path.exists(CA) else None
+    req = urllib.request.Request(BASE + path, method=method, data=json.dumps(body).encode() if body is not None else None,
+                                 headers={"x-agent-token": token(), "content-type": "application/json"})
+    with urllib.request.urlopen(req, context=ctx, timeout=15) as r:
+        return json.loads(r.read() or b"{}")
+
+
+def aperta(card_id, board):
+    # La lista della board esclude le archiviate; il GET della singola card no, e non dice se lo è.
+    try:
+        tasks = api("GET", f"/api/boards/{board}/tasks").get("tasks", [])
+    except Exception:
+        return True  # nel dubbio non se ne fa un'altra
+    return any(t["id"] == card_id and t.get("status") != "done" for t in tasks)
+
+
+def chiudi():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--chiudi", required=True, metavar="ID")
+    ap.add_argument("--prova", required=True, help="il comando con il suo exit code, o la misura letta")
+    a = ap.parse_args()
+    if len(a.prova.strip()) < 8:
+        ap.error("--prova vuota: senza prova la voce resta aperta")
+    try:
+        t = api("GET", f"/api/all-boards/tasks/{a.chiudi}")
+        t = t.get("task", t)
+        board, stato = t["projectId"], "done" if t.get("parentTaskId") else "review"
+        api("POST", f"/api/boards/{board}/tasks/{a.chiudi}/comments", {"content": f"Prova: {a.prova.strip()}", "quiet": True})
+        api("PATCH", f"/api/boards/{board}/tasks/{a.chiudi}", {"status": stato})
+    except Exception as e:
+        print(f"board-card: Topics non risponde ({e})", file=sys.stderr)
+        return 2
+    print(f"{a.chiudi} {stato}")
+    return 0
+
+
+def main():
+    if "--chiudi" in sys.argv:
+        return chiudi()
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--key", required=True)
+    ap.add_argument("--title", required=True)
+    ap.add_argument("--desc", default="")
+    ap.add_argument("--board", default=os.environ.get("BOARD_CARD_BOARD", BOARD))
+    ap.add_argument("--notte", action="store_true")
+    ap.add_argument("--dir", default="")
+    a = ap.parse_args()
+    if a.notte and not a.dir:
+        ap.error("--notte vuole --dir: la coda notturna deve sapere dove lavorare")
+    stato = json.load(open(STATE)) if os.path.exists(STATE) else {}
+    vecchia = stato.get(a.key, {}).get("id")
+    if vecchia and aperta(vecchia, stato[a.key].get("board", a.board)):
+        print(vecchia)
+        return 0
+    desc = a.desc.strip()
+    if a.notte:
+        desc += f"\n\nnotte: sì\ndir: {os.path.expanduser(a.dir)}"
+    try:
+        # Nasce senza descrizione e la riceve subito dopo: con una descrizione lunga Topics riscrive il titolo
+        # (stessa trappola di task-sync, 24/10).
+        t = api("POST", f"/api/boards/{a.board}/tasks", {"text": a.title})
+        if desc:
+            api("PATCH", f"/api/boards/{a.board}/tasks/{t['id']}", {"description": desc})
+    except Exception as e:
+        print(f"board-card: Topics non risponde ({e})", file=sys.stderr)
+        return 2
+    stato[a.key] = {"id": t["id"], "board": a.board, "title": a.title}
+    os.makedirs(os.path.dirname(STATE), exist_ok=True)
+    json.dump(stato, open(STATE, "w"), indent=1, ensure_ascii=False)
+    print(t["id"])
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

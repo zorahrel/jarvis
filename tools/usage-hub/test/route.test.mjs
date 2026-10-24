@@ -135,3 +135,31 @@ test('modello: il gusto non scende mai a Haiku', async () => {
     assert.equal(r.effort, undefined);
   }
 });
+
+test('verifica: lavoro scritto da Muse → Claude Haiku, mai Muse', async () => {
+  const r = await route(rows, 'Controlla che il diff di Muse compili', { cls: 'verify', writer: 'muse', classify: never });
+  assert.equal(r.provider, 'claude');
+  assert.equal(r.model, 'haiku');
+  assert.equal(r.cls, 'verify');
+});
+
+test('verifica: scritto da Haiku → un altro esecutore, non Claude', async () => {
+  for (const writer of ['claude:haiku', 'claude']) {
+    const r = await route(rows, 'Rileggi il refactor', { cls: 'verify', writer, classify: never });
+    assert.equal(r.go, true);
+    assert.notEqual(r.provider, 'claude');
+  }
+});
+
+test('verifica: scritto da Opus → Haiku va bene, è un altro modello', async () => {
+  const r = await route(rows, 'Verifica la consegna', { cls: 'verify', writer: 'claude:opus', classify: never });
+  assert.equal(r.provider, 'claude');
+  assert.equal(r.model, 'haiku');
+});
+
+test('verifica: Claude frenato e scritto da Muse → né Claude né Muse', async () => {
+  const tight = [{ ...row('claude', 99), pace: 3 }, row('muse'), row('codex')];
+  const r = await route(tight, 'Verifica il test', { cls: 'verify', writer: 'muse', classify: never });
+  assert.notEqual(r.provider, 'muse');
+  assert.notEqual(r.provider, 'claude');
+});
