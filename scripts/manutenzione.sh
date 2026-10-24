@@ -50,7 +50,12 @@ else skip agent-browser-update "Browser degli agenti aggiornato" "solo il luned�
 if [ "$DOW" = 7 ] || [ "$ONLY" = quadra-verify ]; then
   step quadra-verify "Prova di ripristino di Quadra" 45 /bin/bash "$HOME/.local/share/quadra-backup/run-verify.sh"
 else skip quadra-verify "Prova di ripristino di Quadra" "solo la domenica"; fi
-# 6. Backup nel repo privato: per ultimo, così prende anche quello che i passi prima hanno scritto
+# 6. Modello di come evolve Attilio: rilegge i messaggi della settimana (Haiku), aggiorna previsioni e prove nel
+#    privato cifrato, avvisa la Regia se una previsione si è avverata. Il lunedì, prima del backup che lo committa.
+if [ "$DOW" = 1 ] || [ "$ONLY" = attilio-evoluzione ]; then
+  step attilio-evoluzione "Modello di Attilio aggiornato" 20 /bin/bash "$HOME/.claude/jarvis/private/attilio/bin/settimanale.sh"
+else skip attilio-evoluzione "Modello di Attilio aggiornato" "solo il lunedì"; fi
+# 7. Backup nel repo privato: per ultimo, così prende anche quello che i passi prima hanno scritto
 step private-backup "Backup nel repo privato" 30 /bin/bash "$HOME/.claude/jarvis/private/sync.sh" --commit
 
 exit $FAILED
