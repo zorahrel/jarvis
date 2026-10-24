@@ -30,7 +30,8 @@ export function validateAttesa(b) {
   if (b.kind === 'chiudi') return b.ref ? null : 'manca ref della voce da chiudere';
   if (!TIPI.includes(b.tipo)) return 'tipo: ' + TIPI.join(', ');
   if (!b.title || typeof b.title !== 'string') return 'manca title';
-  if (b.link && !/^(https?:\/\/|#)/.test(b.link)) return 'link: http(s) o #pagina';
+  // claude:// apre una sessione nell'app desktop (avviso «una sessione aspetta una risposta», sessioni-limite)
+  if (b.link && !/^(https?:\/\/|#|claude:\/\/)/.test(b.link)) return 'link: http(s), #pagina o claude://';
   return null;
 }
 

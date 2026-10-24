@@ -280,3 +280,10 @@ test('Demo: /api/hub-config dice demo, così ogni vista porta la fascia ESEMPIO;
   }
   assert.match(fs.readFileSync(path.join(root, 'public/pages.js'), 'utf8'), /ESEMPIO: questa è la demo/);
 });
+
+test('validateAttesa: link claude:// accettato (apre la sessione nell\'app), javascript: e data: rifiutati', () => {
+  const base = { tipo: 'decisione', title: 'Una sessione aspetta una risposta' };
+  assert.equal(validateAttesa({ ...base, link: 'claude://claude.ai/epitaxy/0e5a1d2c-1111-4222-8333-944455556666' }), null);
+  for (const link of ['javascript:alert(1)', 'JavaScript:alert(1)', 'data:text/html,<script>alert(1)</script>', ' javascript:alert(1)', 'claude:alert(1)'])
+    assert.match(validateAttesa({ ...base, link }) || '', /^link:/, `accettato: ${link}`);
+});

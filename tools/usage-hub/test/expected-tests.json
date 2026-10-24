@@ -75,7 +75,7 @@
  "test/no-ids.test.mjs": 10,
  "test/openclaw.test.mjs": 9,
  "test/pacing.test.mjs": 18,
- "test/pages.test.mjs": 13,
+ "test/pages.test.mjs": 14,
  "test/policy.test.mjs": 4,
  "test/queue.test.mjs": 7,
  "test/route.test.mjs": 21,
