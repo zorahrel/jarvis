@@ -3,13 +3,17 @@
 
   sessioni-limite [--dry-run]
 
-Diversa da ~/bin/sessioni-ferme (le sessioni che aspettano una RISPOSTA di Attilio): qui l'ultimo messaggio è un
-errore di limite e la sessione da 20 minuti non si muove. Il desktop si legge dai file delle sue sessioni
-(claude-code-sessions/<account>/…: errore, titolo, attività pianificata), il terminale dalla coda del transcript.
+Il primo rilevamento è il limite: l'ultimo messaggio è un errore di limite e la sessione da 20 minuti non si muove.
+Il desktop si legge dai file delle sue sessioni (claude-code-sessions/<account>/…: errore, titolo, attività
+pianificata), il terminale dalla coda del transcript.
 Quando si riprende lo dice SOLO il testo del limite, mai le risposte di altre sessioni (possono stare su un altro
 account): «weekly limit resets Oct 25 at 9am» → «dopo il reset del 25/10 alle 09:00», poi «ora (reset passato)».
   · con un reset → elenco per la Regia, che decide se servono ancora e le riprende con un messaggio
   · limite di spesa senza reset → una voce «Ti aspetta» (tipo spesa): è una spesa, decide Attilio; si chiude da sola
+«aspetta Attilio» (secondo rilevamento, solo desktop): una sessione non archiviata la cui ultima voce è un tool_use
+senza risultato, e il transcript fermo da 20 minuti, aspetta una risposta o un permesso di Attilio → una voce «Ti
+aspetta» per sessione (tipo decisione), una volta sola; si chiude da sola quando il tool riceve il risultato o la
+sessione si archivia o sparisce. Stato per sessione:tool in «attesa» dello state JSON.
 Le sessioni dell'Agent SDK (OpenClaw, delegate, cron) non c'entrano: ripiego e ripresa li gestisce chi le lancia.
 Elenco in <note della Regia>/sessioni-limite.md, riga nel diario quando qualcosa diventa riprendibile, stato in
 ~/.claude/jarvis/state/sessioni-limite.json. Gira ogni 30 minuti (cron OpenClaw «sessioni-limite»). Exit 0.
@@ -17,11 +21,15 @@ Elenco in <note della Regia>/sessioni-limite.md, riga nel diario quando qualcosa
 import datetime as dt, glob, json, os, re, subprocess, sys, time, urllib.request
 
 H = os.path.expanduser("~")
-ROOT = os.path.join(H, ".claude", "projects")
+ROOT = os.environ.get("SESSIONI_PROJECTS", os.path.join(H, ".claude", "projects"))
 DESKTOP = os.environ.get("SESSIONI_DESKTOP", os.path.join(H, "Library/Application Support/Claude/claude-code-sessions"))
 STATE = os.environ.get("SESSIONI_LIMITE_STATE", os.path.join(H, ".claude", "jarvis", "state", "sessioni-limite.json"))
 REGIA = os.environ.get("REGIA_NOTES", os.path.join(H, "Library/Application Support/Claude/side-session-notes/local_5d58bb9d-5000-4466-ac64-6a505dba24a6"))
-HUB = "http://127.0.0.1:3360/api/attesa"
+HUB = os.environ.get("SESSIONI_HUB_URL", "http://127.0.0.1:3360/api/attesa")
+ATTESA_MIN = 20 * 60  # quiete del transcript prima di dire «aspetta Attilio»: sotto, il tool può essere in corso
+PAROLE = {"AskUserQuestion": "ti ha fatto una domanda", "Bash": "eseguire un comando", "Edit": "modificare un file",
+          "MultiEdit": "modificare un file", "Write": "scrivere un file", "Read": "leggere un file",
+          "WebFetch": "aprire una pagina web", "WebSearch": "cercare sul web"}
 DIARIO = os.path.join(H, ".claude", "jarvis", "scripts", "task-sync", "diario.mjs")
 LIMITE = re.compile(r"hit your (?:\w+ )?limit|usage limit|spend limit|limit (?:will )?resets?", re.I)
 SPESA = re.compile(r"spend limit", re.I)
@@ -137,6 +145,41 @@ def giro(now):
     return sorted(desktop(now) + terminale(now), key=lambda x: x["stop"])
 
 
+def cosa(nome):
+    """La richiesta in parole: una domanda o un permesso per un tool, senza nomi interni."""
+    if nome == "AskUserQuestion":
+        return PAROLE[nome]
+    return "aspetta il tuo permesso per " + PAROLE.get(nome, nome.split("__")[-1].replace("_", " "))
+
+
+def in_attesa(now):
+    """Desktop non archiviate la cui ultima voce è un tool_use senza risultato: chiave sessione:tool → dati.
+    La quiete dice quando segnalare, non quando chiudere: una sessione che riparte resta in lista finché il tool
+    ha il suo risultato."""
+    out = {}
+    for f in glob.glob(os.path.join(DESKTOP, "*", "*", "local_*.json")):
+        try:
+            d = json.load(open(f))
+        except (ValueError, OSError):
+            continue  # file in scrittura
+        sid, cli = d.get("sessionId") or "", d.get("cliSessionId") or ""
+        if d.get("isArchived") or not sid or not cli:
+            continue
+        tr = glob.glob(os.path.join(ROOT, "*", cli + ".jsonl"))
+        if not tr:
+            continue
+        msgs = coda(tr[0])
+        if not msgs or msgs[0].get("type") != "assistant" or not isinstance((msgs[0].get("message") or {}).get("content"), list):
+            continue
+        at = ts(msgs[0]) or os.stat(tr[0]).st_mtime
+        quiete = now - os.stat(tr[0]).st_mtime
+        for x in msgs[0]["message"]["content"]:
+            if isinstance(x, dict) and x.get("type") == "tool_use":
+                out[f"{sid}:{x.get('id')}"] = {"sessione": sid, "titolo": d.get("title") or "", "stop": at,
+                                               "cosa": cosa(x.get("name") or ""), "quiete": quiete}
+    return out
+
+
 def attesa(body):
     req = urllib.request.Request(HUB, data=json.dumps(body).encode(), headers={"content-type": "application/json"})
     with urllib.request.urlopen(req, timeout=10) as r:
@@ -162,6 +205,21 @@ def main():
             attesa({"kind": "chiudi", "ref": stato.pop("voce"), "by": "sessioni-limite", "note": "nessuna sessione ferma sulla spesa"})
     except Exception as e:
         print(f"sessioni-limite: Ti aspetta non raggiunto ({e})")
+    try:
+        attese, ferme = stato.setdefault("attesa", {}), in_attesa(now)
+        for k, p in sorted(ferme.items()):
+            if k in attese or p["quiete"] < ATTESA_MIN:
+                continue
+            r = attesa({"tipo": "decisione", "title": f"{p['titolo'] or 'Sessione di Claude'}: aspetta una tua risposta",
+                        "why": f"da {time.strftime('%H:%M', time.localtime(p['stop']))} {p['cosa']}",
+                        "link": f"claude://claude.ai/epitaxy/{p['sessione']}", "from": "sessioni-limite"})
+            attese[k] = (r.get("row") or {}).get("id") or ""
+        for k in [k for k in attese if k not in ferme]:  # il tool ha avuto il risultato, o la sessione è archiviata o sparita
+            if attese[k]:
+                attesa({"kind": "chiudi", "ref": attese[k]})
+            attese.pop(k)
+    except Exception as e:
+        print(f"sessioni-limite: aspetta Attilio non raggiunto ({e})")
     if os.path.isdir(REGIA):
         nota = os.path.join(REGIA, "sessioni-limite.md")
         if xs:
