@@ -414,7 +414,7 @@ function lock(dir) {
 
 // ── Un giro ──────────────────────────────────────────────────────────────────
 
-export async function round({ topics, reminders, dir = STATE_DIR, board = BOARD, dry = false, notify = null, log = console.log, journal = diario }) {
+export async function round({ topics, reminders, dir = STATE_DIR, board = BOARD, dry = false, notify = null, quiet = () => false, log = console.log, journal = diario }) {
   if (dry) journal = () => {};
   const state = loadState(dir);
   const first = !!state.first;
@@ -462,14 +462,36 @@ export async function round({ topics, reminders, dir = STATE_DIR, board = BOARD,
     }
   }
   if (dry) return { groups, failed, reviews };
+  // Ad Attilio solo ciò che è arrivato in review dal lato Topics, e mai al primo giro (sarebbe tutto l'arretrato).
+  // Nelle ore silenziose si tiene nello stato e parte tutto insieme al primo giro sveglio.
+  let send = [];
+  if (notify && !first) {
+    const pending = [...(state.pendingReviews || [])];
+    for (const r of reviews) if (!pending.some((p) => p.id === r.id)) pending.push(r);
+    if (pending.length && quiet()) state.pendingReviews = pending;
+    else { send = pending; delete state.pendingReviews; }
+  }
   delete state.first;
   state.lastRound = new Date().toISOString();
   saveState(state, dir);
   journal([...done, ...failed]);
   for (const e of [...done, ...failed]) log(e.text);
-  // Ad Attilio solo ciò che è arrivato in review dal lato Topics, e mai al primo giro (sarebbe tutto l'arretrato).
-  if (notify && reviews.length && !first) notify(reviews);
+  if (send.length) notify(send);
   return { groups, failed, reviews };
+}
+
+// Ore silenziose come lavori-watch: 23-8, ma solo a Mac fermo da 30 minuti (Attilio al Mac è sveglio).
+export function isQuiet(now = Date.now(), idleS = macIdleS()) {
+  const h = new Date(now).getHours();
+  return (h >= 23 || h < 8) && (idleS == null || idleS >= 1800);
+}
+
+function macIdleS() {
+  try {
+    const out = execFileSync('ioreg', ['-c', 'IOHIDSystem', '-d', '4'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
+    const m = out.match(/"HIDIdleTime" = (\d+)/);
+    return m ? Number(m[1]) / 1e9 : null;
+  } catch { return null; }
 }
 
 function whatsapp(target) {
@@ -487,7 +509,7 @@ async function main() {
   let token = '';
   try { token = execFileSync('security', ['find-generic-password', '-s', 'topics', '-a', 'agent-token', '-w'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim(); } catch {}
   try {
-    const { failed } = await round({ topics: topicsSide({ token }), reminders: remindersSide(), dry, notify: process.env.TASK_SYNC_WA ? whatsapp(process.env.TASK_SYNC_WA) : null });
+    const { failed } = await round({ topics: topicsSide({ token }), reminders: remindersSide(), dry, notify: process.env.TASK_SYNC_WA ? whatsapp(process.env.TASK_SYNC_WA) : null, quiet: () => isQuiet() });
     if (failed.length) process.exitCode = 1;
   } catch (e) {
     console.error(`task-sync: ${e.message}`);

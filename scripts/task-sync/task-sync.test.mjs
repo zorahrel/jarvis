@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
-import { round, normCard, normRem, localDue, loadState, SideDown, HOME } from './task-sync.mjs';
+import { round, normCard, normRem, localDue, loadState, SideDown, HOME, isQuiet } from './task-sync.mjs';
 
 const BOARD = 'attilio-test01';
 const ARMONIA = '🟡 Armonia';
@@ -329,4 +329,31 @@ test('il diario scrive nel file del giorno a Roma, con i campi che l\'hub legge'
   const rows = fs.readFileSync(path.join(dir, '2026-10-24.jsonl'), 'utf8').trim().split('\n').map((l) => JSON.parse(l));
   assert.deepEqual(rows[0], { ts: now, source: 'task-sync', text: 'da Promemoria su Topics: X', kind: 'nuova', ref: 'R1', outcome: 'ok' });
   assert.deepEqual(rows.map((r) => r.outcome), ['ok', 'skipped', 'error']);
+});
+
+// 24/10: due avvisi alle 03:19 e alle 04:04. Di notte a Mac fermo si tengono e partono insieme al primo giro sveglio.
+test('di notte le review si tengono e partono in un messaggio solo al mattino', async () => {
+  const a = randomUUID(), b = randomUUID();
+  const s = setup({ cards: [{ id: a, text: 'Tray v5', status: 'in_progress' }, { id: b, text: 'Bozze Visione', status: 'in_progress' }], state: { version: 1, links: {} } });
+  await s.go({ quiet: () => true });
+  s.topics.tasks.get(a).status = 'review';
+  await s.go({ quiet: () => true });
+  s.topics.tasks.get(b).status = 'review';
+  await s.go({ quiet: () => true });
+  assert.deepEqual(s.notified, [], 'ore silenziose: nessun messaggio');
+  assert.equal(s.state().pendingReviews.length, 2, 'le due review restano nello stato');
+  await s.go({ quiet: () => false });
+  assert.deepEqual(s.notified.map((c) => c.title).sort(), ['Bozze Visione', 'Tray v5'], 'al mattino partono insieme');
+  assert.equal(s.state().pendingReviews, undefined);
+  await s.go({ quiet: () => false });
+  assert.equal(s.notified.length, 2, 'una volta sola');
+});
+
+test('ore silenziose: notte e Mac fermo da 30 minuti; Mac usato o giorno = si parla', () => {
+  const at = (h) => new Date(2026, 9, 24, h, 10).getTime();
+  assert.equal(isQuiet(at(3), 3600), true);
+  assert.equal(isQuiet(at(23), 3600), true);
+  assert.equal(isQuiet(at(3), 60), false, 'Attilio al Mac di notte: è sveglio');
+  assert.equal(isQuiet(at(9), 3600), false);
+  assert.equal(isQuiet(at(3), null), true, 'inattività illeggibile di notte: si tiene');
 });
