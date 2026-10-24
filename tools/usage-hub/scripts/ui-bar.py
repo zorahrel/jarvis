@@ -209,6 +209,9 @@ def main():
                 check(not names, f'{w}px ogni campo ha un nome vero (non il placeholder) {names[:4]}')
                 dimn = pg.evaluate("location.hash='overview', new Promise(r => setTimeout(() => r(document.querySelectorAll('#t-overview tr.dim, #t-projects tr.dim').length), 1500))")
                 check(dimn >= 1, f'{w}px c\'è un progetto fermo da misurare ({dimn} righe .dim)')
+                pg.add_script_tag(content=CHECKS_JS)
+                dc = pg.evaluate('__dimContrast(4.5)')
+                check(not dc, f'{w}px righe spente (.dim): contrasto misurato almeno 4,5:1 {dc}')
                 # Sessioni e Consumi disegnati con i dati del proxy finto, non vuoti
                 goto_tab(pg, 'sessions')
                 ns = pg.evaluate("document.querySelectorAll('#t-sessions .card').length")
@@ -224,6 +227,8 @@ def main():
                 goto_tab(pg, 'activity'); pg.wait_for_selector('#t-activity table', timeout=20000)
                 raw = pg.evaluate("[...new Set((document.getElementById('t-activity').innerText.match(/\\b[a-z]+(?:[-_][a-z]+)+\\b/g) || []))]")
                 check(not raw, f'{w}px Attività: eventi in italiano, nessuna chiave grezza {raw[:4]}')
+                gen = pg.evaluate("(document.getElementById('t-activity').innerText.match(/Evento del proxy[^\\n]*/g) || []).slice(0, 3)")
+                check(not gen, f'{w}px Attività: ogni evento della demo ha la sua frase, nessuno ricade su «Evento del proxy» {gen}')
                 check(sv['title'] and not sv['raw'], f"{w}px Sessioni: il luogo è il titolo («Prova del 22/10»), non la cartella scratch-… (titolo {sv['title']}, grezzo {sv['raw']})")
                 goto_tab(pg, 'usage'); pg.wait_for_selector('#usage-main table', timeout=20000)
                 nu = pg.evaluate("document.querySelectorAll('#usage-main table tbody tr').length")

@@ -38,7 +38,8 @@ test('usage-hub check: ogni tipo di avviso va nel diario con la sua voce, nessun
     assert.deepEqual(Object.keys(got).sort(), ['abbonamenti', 'ritmo-muse', 'soglia-account', 'soglia-progetto']);
     assert.match(got['soglia-progetto'].text, /progetto-fixture/);
     assert.match(got.abbonamenti.text, /esaurito/);
-    const titles = journal({ diary: readDiary({ dir }), now: now + 1000 }).map((e) => e.who).sort();
+    // il «dopo» si misura a scrittura finita: con la macchina carica il notificatore ci mette più di un secondo
+    const titles = journal({ diary: readDiary({ dir }), now: Date.now() + 1000 }).map((e) => e.who).sort();
     assert.deepEqual(titles, ['Abbonamenti', 'Ritmo Muse', 'Soglie degli abbonamenti', 'Soglie per progetto']);
   } finally { if (prev == null) delete process.env.USAGE_HUB_DIARIO; else process.env.USAGE_HUB_DIARIO = prev; }
 });

@@ -57,6 +57,28 @@
 
   // Ogni campo ha un nome vero: aria-label, aria-labelledby, <label for> o un <label> che lo contiene con del testo.
   // Il placeholder non conta: axe lo accetta, ma WebKit legge il campo come «spinbutton» senza nome (giro 8).
+  // Contrasto misurato del testo nelle righe spente (.dim): axe con l'opacità ridotta dà solo «da rivedere», non
+  // un errore, quindi un «opacity:.55» passava. Colore effettivo = colore × opacità di tutti gli antenati sul fondo.
+  window.__dimContrast = function (min) {
+    const out = [];
+    const rgb = (c) => (c.match(/[\d.]+/g) || []).map(Number);
+    const lum = ([r, g, b]) => { const f = (v) => { v /= 255; return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; }; return 0.2126 * f(r) + 0.7152 * f(g) + 0.0722 * f(b); };
+    for (const e of document.querySelectorAll('.tab.on tr.dim td:first-child *, .tab.on tr.dim td:first-child')) {
+      if (!vis(e) || ![...e.childNodes].some((n) => n.nodeType === 3 && n.textContent.trim())) continue;
+      let op = 1, bg = null;
+      for (let p = e; p; p = p.parentElement) {
+        const cs = getComputedStyle(p); op *= Number(cs.opacity);
+        const b = rgb(cs.backgroundColor); if (!bg && b.length >= 3 && (b[3] == null || b[3] > 0.9)) bg = b.slice(0, 3);
+      }
+      bg = bg || [255, 255, 255];
+      const c = rgb(getComputedStyle(e).color), a = (c[3] == null ? 1 : c[3]) * op;
+      const fg = [0, 1, 2].map((i) => c[i] * a + bg[i] * (1 - a));
+      const L1 = lum(fg), L2 = lum(bg), ratio = (Math.max(L1, L2) + 0.05) / (Math.min(L1, L2) + 0.05);
+      if (ratio < min) out.push(sel(e) + ' «' + txt(e) + '» ' + ratio.toFixed(2) + ':1');
+    }
+    return out.slice(0, 6);
+  };
+
   window.__names = function () {
     const out = [];
     for (const e of document.querySelectorAll('.tab.on input:not([type=hidden]), .tab.on select, .tab.on textarea, .cx-panel input:not([type=hidden]), .cx-panel select')) {

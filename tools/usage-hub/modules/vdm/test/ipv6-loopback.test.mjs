@@ -39,7 +39,8 @@ test('the proxy also listens on the IPv6 loopback', () => {
 });
 
 test('a second listener on ::1 serves the same handler as the IPv4 one', async () => {
-  const PORT = 39337;
+  // porta scelta dal sistema: con una fissa due barre in parallelo si rubavano il listener
+  let PORT = 0;
   const seen = [];
   const srv4 = createServer((req, res) => {
     seen.push(req.socket.remoteFamily);
@@ -48,7 +49,8 @@ test('a second listener on ::1 serves the same handler as the IPv4 one', async (
   });
   const srv6 = createServer((req, res) => { srv4.emit('request', req, res); });
 
-  await new Promise((r) => srv4.listen(PORT, '127.0.0.1', r));
+  await new Promise((r) => srv4.listen(0, '127.0.0.1', r));
+  PORT = srv4.address().port;
   let ipv6up = true;
   await new Promise((r) => {
     srv6.once('error', () => { ipv6up = false; r(); });
