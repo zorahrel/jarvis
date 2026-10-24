@@ -32,9 +32,27 @@ echo '{"whatsapp":"+393330001122"}' > "$H/.config/claude-usage-hub/notify.json"
 cp -R "$H" "$R/home-prima"
 # quota-guard vero (sta nella HOME vera): il test lo prova su fixture, senza la HOME vera non avrebbe chi provare
 QG="$HOME/.openclaw/bin/quota-guard.py"
-HOME="$H" TMPDIR="$R/tmp/" HUB_TEST_SANDBOX=1 QUOTA_GUARD_PY="$QG" node --test test/ modules/vdm/test/ modules/tray/server/test.mjs >"$R/out" 2>&1
+# il log della CLI di OpenClaw sta in /tmp/openclaw (non segue HOME né TMPDIR): ogni sua riga col percorso della
+# HOME finta è un test arrivato all'openclaw vero (13 volte alle 08:22 del 24/10, rifiutato dal gateway ma in ERROR)
+OCLOG="/tmp/openclaw/openclaw-$(date +%Y-%m-%d).log"
+# openclaw finto in testa al PATH: risponde coi fixture e annota la chiamata; il gateway punta a una porta chiusa
+mkdir -p "$R/bin"
+cat > "$R/bin/openclaw" <<'FAKE'
+#!/bin/sh
+echo "$*" >> "${0%/*}/../openclaw-chiamate"
+case "$1 $2" in
+  "cron list") echo '{"jobs":[]}' ;;
+  "message send") ;;
+  *) echo '{}' ;;
+esac
+FAKE
+chmod +x "$R/bin/openclaw"
+PATH="$R/bin:$PATH" OPENCLAW_GATEWAY_URL="ws://127.0.0.1:9" HOME="$H" TMPDIR="$R/tmp/" HUB_TEST_SANDBOX=1 QUOTA_GUARD_PY="$QG" node --test test/ modules/vdm/test/ modules/tray/server/test.mjs >"$R/out" 2>&1
 rc=$?
 grep -E "^✖|^not ok" "$R/out" | sort -u | head -20 | sed "s/^/     /"; tail -n 8 "$R/out" | sed "s/^/     /"
+oc_real="$(grep -c "$R/home" "$OCLOG" 2>/dev/null || true)"
+[ -f "$R/openclaw-chiamate" ] && echo "ok   openclaw finto chiamato $(wc -l < "$R/openclaw-chiamate" | tr -d ' ') volte: $(cut -d' ' -f1-2 "$R/openclaw-chiamate" | sort -u | tr '\n' ',')"
+if [ "${oc_real:-0}" != 0 ]; then echo "FAIL un test ha chiamato l'openclaw vero ($oc_real righe nel suo log con la HOME finta)"; exit 1; fi
 # i file veri della HOME finta sono quelli di prima
 changed="$(diff -rq "$R/home-prima/.claude/jarvis" "$H/.claude/jarvis" 2>&1; diff -rq "$R/home-prima/.config" "$H/.config" 2>&1)"
 if [ -n "$changed" ]; then echo "FAIL i test hanno toccato i file veri (nella HOME finta):"; echo "$changed" | sed 's/^/     /'; exit 1; fi

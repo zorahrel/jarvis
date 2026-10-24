@@ -97,7 +97,7 @@ def wait_loaded(pg, secs=40):
 
 
 AXE_RUN = "async () => [...(await axe.run(document, {runOnly: ['wcag2a', 'wcag2aa']})).violations.filter(v => ['serious', 'critical'].includes(v.impact)), ...(await axe.run(document, {runOnly: {type: 'rule', values: ['empty-table-header', 'th-has-data-cells', 'td-has-header']}})).violations].map(v => v.id + ':' + v.nodes.slice(0, 2).map(n => n.target).join('|'))"
-AXE_TABS = ['overview', 'journal', 'automations', 'context', 'usage', 'projects', 'accounts', 'sessions', 'services']
+AXE_TABS = ['overview', 'journal', 'automations', 'context', 'usage', 'projects', 'accounts', 'sessions', 'services', 'settings', 'logs']
 
 
 def goto_tab(pg, t):
@@ -266,7 +266,7 @@ def main():
                     check(not vp, f'{w}px axe sul pannello aperto in scuro (chip Ok, Ti aspetta, Rotta): nessuna violazione seria {vp[:4]}')
                     pd.context.close()
             # 6. badge dentro il bottone dove la nav è una griglia
-            for w in (520, 560, 700, 820, 959):   # dove la griglia della nav stringe i bottoni al minimo
+            for w in (328, 520, 560, 700, 820, 959):   # dove la griglia della nav stringe i bottoni al minimo (328: il badge a 3 cifre sporge di 6 px)
                 pg = b.new_context(viewport={'width': w, 'height': 900}).new_page()
                 pg.goto(url + '/#overview', wait_until='domcontentloaded')
                 pg.wait_for_selector('#nwait:not([hidden])', timeout=60000)
