@@ -126,3 +126,4 @@ scripts/fatture-portali.py
 scripts/jcode-auth-sync.py
 # il .bak finto dei fixture dell'hub serve al test che lo esclude (dopo «*.bak», che altrimenti vince)
 !tools/usage-hub/test/fixtures/**/*.bak
+!tools/usage-hub/modules/tray/assets/bar-*.png
