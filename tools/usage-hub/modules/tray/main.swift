@@ -12,6 +12,10 @@ if let i = CommandLine.arguments.firstIndex(of: "--snapshot") {
     }
     runSnapshotAndExit(path: CommandLine.arguments[i + 1])
 }
+// Barra di velocità: il codice del clic con i dati veri, fuori schermo. «--perf-bench [giri]»
+if let i = CommandLine.arguments.firstIndex(of: "--perf-bench") {
+    runPerfBenchAndExit(rounds: i + 1 < CommandLine.arguments.count ? Int(CommandLine.arguments[i + 1]) ?? 5 : 5)
+}
 // Prova visiva della finestra Processi: due letture a 1 s (la CPU è una differenza), poi il PNG. «--processes <png> [cerca]»
 if let i = CommandLine.arguments.firstIndex(of: "--processes"), i + 1 < CommandLine.arguments.count {
     let q = i + 2 < CommandLine.arguments.count ? CommandLine.arguments[i + 2] : ""

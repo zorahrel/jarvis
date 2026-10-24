@@ -1231,6 +1231,66 @@ func automationsRow(actionTarget: AnyObject?) -> NSMenuItem {
     return row
 }
 
+// Ciò che il clic fa di sincrono prima che il menu compaia, oltre a costruirlo se non è pronto: oggi niente.
+// La mutazione della barra (scripts/tray-perf.sh --mutate) ci rimette una lettura di rete e la barra deve diventare rossa.
+func clickWork() {
+    #if TRAY_PERF_MUTATE
+    _ = try? Data(contentsOf: URL(string: hubURL + "/api/overview")!)
+    #endif
+}
+
+// Misura della tray, accesa solo se esiste ~/.cache/claude-usage-tray/perf (barra: scripts/tray-perf.sh).
+// apertura = dal clic sull'icona al primo giro del menu a schermo; blocco = il thread principale non risponde per oltre 50 ms.
+enum Perf {
+    static let on = FileManager.default.fileExists(atPath: NSHomeDirectory() + "/.cache/claude-usage-tray/perf")
+    // cosa sta facendo il thread principale: lo legge il cane da guardia mentre il main è bloccato, quindi sotto lucchetto
+    private static let lock = NSLock()
+    private static var _phase = "riposo"
+    static var phase: String { get { lock.lock(); defer { lock.unlock() }; return _phase } set { lock.lock(); _phase = newValue; lock.unlock() } }
+    private static let file = NSHomeDirectory() + "/.cache/claude-usage-tray/perf.log"
+    static func log(_ s: String) {
+        guard on else { return }
+        let line = "\(Int(Date().timeIntervalSince1970 * 1000)) \(s)\n"
+        if let h = FileHandle(forWritingAtPath: file) { h.seekToEndOfFile(); h.write(line.data(using: .utf8)!); h.closeFile() }
+        else { try? line.write(toFile: file, atomically: true, encoding: .utf8) }
+    }
+    static func opened(_ ev: NSEvent?) {
+        guard on, let t = ev?.timestamp, ev?.type == .leftMouseDown || ev?.type == .rightMouseDown else { return }
+        RunLoop.main.perform(inModes: [.eventTracking, .common]) { log("apertura \(Int((ProcessInfo.processInfo.systemUptime - t) * 1000))") }
+    }
+    static let noCache = ProcessInfo.processInfo.environment["TRAY_NO_CACHE"] != nil   // per confrontare con il disegno dal vivo
+    static func startWatchdog() {
+        guard on else { return }
+        Thread.detachNewThread {
+            while true {
+                let t0 = DispatchTime.now(), sem = DispatchSemaphore(value: 0)
+                var ph = phase
+                DispatchQueue.main.async { sem.signal() }
+                // a metà attesa si rilegge la fase: è quella del lavoro che blocca, non di chi viene dopo
+                if sem.wait(timeout: .now() + .milliseconds(30)) == .timedOut { ph = phase; sem.wait() }
+                let ms = Int((DispatchTime.now().uptimeNanoseconds - t0.uptimeNanoseconds) / 1_000_000)
+                if ms > 50 { log("blocco \(ms) \(ph)") }
+                Thread.sleep(forTimeInterval: 0.02)
+            }
+        }
+    }
+}
+
+// Un sottomenu che si riempie la prima volta che si apre. Il delegate di NSMenu è debole: lo tiene il menu stesso.
+final class LazyMenu: NSObject, NSMenuDelegate {
+    private var build: ((NSMenu) -> Void)?
+    init(_ build: @escaping (NSMenu) -> Void) { self.build = build }
+    func menuNeedsUpdate(_ m: NSMenu) { guard let b = build else { return }; build = nil; m.removeAllItems(); b(m) }
+}
+private var lazyKey = 0
+func lazyMenu(_ build: @escaping (NSMenu) -> Void) -> NSMenu {
+    let m = NSMenu(); m.autoenablesItems = false
+    m.addItem(NSMenuItem(title: "…", action: nil, keyEquivalent: ""))   // senza voci AppKit non mostra la freccia
+    let d = LazyMenu(build); m.delegate = d
+    objc_setAssociatedObject(m, &lazyKey, d, .OBJC_ASSOCIATION_RETAIN)
+    return m
+}
+
 // Sottomenu del Mac: i processi raggruppati per app, letti in-process (ProcSampler) solo quando il menu è aperto.
 // La CPU è la media fra l'apertura del menu (prime) e il passaggio sul Mac: due letture, nessun timer a menu chiuso.
 final class MacProcMenu: NSObject, NSMenuDelegate {
@@ -1238,14 +1298,22 @@ final class MacProcMenu: NSObject, NSMenuDelegate {
     private var primedAt = Date.distantPast
     // un menu nuovo a ogni ricostruzione: un sottomenu non può stare sotto due voci, e la vecchia voce lo terrebbe ancora
     func newMenu() -> NSMenu { let m = NSMenu(); m.delegate = self; m.autoenablesItems = false; m.addItem(noteRow("Leggo i processi…")); return m }
-    func prime() { primedAt = Date(); queue.async { [sampler] in sampler.reset(); _ = sampler.sample() } }
+    func prime() { primedAt = Date(); filled.removeAll(); queue.async { [sampler] in sampler.reset(); _ = sampler.sample() } }
     func menuNeedsUpdate(_ m: NSMenu) {
-        // dal prime almeno mezzo secondo, sennò la CPU è rumore: si aspetta il resto (succede solo se il mouse va dritto sul Mac)
-        let wait = 0.5 - Date().timeIntervalSince(primedAt)
-        if wait > 0 && wait <= 0.5 { Thread.sleep(forTimeInterval: wait) }
-        let rows = queue.sync { sampler.sample() }
-        fill(m, rows: rows)
+        Perf.phase = "sottomenu processi"; defer { Perf.phase = "menu" }
+        // Il main non aspetta mai: la lettura va sulla sua coda e il sottomenu si riempie quando arriva.
+        // Dal prime almeno mezzo secondo, sennò la CPU è rumore: l'attesa la fa la coda, non il menu.
+        guard filled[ObjectIdentifier(m)] != primedAt else { return }
+        filled[ObjectIdentifier(m)] = primedAt
+        let wait = max(0, 0.5 - Date().timeIntervalSince(primedAt))
+        queue.asyncAfter(deadline: .now() + wait) { [weak self, sampler] in
+            let rows = sampler.sample()
+            RunLoop.main.perform(inModes: [.common, .eventTracking]) { self?.fill(m, rows: rows) }
+        }
     }
+    private var filled: [ObjectIdentifier: Date] = [:]
+    // per la barra: la lettura fuori dal tempo misurato, il riempimento (che in tray arriva sul main) dentro
+    func benchSample() -> [ProcRow] { prime(); Thread.sleep(forTimeInterval: 0.5); return queue.sync { sampler.sample() } }
     private var lastRows: [ProcRow] = []
     private let tabs: [CGFloat] = [275, 355]
     private func cpuText(_ c: Double) -> String { c >= 100 ? String(format: "%.1f core", c / 100).replacingOccurrences(of: ".", with: ",") : "\(Int(c.rounded()))%" }
@@ -1259,7 +1327,8 @@ final class MacProcMenu: NSObject, NSMenuDelegate {
         let flags = trustOf(members.map { $0.pid } + [r.pid])
         let worst = flags.contains { $0.level == "grave" } ? toneBad : flags.contains { $0.level == "attenzione" } ? toneWarn : nil
         let it = richRow(icon: worst.flatMap { sym("exclamationmark.shield.fill", color: $0) }, l, tabs: tabs)
-        let sm = NSMenu(); sm.autoenablesItems = false
+        // il sottomenu si costruisce al passaggio: costruirli tutti in anticipo teneva fermo il menu quasi un secondo
+        it.submenu = lazyMenu { [self] sm in
         let what = r.count > 1 ? "\(r.count) processi · PID principale \(r.pid)" : "PID \(r.pid)" + (r.threads > 0 ? " · \(r.threads) thread" : "")
         sm.addItem(richRow(icon: sym(r.system ? "lock" : "gearshape"), txt(r.name, rowBold), detail: what + (r.system ? " · processo di macOS, non si chiude da qui" : "") + (r.detail.isEmpty ? "" : "\n" + (r.detail.count > 220 ? r.detail.prefix(219) + "…" : r.detail)), wrap: 70))   // gli argomenti di un claude sono kilobyte
         for f in flags where f.level != "ok" || !f.reasons.isEmpty {
@@ -1283,7 +1352,7 @@ final class MacProcMenu: NSObject, NSMenuDelegate {
                 sm.addItem(k)
             }
         }
-        it.submenu = sm
+        }
         return it
     }
     func fill(_ m: NSMenu, rows: [ProcRow]) {
@@ -1315,12 +1384,12 @@ final class MacProcMenu: NSObject, NSMenuDelegate {
         m.addItem(.separator())
         // tutte le app, in ordine di peso: si scorre nel menu, ognuna col suo sottomenu
         let every = richRow(icon: sym("list.bullet.rectangle"), txt("Tutte le app (\(apps.count)) · \(rows.count) processi", rowFont), detail: "CPU totale \(cpuText(rows.reduce(0) { $0 + $1.cpu })) · 100% = un core intero")
-        let em = NSMenu(); em.autoenablesItems = false
-        em.addItem(headRow(["APP E PROCESSI, DAI PIÙ PESANTI", "CPU", "memoria"], tabs: tabs))
-        let ranked = apps.sorted(by: { ($0.cpu / 100 + $0.mem / 2e9) > ($1.cpu / 100 + $1.mem / 2e9) })
-        for g in ranked.prefix(60) { em.addItem(procItem(g, members: membersOf(g))) }   // oltre 60 il menu non si scorre più a mano
-        if ranked.count > 60 { em.addItem(noteRow("altre \(ranked.count - 60) app leggere: «Cerca in una finestra…»")) }
-        every.submenu = em
+        every.submenu = lazyMenu { [self] em in
+            em.addItem(headRow(["APP E PROCESSI, DAI PIÙ PESANTI", "CPU", "memoria"], tabs: tabs))
+            let ranked = apps.sorted(by: { ($0.cpu / 100 + $0.mem / 2e9) > ($1.cpu / 100 + $1.mem / 2e9) })
+            for g in ranked.prefix(60) { em.addItem(procItem(g, members: membersOf(g))) }   // oltre 60 il menu non si scorre più a mano
+            if ranked.count > 60 { em.addItem(noteRow("altre \(ranked.count - 60) app leggere: «Cerca in una finestra…»")) }
+        }
         m.addItem(every)
         let win = NSMenuItem(title: "Cerca in una finestra…", action: #selector(MacProcMenu.open(_:)), keyEquivalent: "")
         win.target = self; win.image = sym("magnifyingglass")
@@ -1328,6 +1397,15 @@ final class MacProcMenu: NSObject, NSMenuDelegate {
     }
     // Sezione nel menu principale: le app che pesano di più adesso (CPU + memoria), lette al volo. Le righe nascono vuote
     // e si riempiono mezzo secondo dopo l'apertura (la CPU è la media tra due letture), con il menu già aperto.
+    private var inlineApply: (([ProcRow]) -> Void)?
+    // all'apertura: il menu è già pronto con l'ultima lettura; la nuova arriva dalla coda e si scrive nelle stesse righe
+    func refreshInline() {
+        guard let apply = inlineApply else { return }
+        queue.asyncAfter(deadline: .now() + 0.6) { [sampler] in
+            let rows = sampler.sample()
+            RunLoop.main.perform(inModes: [.common, .eventTracking]) { apply(rows) }
+        }
+    }
     func inlineSection(count n: Int = 5) -> [NSMenuItem] {
         let head = headRow(["PESANO DI PIÙ ADESSO", "CPU", "memoria"], tabs: tabs)
         let slots = (0..<n).map { _ in noteRow("…") }
@@ -1342,10 +1420,8 @@ final class MacProcMenu: NSObject, NSMenuDelegate {
             }
         }
         if snapshotMode { prime(); Thread.sleep(forTimeInterval: 0.6); apply(queue.sync { sampler.sample() }); return [head] + slots }
-        queue.asyncAfter(deadline: .now() + 0.6) { [sampler] in
-            let rows = sampler.sample()
-            RunLoop.main.perform(inModes: [.common, .eventTracking]) { apply(rows) }
-        }
+        inlineApply = apply
+        if !lastRows.isEmpty { apply(lastRows) }
         return [head] + slots
     }
     @objc func open(_ s: NSMenuItem) { ProcessWindowController.shared.show(query: s.representedObject as? String ?? "") }
@@ -1410,6 +1486,10 @@ final class AccountBlockView: NSView {
         return min(ceil(h), 42)
     }
     func cTop() -> CGFloat { brake == nil ? 27 : 27 + cBrakeH() + 4 }
+    // Nella griglia le card di una riga si allineano: stesso inizio delle barre e una riga per misura nello stesso ordine
+    // (dove una card non ha quella misura resta il vuoto). Li imposta GridView.
+    var slots: [Int]?, topOverride: CGFloat?
+    func cY(_ i: Int) -> CGFloat { (topOverride ?? cTop()) + Self.cRowH * CGFloat(slots?[i] ?? i) }
     init(icon: NSImage?, name: String, caption: String?, badge: String?, badgeColor: NSColor, brake: String?, bars: [BarSpec], single: NSAttributedString?, compactW: CGFloat? = nil) {
         self.icon = icon; self.name = name; self.caption = caption; self.badge = badge; self.badgeColor = badgeColor; self.brake = brake; self.bars = bars; self.single = single
         self.compactW = compactW
@@ -1425,7 +1505,7 @@ final class AccountBlockView: NSView {
         let sr = sparkRect(r); hover = (row: r, x: sr.minX + sr.width * CGFloat(f))
     }
     func sparkRect(_ i: Int) -> NSRect {
-        if compactW != nil { let x = 10 + cBarW() + 8; return NSRect(x: x, y: cTop() + Self.cRowH * CGFloat(i) + 16, width: bounds.width - 10 - x, height: 11) }
+        if compactW != nil { let x = 10 + cBarW() + 8; return NSRect(x: x, y: cY(i) + 16, width: bounds.width - 10 - x, height: 11) }
         if vertical { let c = cardRect(i); return NSRect(x: c.minX + Self.vColW + 6, y: c.minY + 18, width: c.width - Self.vColW - 6, height: Self.cardChartH) }
         return NSRect(x: sparkX0, y: Self.top(brake) + Self.rowH * CGFloat(i) + 3, width: Self.sparkW, height: Self.sparkH)
     }
@@ -1445,6 +1525,7 @@ final class AccountBlockView: NSView {
     // il menu riusa le viste se si riapre entro un minuto: niente linea rimasta dall'ultima volta
     override func viewDidMoveToWindow() { super.viewDidMoveToWindow(); if hover != nil && ProcessInfo.processInfo.environment["SNAPSHOT_HOVER"] == nil { hover = nil; needsDisplay = true } }
     override func mouseMoved(with e: NSEvent) {
+        Perf.phase = "hover card"
         let p = convert(e.locationInWindow, from: nil)
         var h: (Int, CGFloat)? = nil
         if single == nil { for i in bars.indices where bars[i].spark?.count ?? 0 >= 2 && sparkRect(i).insetBy(dx: -3, dy: -3).contains(p) { let sr = sparkRect(i); h = (i, min(max(p.x, sr.minX), sr.maxX)) } }
@@ -1474,8 +1555,48 @@ final class AccountBlockView: NSView {
         super.setFrameSize(s)
         if changed { removeAllToolTips(); tipStrings = []; addSparkTips() }
     }
+    // Il testo delle card costa (50 ms ad apertura col Mac carico): si disegna una volta in un'immagine, preparata
+    // quando arrivano i dati, e all'apertura si copia. Col mouse su un grafico o la voce evidenziata si ridisegna dal vivo.
+    private var cache: (key: String, image: NSImage)?
+    // con il mouse su un grafico si copia l'immagine e si riscrive solo la nota di quella riga (patch)
+    private var patch = false
+    private func cacheKey() -> String? {
+        if enclosingMenuItem?.isHighlighted == true { return nil }
+        return "\(bounds.size.width)x\(bounds.size.height) \(effectiveAppearance.name.rawValue) \(window?.backingScaleFactor ?? NSScreen.main?.backingScaleFactor ?? 2)"
+    }
+    func warmCache() {
+        guard let key = cacheKey(), cache?.key != key, bounds.width > 0, bounds.height > 0 else { return }
+        let hv = hover; hover = nil; defer { hover = hv }   // l'immagine è sempre quella senza mouse
+        let scale = window?.backingScaleFactor ?? NSScreen.main?.backingScaleFactor ?? 2
+        guard let rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: Int(bounds.width * scale), pixelsHigh: Int(bounds.height * scale),
+                                         bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0),
+              let cg = NSGraphicsContext(bitmapImageRep: rep)?.cgContext else { return }
+        rep.size = bounds.size
+        cg.translateBy(x: 0, y: CGFloat(rep.pixelsHigh)); cg.scaleBy(x: scale, y: -scale)   // la vista è capovolta: lo è anche l'immagine
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = NSGraphicsContext(cgContext: cg, flipped: true)
+        effectiveAppearance.performAsCurrentDrawingAppearance { drawContent() }
+        NSGraphicsContext.restoreGraphicsState()
+        let img = NSImage(size: bounds.size); img.addRepresentation(rep)
+        cache = (key, img)
+    }
     override func draw(_ dirty: NSRect) {
+        if Perf.noCache { drawContent(); return }
+        guard let k = cacheKey() else { drawContent(); return }
+        if cache?.key != k { Perf.log("cache mancata \(cache?.key ?? "vuota") → \(k)") }
+        warmCache()
+        guard let c = cache else { drawContent(); return }
+        c.image.draw(in: bounds, from: .zero, operation: .sourceOver, fraction: 1, respectFlipped: true, hints: nil)
+        if hover != nil { patch = true; drawContent(); patch = false }
+    }
+    // la nota sotto il mouse: si toglie quella dell'immagine (e si rimette il fondo della card) prima di scrivere l'altra
+    private func clearNote(_ r: NSRect) {
+        NSColor.clear.setFill(); r.fill(using: .copy)
+        if compactW != nil { NSColor.labelColor.withAlphaComponent(0.045).setFill(); r.fill() }
+    }
+    private func drawContent() {
         if compactW != nil { drawCompact(); return }
+        if !patch {
         let braked = brake != nil
         // con un sottomenu (il Mac: i processi) il blocco si comporta da voce: evidenza al passaggio e freccia a destra
         let sub = enclosingMenuItem?.hasSubmenu == true
@@ -1513,11 +1634,16 @@ final class AccountBlockView: NSView {
             }
             (br as NSString).draw(with: NSRect(x: 53, y: 25, width: Self.brakeW, height: Self.brakeH(br)), options: [.usesLineFragmentOrigin, .truncatesLastVisibleLine], attributes: attr)
         }
+        }
         let y0 = Self.top(brake)
         if let one = single { one.draw(at: NSPoint(x: 38, y: y0 + 2)); return }
         if vertical { drawCards(); return }
         for (i, bar) in bars.enumerated() {
             let y = y0 + Self.rowH * CGFloat(i)
+            if patch {
+                guard let h = hover, h.row == i, let pts = bar.spark, pts.count >= 2 else { continue }
+                clearNote(NSRect(x: noteX0, y: y, width: bounds.width - noteX0, height: Self.rowH))
+            } else {
             (bar.label as NSString).draw(at: NSPoint(x: labelX0, y: y + 2), withAttributes: [.font: NSFont.systemFont(ofSize: 10.5), .foregroundColor: NSColor.secondaryLabelColor])
             let ty = y + 7.5
             NSColor.labelColor.withAlphaComponent(0.12).setFill()
@@ -1527,6 +1653,7 @@ final class AccountBlockView: NSView {
             if let m = bar.mark { NSColor.labelColor.setFill(); NSRect(x: Self.barX + Self.barW * CGFloat(min(max(m, 0), 1)) - 1, y: ty - 2.5, width: 2, height: Self.barH + 5).fill() }
             (bar.value as NSString).draw(at: NSPoint(x: valueX0, y: y + 1), withAttributes: [.font: NSFont.monospacedDigitSystemFont(ofSize: 11.5, weight: .bold), .foregroundColor: bar.color])
             if let pts = bar.spark, pts.count >= 2 { drawSpark(pts, rect: NSRect(x: sparkX0, y: y + 3, width: Self.sparkW, height: Self.sparkH), color: bar.color, scaleMax: bar.scaleMax) }
+            }
             if let h = hover, h.row == i, let pts = bar.spark, pts.count >= 2 {
                 let hp = hoverPoint(pts, x: h.x, in: sparkRect(i))
                 NSColor.labelColor.withAlphaComponent(0.7).setFill()
@@ -1540,6 +1667,7 @@ final class AccountBlockView: NSView {
     }
     private func drawCompact() {
         let W = bounds.width
+        if !patch {
         // fondo leggero: le card affiancate si leggono come blocchi separati
         NSColor.labelColor.withAlphaComponent(0.045).setFill()
         NSBezierPath(roundedRect: bounds.insetBy(dx: 0, dy: 1), xRadius: 7, yRadius: 7).fill()
@@ -1564,19 +1692,22 @@ final class AccountBlockView: NSView {
             (br as NSString).draw(with: NSRect(x: 10, y: 25, width: W - 20, height: cBrakeH()), options: [.usesLineFragmentOrigin, .truncatesLastVisibleLine],
                                   attributes: [.font: Self.brakeFont, .foregroundColor: badgeColor])
         }
-        let y0 = cTop()
+        }
+        let y0 = topOverride ?? cTop()
         if let one = single { one.draw(at: NSPoint(x: 10, y: y0 + 1)); return }
         let small: [NSAttributedString.Key: Any] = [.font: NSFont.systemFont(ofSize: 10), .foregroundColor: NSColor.tertiaryLabelColor]
         for (i, bar) in bars.enumerated() {
-            let y = y0 + Self.cRowH * CGFloat(i)
+            if patch && (hover?.row != i || (bar.spark?.count ?? 0) < 2) { continue }
+            let y = cY(i)
             let la: [NSAttributedString.Key: Any] = [.font: NSFont.systemFont(ofSize: 10.5), .foregroundColor: NSColor.secondaryLabelColor]
             let label = (Self.shortLabels[bar.label] ?? bar.label) as NSString
-            label.draw(at: NSPoint(x: 10, y: y + 1), withAttributes: la)
+            if !patch { label.draw(at: NSPoint(x: 10, y: y + 1), withAttributes: la) }
             let va: [NSAttributedString.Key: Any] = [.font: NSFont.monospacedDigitSystemFont(ofSize: 11.5, weight: .bold), .foregroundColor: bar.color]
             let vs = bar.value as NSString, vw = vs.size(withAttributes: va).width
-            vs.draw(at: NSPoint(x: W - 10 - vw, y: y), withAttributes: va)
+            if !patch { vs.draw(at: NSPoint(x: W - 10 - vw, y: y), withAttributes: va) }
             // la nota tra etichetta e numero; col mouse sul grafico diventa «quando · quanto»
             let lx = 10 + label.size(withAttributes: la).width + 6
+            if patch { clearNote(NSRect(x: lx, y: y + 1, width: max(0, W - 16 - vw - lx) + 2, height: 16)) }
             var note = bar.note, na = small
             let sr = sparkRect(i)
             if let hv = hover, hv.row == i, let pts = bar.spark, pts.count >= 2 {
@@ -1586,6 +1717,7 @@ final class AccountBlockView: NSView {
                 note = "\(hhmmText(hp.t)) · \(v)"; na = [.font: NSFont.monospacedDigitSystemFont(ofSize: 10, weight: .semibold), .foregroundColor: NSColor.labelColor]
             }
             (note as NSString).draw(with: NSRect(x: lx, y: y + 2, width: max(0, W - 16 - vw - lx), height: 14), options: [.usesLineFragmentOrigin, .truncatesLastVisibleLine], attributes: na)
+            if patch { continue }
             let ty = y + 19
             NSColor.labelColor.withAlphaComponent(0.12).setFill()
             let bw = cBarW()
@@ -1600,6 +1732,10 @@ final class AccountBlockView: NSView {
         let small: [NSAttributedString.Key: Any] = [.font: NSFont.systemFont(ofSize: 10.5), .foregroundColor: NSColor.secondaryLabelColor]
         for (i, bar) in bars.enumerated() {
             let c = cardRect(i), sr = sparkRect(i), inner = sr.maxX - c.minX
+            if patch {
+                guard let hv = hover, hv.row == i, let pts = bar.spark, pts.count >= 2 else { continue }
+                clearNote(NSRect(x: c.minX, y: sr.maxY + 2, width: inner, height: 16))
+            } else {
             (bar.label as NSString).draw(at: NSPoint(x: c.minX, y: c.minY + 1), withAttributes: [.font: NSFont.systemFont(ofSize: 11, weight: .medium), .foregroundColor: NSColor.labelColor])
             let va: [NSAttributedString.Key: Any] = [.font: NSFont.monospacedDigitSystemFont(ofSize: 11.5, weight: .bold), .foregroundColor: bar.color]
             let vs = bar.value as NSString
@@ -1613,6 +1749,7 @@ final class AccountBlockView: NSView {
             if let m = bar.mark { NSColor.labelColor.setFill(); NSRect(x: bx - 2, y: top + h * CGFloat(1 - min(max(m, 0), 1)) - 1, width: Self.vColW + 4, height: 2).fill() }
             if let pts = bar.spark, pts.count >= 2 { drawSpark(pts, rect: sr, color: bar.color, scaleMax: bar.scaleMax) }
             else { NSColor.labelColor.withAlphaComponent(0.05).setFill(); NSBezierPath(roundedRect: sr, xRadius: 3, yRadius: 3).fill() }
+            }
             var note = bar.note, na = small
             if let hv = hover, hv.row == i, let pts = bar.spark, pts.count >= 2 {
                 let hp = hoverPoint(pts, x: hv.x, in: sr)
@@ -1621,7 +1758,7 @@ final class AccountBlockView: NSView {
             }
             (note as NSString).draw(with: NSRect(x: c.minX, y: sr.maxY + 3, width: inner, height: 14), options: [.usesLineFragmentOrigin, .truncatesLastVisibleLine], attributes: na)
         }
-        if let f = foot {
+        if let f = foot, !patch {
             let y = Self.top(brake) + Self.cardH + 2
             NSColor.separatorColor.setFill(); NSRect(x: 38, y: y, width: bounds.width - 38 - gridPad, height: 1).fill()
             (f as NSString).draw(with: NSRect(x: 38, y: y + 5, width: bounds.width - 38 - gridPad, height: 26), options: [.usesLineFragmentOrigin], attributes: small)
@@ -1671,16 +1808,31 @@ final class GridView: NSView {
     private let cards: [NSView], cols: Int
     init(_ views: [NSView], cols: Int = gridCols) {
         cards = views; self.cols = cols
-        var y: CGFloat = 3
-        for start in stride(from: 0, to: views.count, by: cols) { y += (views[start..<min(start + cols, views.count)].map { $0.frame.height }.max() ?? 0) + gridGap }
-        super.init(frame: NSRect(x: 0, y: 0, width: blockW, height: y - gridGap + 4))
-        autoresizingMask = [.width]
+        super.init(frame: NSRect(x: 0, y: 0, width: blockW, height: 10))
         views.forEach { addSubview($0) }
-        place()
+        // l'altezza dopo l'allineamento: le card di una riga possono crescere per tenere le stesse righe
+        setFrameSize(NSSize(width: blockW, height: place() - gridGap + 4))
+        autoresizingMask = [.width]
     }
     required init?(coder: NSCoder) { nil }
-    override func resizeSubviews(withOldSize old: NSSize) { place() }
-    private func place() {
+    override func resizeSubviews(withOldSize old: NSSize) { _ = place() }
+    // stesse righe nello stesso ordine: ogni misura nuova va dopo quella che la precede nella sua card
+    private func align(_ row: [AccountBlockView]) {
+        guard row.count > 1 else { return }
+        var order: [String] = []
+        for v in row {
+            var after = -1
+            for b in v.bars {
+                if let k = order.firstIndex(of: b.label) { after = k } else { after += 1; order.insert(b.label, at: after) }
+            }
+        }
+        let top = row.map { $0.cTop() }.max() ?? 27
+        for v in row {
+            v.slots = v.bars.map { order.firstIndex(of: $0.label) ?? 0 }; v.topOverride = top
+            v.setFrameSize(NSSize(width: v.frame.width, height: top + AccountBlockView.cRowH * CGFloat(order.count) + 6))
+        }
+    }
+    @discardableResult private func place() -> CGFloat {
         let inner = bounds.width - 2 * gridPad
         var y: CGFloat = 3
         for start in stride(from: 0, to: cards.count, by: cols) {
@@ -1690,6 +1842,7 @@ final class GridView: NSView {
             for (j, v) in row.enumerated() { v.frame = NSRect(x: gridPad + CGFloat(j) * (w + gridGap), y: y, width: w, height: h); v.needsDisplay = true }
             y += h + gridGap
         }
+        return y
     }
 }
 
@@ -2385,6 +2538,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     var lastOK: Date?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        Perf.startWatchdog()
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         barView = UsageBarView(frame: NSRect(x: 0, y: 0, width: 26, height: 22))
         statusItem.button?.addSubview(barView)
@@ -2437,8 +2591,31 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         rebuildMenu()
     }
 
-    func menuWillOpen(_ menu: NSMenu) { macProcs.prime() }   // prima lettura dei processi: al passaggio sul Mac la CPU è la media da qui
+    private var menuOpen = false
+    func menuWillOpen(_ menu: NSMenu) {
+        menuOpen = true
+        macProcs.prime()   // prima lettura dei processi: al passaggio sul Mac la CPU è la media da qui
+        macProcs.refreshInline()
+        Perf.opened(NSApp.currentEvent)
+    }
+    func menuDidClose(_ menu: NSMenu) {
+        menuOpen = false; Perf.phase = "chiuso"
+        if menuStale { prepareMenu() }   // dati arrivati a menu aperto: si ricostruisce adesso, non al prossimo clic
+    }
+    // Il menu si costruisce quando arrivano i dati, a menu chiuso: al clic è già pronto (prima: 360 ms al clic col Mac carico).
+    func prepareMenu() {
+        DispatchQueue.main.async { [weak self] in
+            guard let self, !self.menuOpen, self.menuStale else { return }
+            Perf.phase = "preparazione"; defer { Perf.phase = "riposo" }
+            let menu = self.statusItem.menu ?? NSMenu()
+            self.menuNeedsUpdate(menu)
+            func warm(_ v: NSView) { (v as? AccountBlockView)?.warmCache(); v.subviews.forEach(warm) }
+            for it in menu.items { if let v = it.view { if v.frame.width < blockW { v.setFrameSize(NSSize(width: blockW, height: v.frame.height)) }; warm(v) } }
+        }
+    }
     func menuNeedsUpdate(_ menu: NSMenu) {
+        Perf.phase = "costruzione"; defer { Perf.phase = "menu" }
+        clickWork()
         guard menuStale else { return }
         let fresh = buildMenu(snapshot: snapshot, isOffline: isOffline, actionTarget: self)
         menu.removeAllItems()
@@ -2448,6 +2625,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     func rebuildMenu() {
         menuStale = true
+        prepareMenu()
         barView.invalidate()
         let w = barView.idealWidth()
         if barView.frame.width != w { barView.frame = NSRect(x: 0, y: 0, width: w, height: 22); statusItem.length = w }
@@ -2512,3 +2690,84 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         NSApplication.shared.terminate(nil)
     }
 }
+
+// MARK: - Barra di velocità (--perf-bench): processo a parte, niente icona né mouse
+
+// Percorre il codice del clic con i dati veri dell'hub: menu preparato come fa la tray, poi il lavoro del clic e il
+// disegno di tutte le voci in una finestra fuori schermo (apertura), il passaggio del mouse sui grafici delle card
+// (hover) e il riempimento del sottomenu processi. Stampa i numeri; esce 1 oltre 150 ms di apertura o 50 ms per evento.
+func runPerfBenchAndExit(rounds: Int) -> Never {
+    _ = NSApplication.shared
+    guard let snapshot = fetchOverviewSync() else { FileHandle.standardError.write("hub irraggiungibile\n".data(using: .utf8)!); exit(69) }
+    for (path, _) in livePaths {
+        let ls = DispatchSemaphore(value: 0)
+        guard let url = URL(string: hubURL + path) else { continue }
+        URLSession.shared.dataTask(with: url) { data, _, _ in applyLive(path, data); ls.signal() }.resume()
+        _ = ls.wait(timeout: .now() + 40)
+    }
+    // Due orologi: a muro (quello che vede chi clicca, Mac carico compreso) e CPU del thread (il lavoro del nostro codice).
+    // Con 3 processi per core il sistema ferma chiunque per centinaia di ms: la barra guarda la CPU per ogni evento e il muro in mediana.
+    let cpuNow = { Double(clock_gettime_nsec_np(CLOCK_THREAD_CPUTIME_ID)) / 1e6 }
+    var c0 = cpuNow()
+    let ms = { (t0: DispatchTime) in Double(DispatchTime.now().uptimeNanoseconds - t0.uptimeNanoseconds) / 1e6 }
+    var opens: [Double] = [], hovers: [Double] = [], fills: [Double] = [], builds: [Double] = []
+    var openCPU: [Double] = [], hoverCPU: [Double] = [], fillCPU: [Double] = []
+    var warmup = true   // il primo giro scalda font e cache del processo: la tray vera è sempre calda
+    let rows = macProcs.benchSample()
+    for _ in 0..<rounds {
+        // come la tray: costruzione e immagini delle card quando arrivano i dati, fuori dal clic
+        var t0 = DispatchTime.now()
+        let menu = buildMenu(snapshot: snapshot, isOffline: false, actionTarget: nil)
+        builds.append(ms(t0))
+        let views: [NSView] = menu.items.compactMap { it in let v = it.view; it.view = nil; return v }
+        for v in views where v.frame.width < blockW { v.setFrameSize(NSSize(width: blockW, height: v.frame.height)) }
+        func warm(_ v: NSView) { (v as? AccountBlockView)?.warmCache(); v.subviews.forEach(warm) }
+        if !Perf.noCache { views.forEach(warm) }
+        // il clic: lavoro sincrono, lettura dei processi avviata, e tutte le voci disegnate
+        t0 = DispatchTime.now(); c0 = cpuNow()
+        clickWork(); macProcs.prime(); macProcs.refreshInline()
+        let h = views.reduce(0) { $0 + $1.frame.height } + CGFloat(menu.items.filter { $0.view == nil }.count) * 22
+        let win = NSWindow(contentRect: NSRect(x: -4000, y: -4000, width: blockW, height: h), styleMask: .borderless, backing: .buffered, defer: false)
+        let root = FlippedView(frame: NSRect(x: 0, y: 0, width: blockW, height: h)); win.contentView = root
+        var y: CGFloat = 0
+        for it in menu.items {
+            if it.view == nil, let t = it.attributedTitle ?? (it.title.isEmpty ? nil : NSAttributedString(string: it.title)) {
+                let f = NSTextField(labelWithAttributedString: t); f.frame = NSRect(x: 30, y: y, width: blockW - 40, height: 22); root.addSubview(f); y += 22
+            }
+        }
+        for v in views { v.frame.origin = NSPoint(x: 0, y: y); root.addSubview(v); y += v.frame.height }
+        // cacheDisplay disegna davvero anche in una finestra non a schermo (display() lì salta il disegno)
+        root.layoutSubtreeIfNeeded()
+        if let rep = root.bitmapImageRepForCachingDisplay(in: root.bounds) { root.cacheDisplay(in: root.bounds, to: rep) }
+        if !warmup { opens.append(ms(t0)); openCPU.append(cpuNow() - c0) }
+        // il mouse che scorre sui grafici delle card: ogni evento è gestione + ridisegno della card
+        func cards(_ v: NSView) -> [AccountBlockView] { (v as? AccountBlockView).map { [$0] } ?? v.subviews.flatMap(cards) }
+        for c in views.flatMap(cards) {
+            for i in c.bars.indices where (c.bars[i].spark?.count ?? 0) >= 2 {
+                let sr = c.sparkRect(i)
+                for k in 0..<6 {
+                    let p = c.convert(NSPoint(x: sr.minX + sr.width * CGFloat(k) / 5, y: sr.midY), to: nil)
+                    guard let e = NSEvent.mouseEvent(with: .mouseMoved, location: p, modifierFlags: [], timestamp: 0, windowNumber: win.windowNumber, context: nil, eventNumber: 0, clickCount: 0, pressure: 0) else { continue }
+                    t0 = DispatchTime.now(); c0 = cpuNow(); c.mouseMoved(with: e)
+                    if let rep = c.bitmapImageRepForCachingDisplay(in: c.bounds) { c.cacheDisplay(in: c.bounds, to: rep) }
+                    if !warmup { hovers.append(ms(t0)); hoverCPU.append(cpuNow() - c0) }
+                }
+            }
+        }
+        // il sottomenu processi quando arriva la lettura
+        let sub = macProcs.newMenu()
+        t0 = DispatchTime.now(); c0 = cpuNow(); macProcs.fill(sub, rows: rows)
+        if !warmup { fills.append(ms(t0)); fillCPU.append(cpuNow() - c0) }
+        win.close()
+        warmup = false
+    }
+    let med = { (a: [Double]) in a.isEmpty ? 0 : a.sorted()[a.count / 2] }
+    let mx = { (a: [Double]) in a.max() ?? 0 }
+    var l = [Double](repeating: 0, count: 3); getloadavg(&l, 1)
+    print(String(format: "carico %.0f su %d core · preparazione (fuori dal clic) mediana %.0f ms", l[0], ProcessInfo.processInfo.activeProcessorCount, med(builds)))
+    print(String(format: "apertura: a muro mediana %.0f ms, max %.0f · CPU max %.0f ms (soglia 150 su mediana e CPU)", med(opens), mx(opens), mx(openCPU)))
+    print(String(format: "hover %d eventi: a muro mediana %.1f ms, max %.0f · CPU max %.1f ms (soglia 50 su CPU)", hovers.count, med(hovers), mx(hovers), mx(hoverCPU)))
+    print(String(format: "sottomenu processi: a muro max %.0f ms · CPU max %.0f ms (soglia 50 su CPU)", mx(fills), mx(fillCPU)))
+    exit(med(opens) > 150 || mx(openCPU) > 150 || mx(hoverCPU) > 50 || mx(fillCPU) > 50 ? 1 : 0)
+}
+final class FlippedView: NSView { override var isFlipped: Bool { true } }
