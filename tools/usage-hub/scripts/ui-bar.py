@@ -52,7 +52,7 @@ def serve():
     d = pathlib.Path(tempfile.mkdtemp(prefix='ui-bar-'))
     env = dict(os.environ, USAGE_HUB_DEMO_AUTOMATIONS='problemi', USAGE_HUB_FEEDBACK_DIR=str(d / 'feedback'),
                USAGE_HUB_QUEUE=str(d / 'queue.json'), USAGE_HUB_QUEUE_LOG=str(d / 'queue.log'),
-               USAGE_HUB_ATTESA=str(d / 'ti-aspetta.jsonl'), USAGE_HUB_CONTEXT_CHECK=str(d / 'check.json'))
+               USAGE_HUB_ATTESA=str(d / 'ti-aspetta.jsonl'), USAGE_HUB_CONTEXT_CHECK=str(d / 'check.json'), USAGE_HUB_DIARIO=str(d / 'diario'))
     proc = subprocess.Popen(['node', 'bin/usage-hub.mjs', 'serve', '--demo', '--port', str(port)], cwd=ROOT, env=env,
                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     url = f'http://127.0.0.1:{port}'

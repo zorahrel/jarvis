@@ -2,7 +2,7 @@
 import { fp } from './describe.mjs';
 import { levelOf, fromFindings } from './levels.mjs';
 import { stateFor } from './feedback.mjs';
-import { AREAS, purposeOf } from './purpose.mjs';
+import { AREAS, OWN_AREA, purposeOf } from './purpose.mjs';
 
 const H = 3600000;
 
@@ -244,7 +244,10 @@ export function buildModel({ now, sources = {}, descriptions = {}, feedback = ne
   const needsYou = [];
   const broken = [];
   const okCards = [];
+  // Computer e app di Attilio: solo da guardare, non entrano nei problemi né nel verdetto.
+  const own = [];
   for (const c of cards) {
+    if (c.purpose?.area === OWN_AREA) { own.push({ ...c, own: true }); continue; }
     if (c.level === 'te') needsYou.push(c);
     else if (c.level === 'rotto') broken.push(c);
     else okCards.push(c);
@@ -318,8 +321,10 @@ export function buildModel({ now, sources = {}, descriptions = {}, feedback = ne
     hidden: { count: hidden.length, why: hidden },
     counts: sources.counted?.counts ?? null,
   };
+  own.sort((a, b) => (RANK[b.level] ?? 0) - (RANK[a.level] ?? 0) || a.title.localeCompare(b.title, 'it'));
+  verdict.own = own.length;
   const byKey = {};
-  for (const c of ordered) byKey[c.key] = c;
-  const areas = AREAS.map((a) => ({ ...a, count: ordered.filter((c) => c.purpose?.area === a.id).length }));
-  return { checkedAt: now, verdict, needsYou, broken, groups, workflows, review, footer, areas, missing: MISSING, cards: byKey };
+  for (const c of [...ordered, ...own]) byKey[c.key] = c;
+  const areas = AREAS.map((a) => ({ ...a, count: (a.id === OWN_AREA ? own : ordered).filter((c) => c.purpose?.area === a.id).length }));
+  return { checkedAt: now, verdict, needsYou, broken, groups, workflows, review, footer, areas, own, missing: MISSING, cards: byKey };
 }

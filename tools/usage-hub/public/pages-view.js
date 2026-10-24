@@ -81,10 +81,10 @@
   }
 
   // ---- Diario ----
-  var KINDS = [['all', 'Tutto'], ['auto', 'Automazioni'], ['agente', 'Agenti'], ['workflow', 'Workflow'], ['tu', 'Tu'], ['pb', 'Problemi']];
+  var KINDS = [['all', 'Tutto'], ['auto', 'Automazioni'], ['agente', 'Agenti'], ['workflow', 'Workflow'], ['tu', 'Tu'], ['app', 'Computer e app'], ['pb', 'Problemi']];
   function jMatch(e, ui) {
     var f = ui.f || 'all';
-    if (f === 'pb' && e.outcome !== 'error' && e.outcome !== 'undelivered') return false;
+    if (f === 'pb' && (e.kind === 'app' || (e.outcome !== 'error' && e.outcome !== 'undelivered'))) return false;
     if (f !== 'all' && f !== 'pb' && e.kind !== f) return false;
     var q = (ui.q || '').trim().toLowerCase();
     return !q || [e.title, e.what, e.who].join(' ').toLowerCase().indexOf(q) !== -1;
@@ -100,7 +100,7 @@
     if (!data) return '<div class="tile calm"><p class="tile-p">Non riesco a leggere il diario: l\'hub non risponde.</p></div>';
     var all = data.items || [];
     var items = all.filter(function (e) { return jMatch(e, ui); });
-    var cnt = function (k) { return all.filter(function (e) { return k === 'all' ? true : k === 'pb' ? (e.outcome === 'error' || e.outcome === 'undelivered') : e.kind === k; }).length; };
+    var cnt = function (k) { return all.filter(function (e) { return k === 'all' ? true : k === 'pb' ? (e.kind !== 'app' && (e.outcome === 'error' || e.outcome === 'undelivered')) : e.kind === k; }).length; };
     var tools = '<div class="tools"><div class="seg" role="group" aria-label="Filtro">' + KINDS.map(function (k) {
       return '<button data-j-f="' + k[0] + '" aria-pressed="' + ((ui.f || 'all') === k[0]) + '">' + k[1] + '<b>' + cnt(k[0]) + '</b></button>';
     }).join('') + '</div><label class="q">' + ic('search', 'qi') + '<span class="sr">Cerca nel diario</span><input type="search" data-j-q placeholder="Cerca: brief, Codex, fallito…" value="' + esc(ui.q || '') + '" autocomplete="off"></label></div>';

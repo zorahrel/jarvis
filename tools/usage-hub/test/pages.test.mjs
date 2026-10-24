@@ -14,6 +14,7 @@ process.env.USAGE_HUB_QUEUE = path.join(dir, 'queue.json');
 process.env.USAGE_HUB_QUEUE_LOG = path.join(dir, 'queue.log');
 process.env.USAGE_HUB_ATTESA = path.join(dir, 'ti-aspetta.jsonl');
 process.env.USAGE_HUB_CONTEXT_CHECK = path.join(dir, 'check.json');
+process.env.USAGE_HUB_DIARIO = path.join(dir, 'diario-api');
 
 const { readAttesa, writeAttesa, validateAttesa, fromAutomations } = await import('../src/attesa.mjs');
 const { journal, firstLine } = await import('../src/journal.mjs');
@@ -179,4 +180,58 @@ test('API: /api/attesa, /api/diario, /api/fix, /api/contesto, /api/hub-config', 
     const cfg = await (await fetch(base + '/api/hub-config')).json();
     assert.ok('jarvis' in cfg);
   } finally { srv.close(); }
+});
+
+test('Computer e app: Mac, PC e Topics fuori da problemi, verdetto, «Ti aspetta» e filtro Problemi del diario', async () => {
+  const { buildModel } = await import('../src/automations/model.mjs');
+  require('../public/automations-view.js');
+  const V = globalThis.AutomationsView;
+  const H = 3600000;
+  const mk = (key, outcome) => ({ key, provider: key.startsWith('gh:') ? 'github' : 'launchd', name: key, enabled: true, everyMs: 24 * H, next: NOW + H, nextApprox: false,
+    last: { at: NOW - 2 * H, outcome, delivered: null, error: outcome === 'error' ? 'uscito 1' : null }, runs: [{ at: NOW - 2 * H, outcome }], tech: {} });
+  const m = buildModel({ now: NOW, sources: {
+    launchd: { ok: true, at: NOW, items: [mk('launchd:com.armonia.topics-db-snapshot', 'error'), mk('launchd:com.jarvis.devreap', 'ok'), mk('launchd:com.jarvis.manutenzione', 'error')] },
+    github: { ok: true, at: NOW, items: [mk('gh:armonia/topics-app/e2e-nightly.yml', 'error')] },
+  } });
+  const ownKeys = m.own.map((c) => c.key).sort();
+  assert.deepEqual(ownKeys, ['gh:armonia/topics-app/e2e-nightly.yml', 'launchd:com.armonia.topics-db-snapshot', 'launchd:com.jarvis.devreap']);
+  // l'unico problema contato è quello di Jarvis
+  assert.deepEqual([...m.needsYou, ...m.broken].map((c) => c.key), ['launchd:com.jarvis.manutenzione']);
+  assert.equal(m.verdict.broken + m.verdict.needsYou, 1);
+  assert.equal(m.verdict.own, 3);
+  assert.ok(m.cards['launchd:com.armonia.topics-db-snapshot'].own, 'il pannello trova anche le voci a parte');
+  assert.ok(!fromAutomations({ ...m, cards: { x: { key: 'x', own: true, level: 'te', reason: 'aspetta il tuo ok al passo «a»', title: 't' } } }).length);
+  // pagina: sezione a parte, fuori da «Da sistemare»; col filtro Problemi sparisce
+  const html = V.render(m, { filter: 'all', q: '' }, NOW);
+  const own = html.slice(html.indexOf('data-area="computer-app"'));
+  assert.ok(html.includes('data-area="computer-app"'));
+  assert.match(own, /non contano tra i problemi/);
+  assert.ok(!/data-fix="launchd:com\.armonia/.test(html), '«Risolvi tu» non propone le voci del computer');
+  assert.ok(!V.render(m, { filter: 'pb', q: '' }, NOW).includes('data-area="computer-app"'));
+  // diario: tipo «app», escluso dal filtro Problemi
+  const items = journal({ model: m, now: NOW });
+  assert.ok(items.some((e) => e.kind === 'app' && e.outcome === 'error'));
+  const jh = P.journalHtml({ items }, { f: 'pb', q: '' }, NOW);
+  assert.ok(!jh.includes('Copia') && !jh.includes('topics'), 'nessuna voce del computer tra i problemi');
+});
+
+test('Diario esterno: righe JSONL per giorno, righe rotte saltate, esito e link controllati', async () => {
+  const { readDiary } = await import('../src/journal.mjs');
+  const dd = path.join(dir, 'diario');
+  fs.mkdirSync(dd, { recursive: true });
+  const day = new Date(NOW).toISOString().slice(0, 10);
+  fs.writeFileSync(path.join(dd, day + '.jsonl'), [
+    JSON.stringify({ ts: NOW - 60000, source: 'task-sync', kind: 'creata', text: 'Card creata da Promemoria: prova', ref: 'r1', outcome: 'ok', link: 'javascript:alert(1)' }),
+    '{rotta',
+    JSON.stringify({ ts: new Date(NOW - 120000).toISOString(), source: 'task-sync', text: 'Promemoria giù, giro saltato', outcome: 'skipped' }),
+    JSON.stringify({ ts: NOW - 1000, source: 'task-sync' }),
+  ].join('\n') + '\n');
+  fs.writeFileSync(path.join(dd, '2001-01-01.jsonl'), JSON.stringify({ ts: 978307200000, source: 'x', text: 'vecchia' }) + '\n');
+  const d = readDiary({ dir: dd, now: NOW, days: 7 });
+  assert.deepEqual(d.map((x) => x.text).sort(), ['Card creata da Promemoria: prova', 'Promemoria giù, giro saltato']);
+  assert.equal(d.find((x) => x.ref === 'r1').link, null, 'un link non http resta fuori');
+  const items = journal({ diary: d, now: NOW });
+  assert.equal(items[0].who, 'Task Topics ↔ Promemoria');
+  assert.deepEqual(items.map((e) => e.outcome), ['ok', 'skipped']);
+  assert.deepEqual(readDiary({ dir: path.join(dir, 'non-esiste'), now: NOW }), []);
 });

@@ -49,7 +49,7 @@ export function fromAutomations(model) {
   const out = [];
   const seen = new Set();
   for (const c of [...(model?.needsYou || []), ...Object.values(model?.cards || {})]) {
-    if (!c || seen.has(c.key) || c.level !== 'te') continue;
+    if (!c || c.own || seen.has(c.key) || c.level !== 'te') continue;
     seen.add(c.key);
     const m = /passo «([^»]+)»/.exec(c.reason || '');
     if (!m) continue;

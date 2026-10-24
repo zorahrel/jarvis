@@ -35,7 +35,7 @@ import { createAutomations, findRunFile, workflowRunCost } from './automations/i
 import { validate as validateFeedback } from './automations/feedback.mjs';
 import { operatore } from './operatore.mjs';
 import { readAttesa, writeAttesa, validateAttesa, fromAutomations } from './attesa.mjs';
-import { journal } from './journal.mjs';
+import { journal, readDiary } from './journal.mjs';
 import { fixTask } from './fix.mjs';
 import { readAll as readFeedback } from './automations/feedback.mjs';
 import { localConfig } from './local-config.mjs';
@@ -358,7 +358,7 @@ export function createServer(config, deps = {}) {
         const days = Math.min(30, Math.max(1, Number(new URL(req.url, 'http://x').searchParams.get('days')) || 7));
         let model = null; try { model = await auto().model(); } catch { /* il diario mostra il resto */ }
         let fb = []; try { fb = readFeedback(deps.feedbackDir ? { dir: deps.feedbackDir } : {}).rows; } catch { /* registro illeggibile */ }
-        return send(200, 'application/json', JSON.stringify({ at: Date.now(), days, items: journal({ model, queue: loadQueue(), feedback: fb, days }) }));
+        return send(200, 'application/json', JSON.stringify({ at: Date.now(), days, items: journal({ model, queue: loadQueue(), feedback: fb, diary: readDiary({ days }), days }) }));
       }
       // Risolvi tu: {key} → un lavoro in coda con il contesto della voce; parte subito se freno e ritmo lo permettono.
       if (req.url === '/api/fix' && req.method === 'POST') {

@@ -5,7 +5,8 @@
     "broken": 4,
     "ok": 4,
     "hidden": 1,
-    "runsToday": 25
+    "runsToday": 25,
+    "own": 0
   },
   "needsYou": [
     {
@@ -1132,8 +1133,15 @@
       "id": "backup-sicurezza",
       "title": "Backup e sicurezza",
       "count": 2
+    },
+    {
+      "id": "computer-app",
+      "title": "Computer e app",
+      "own": true,
+      "count": 0
     }
   ],
+  "own": [],
   "missing": [
     "costo per passo: nessuna fonte (i token ci sono solo nei workflow di Claude Code)",
     "cron di OpenClaw: openclaw.sqlite non registra token né costi per giro (cron_run_receipts non ha usage)",

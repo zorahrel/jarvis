@@ -2,6 +2,10 @@
 // Legge solo ciò che l'hub ha già: i giri delle automazioni, i giri dei workflow, la coda dei lavori delegati
 // e il registro dei feedback. Funzione pura: i dati arrivano da fuori.
 
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+
 const EXEC = { free: 'canali gratis', muse: 'Muse', codex: 'Codex', claude: 'Claude' };
 const SYS = { openclaw: 'OpenClaw', launchd: 'Mac', desktop: 'Claude desktop', lobster: 'Lobster', workflow: 'Workflow', github: 'GitHub', pc: 'PC di casa' };
 const VOTE = { ok: 'va bene', cambia: 'da cambiare', indietro: 'da rimettere com\'era' };
@@ -16,7 +20,34 @@ export function firstLine(task, max = 110) {
 // Numeri di telefono ed email non escono mai dal diario, nemmeno se un compito li cita.
 const mask = (s) => String(s || '').replace(/\+?\d[\d ]{8,}\d/g, '…').replace(/[\w.+-]+@[\w-]+\.[\w.]+/g, '…@…');
 
-export function journal({ model, queue = [], feedback = [], now = Date.now(), days = 7 } = {}) {
+// Diario scritto da altri (sync dei task e simili): una riga JSONL per evento in <dir>/YYYY-MM-DD.jsonl,
+// {ts, source, text, kind?, ref?, outcome?, link?}. Si leggono solo i file dei giorni chiesti; una riga rotta si salta.
+export const DIARY_DIR = process.env.USAGE_HUB_DIARIO || path.join(os.homedir(), '.claude/jarvis/state/diario');
+const SRC = { 'task-sync': 'Task Topics ↔ Promemoria' };
+const OUTCOMES = new Set(['ok', 'error', 'skipped']);
+export function readDiary({ dir = DIARY_DIR, now = Date.now(), days = 7 } = {}) {
+  const out = [];
+  let files = [];
+  try { files = fs.readdirSync(dir).filter((f) => /^\d{4}-\d{2}-\d{2}\.jsonl$/.test(f)); } catch { return out; }
+  const first = new Date(now - (days + 1) * 86400000).toISOString().slice(0, 10);
+  for (const f of files) {
+    if (f.slice(0, 10) < first) continue;
+    let text = '';
+    try { text = fs.readFileSync(path.join(dir, f), 'utf8'); } catch { continue; }
+    for (const line of text.split('\n')) {
+      if (!line.trim()) continue;
+      let r;
+      try { r = JSON.parse(line); } catch { continue; }
+      const at = typeof r.ts === 'number' ? r.ts : Date.parse(r.ts);
+      if (!at || !r.text) continue;
+      out.push({ at, source: String(r.source || ''), text: String(r.text), ref: r.ref ? String(r.ref) : null,
+        outcome: OUTCOMES.has(r.outcome) ? r.outcome : null, link: typeof r.link === 'string' && /^(https?:|#)/.test(r.link) ? r.link : null });
+    }
+  }
+  return out;
+}
+
+export function journal({ model, queue = [], feedback = [], diary = [], now = Date.now(), days = 7 } = {}) {
   const from = now - days * 86400000;
   const out = [];
   const cards = Object.values((model && model.cards) || {});
@@ -32,7 +63,8 @@ export function journal({ model, queue = [], feedback = [], now = Date.now(), da
       const delivered = last && last.delivered === 'failed' ? 'il messaggio non ti è arrivato' : last && last.delivered === 'delivered' ? 'ti è arrivato' : '';
       // riuscito ma il messaggio non è arrivato: per chi legge è un problema, non un ok
       const outcome = h.outcome === 'ok' && last && last.delivered === 'failed' ? 'undelivered' : h.outcome || null;
-      out.push({ at: h.at, kind: 'auto', who: SYS[c.provider] || c.provider || '', title: c.title, outcome,
+      // Computer e app di Attilio: tipo a parte, così il filtro Problemi resta di Jarvis.
+      out.push({ at: h.at, kind: c.own ? 'app' : 'auto', who: SYS[c.provider] || c.provider || '', title: c.title, outcome,
         what: err ? firstLine(err, 140) : delivered, ref: c.key, link: '#automations/' + encodeURIComponent(c.key) });
     }
   }
@@ -73,6 +105,11 @@ export function journal({ model, queue = [], feedback = [], now = Date.now(), da
     const key = r.key || (byId.get(r.ref) || {}).key || null;
     const agent = r.kind === 'resolve' || r.kind === 'fix';
     out.push({ at, kind: agent ? 'agente' : 'tu', who: agent ? 'Agente' : 'Tu', title, outcome: agent ? 'ok' : null, what, ref: key, link: key ? '#automations/' + encodeURIComponent(key) : null });
+  }
+  for (const d of diary) {
+    if (d.at < from || d.at > now) continue;
+    out.push({ at: d.at, kind: 'auto', who: SRC[d.source] || d.source || 'Diario', title: mask(firstLine(d.text, 160)), outcome: d.outcome,
+      what: '', ref: d.ref, link: d.link });
   }
   return out.sort((a, b) => b.at - a.at);
 }

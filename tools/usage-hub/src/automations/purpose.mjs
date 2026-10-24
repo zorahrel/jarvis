@@ -12,7 +12,12 @@ export const AREAS = [
   { id: 'jarvis-agenti', title: 'Jarvis e agenti' },
   { id: 'manutenzione', title: 'Manutenzione' },
   { id: 'backup-sicurezza', title: 'Backup e sicurezza' },
+  // Il computer e le app di Attilio (Mac, PC, darkroom, Topics): stanno a parte, fuori da problemi e «Ti aspetta» (Attilio, 23/10).
+  { id: 'computer-app', title: 'Computer e app', own: true },
 ];
+export const OWN_AREA = 'computer-app';
+// Voci nuove di Mac, PC e app finiscono qui da sole, senza aspettare una riga in purpose.json.
+const OWN_KEY = /topics-app|topics-db|darkroom|winfleet|tmpdir-sweep|devreap/i;
 const AREA_IDS = new Set(AREAS.map((a) => a.id));
 
 const TABLE = JSON.parse(fs.readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), 'purpose.json'), 'utf8'));
@@ -24,8 +29,9 @@ export function purposeOf(key, desc, group) {
   const row = TABLE[key] || {};
   const fromDesc = desc?.area && AREA_IDS.has(desc.area) ? desc.area : null;
   const fromTable = AREA_IDS.has(row.area) ? row.area : null;
-  const area = fromDesc || fromTable || FROM_GROUP[group] || 'manutenzione';
-  const areaSource = fromDesc ? 'descrizione' : fromTable ? 'tabella' : 'gruppo';
+  const fromKey = OWN_KEY.test(key) ? OWN_AREA : null;
+  const area = fromDesc || fromKey || fromTable || FROM_GROUP[group] || 'manutenzione';
+  const areaSource = fromDesc ? 'descrizione' : fromKey ? 'chiave' : fromTable ? 'tabella' : 'gruppo';
   return {
     area,
     areaSource,

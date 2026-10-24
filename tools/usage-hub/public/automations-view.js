@@ -87,6 +87,7 @@
     { id: 'jarvis-agenti', title: 'Jarvis e agenti', icon: 'bot' },
     { id: 'manutenzione', title: 'Manutenzione', icon: 'wrench' },
     { id: 'backup-sicurezza', title: 'Backup e sicurezza', icon: 'shield-check' },
+    { id: 'computer-app', title: 'Computer e app', icon: 'monitor-smartphone', own: true },
   ];
   function areaIcon(id) {
     var a = AREAS.find(function (x) { return x.id === id; });
@@ -382,6 +383,19 @@
     return '<article class="bx area ' + size + '" data-area="' + esc(a.id) + '"><header class="bx-h"><span class="cx-ghi">' + ic(a.icon || areaIcon(a.id)) + '</span>' +
       '<h3 class="bx-t">' + esc(a.title) + '</h3>' + countsHtml(all) + '</header>' + body + '</article>';
   }
+  // Mac, PC e app di Attilio: una sezione a parte, solo da guardare. Non conta nei problemi, quindi col filtro Problemi sparisce.
+  function ownCard(model, ui, now) {
+    var all = model.own || [];
+    if (!all.length || ui.filter === 'pb') return '';
+    var rows = all.filter(function (c) { return matches(c, ui); });
+    if (!rows.length) return '';
+    var off = all.filter(isProblem).length;
+    var hdr = '<div class="cx-row cx-hdr" aria-hidden="true"><span></span><span>Nome</span><span class="cx-strip">ultime 24 ore</span><span class="cx-c">Ultimo</span><span class="cx-c nx">Prossimo</span></div>';
+    return '<article class="bx area own b-12" data-area="computer-app"><header class="bx-h"><span class="cx-ghi">' + ic('monitor-smartphone') + '</span>' +
+      '<h3 class="bx-t">Computer e app</h3><span class="cx-cnt"><span>' + all.length + (all.length === 1 ? ' voce' : ' voci') + '</span>' + (off ? '<span>' + off + (off === 1 ? ' ferma' : ' ferme') + '</span>' : '') + '</span></header>' +
+      '<p class="bx-d">Il tuo Mac, il PC e le tue app. Le vedi qui, ma non contano tra i problemi di Jarvis e non finiscono in «Ti aspetta».</p>' +
+      '<div class="bx-list">' + hdr + rows.map(function (c) { return rowHtml(c, ui, now); }).join('') + '</div></article>';
+  }
   function jobsCard(model, ui, now) {
     var wf = model.workflows || {};
     var q = (ui.q || '').trim().toLowerCase();
@@ -428,10 +442,10 @@
       var all = allCards(model).filter(function (c) { return areaOf(c) === a.id; });
       var rows = cards.filter(function (c) { return areaOf(c) === a.id; }).sort(function (x, y) { return (isProblem(y) ? 1 : 0) - (isProblem(x) ? 1 : 0); });
       return { a: a, all: all, rows: rows, pb: all.filter(isProblem).length };
-    }).filter(function (x) { return x.rows.length; })
+    }).filter(function (x) { return x.rows.length && !x.a.own; })
       // Le aree con un problema vengono prima, poi le più grandi.
       .sort(function (x, y) { return (y.pb ? 1 : 0) - (x.pb ? 1 : 0) || y.all.length - x.all.length; });
-    var h = packRows((searching ? '' : fixHtml(model, ui, now)) + areas.map(function (x) { return areaCard(x.a, x.all, x.rows, ui, now); }).join('') + jobsCard(model, ui, now));
+    var h = packRows((searching ? '' : fixHtml(model, ui, now)) + areas.map(function (x) { return areaCard(x.a, x.all, x.rows, ui, now); }).join('') + jobsCard(model, ui, now) + ownCard(model, ui, now));
     if (!areas.length && searching) {
       h += '<div class="bx cx-empty b-12"><b>Niente da mostrare</b>' + ((ui.q || '').trim() ? 'Nessuna automazione contiene «' + esc(ui.q.trim()) + '».' : 'Nessuna voce con questo filtro.') + ' <button class="cx-btn" data-au-clear="1">Togli il filtro</button></div>';
     }
