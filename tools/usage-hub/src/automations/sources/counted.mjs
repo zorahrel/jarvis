@@ -22,17 +22,26 @@ function get(url, { ca, token }) {
   });
 }
 
+const TOPICS = 'https://127.0.0.1:3333';
+
+// Ricorrenze accese delle board di Topics. `fetchJson(path)` risponde col JSON della rotta.
+// Topics non ha `/api/boards`: l'elenco delle board è `/api/all-boards/projects`
+// ({projects:[{projectId}]}) e ogni board risponde {schedules:[{enabled}]}.
+// Una ricorrenza spenta non gira, quindi non è un'automazione da contare.
+export async function countTopicsSchedules(fetchJson) {
+  const { projects = [] } = await fetchJson('/api/all-boards/projects');
+  let total = 0;
+  for (const p of projects) {
+    const { schedules = [] } = await fetchJson(`/api/boards/${encodeURIComponent(p.projectId)}/scheduled-cards`);
+    total += schedules.filter((s) => s.enabled === true).length;
+  }
+  return total;
+}
+
 async function defaultTopics() {
   const token = execFileSync('security', ['find-generic-password', '-s', 'topics', '-a', 'agent-token', '-w'], { encoding: 'utf8', timeout: 5000 }).trim();
   const ca = fs.readFileSync(path.join(home(), 'Projects/topics-app/certs/ca-cert.pem'));
-  const boards = await get('https://127.0.0.1:3333/api/boards', { ca, token });
-  const list = Array.isArray(boards) ? boards : boards.boards || [];
-  let total = 0;
-  for (const b of list) {
-    const cards = await get(`https://127.0.0.1:3333/api/boards/${b.id}/scheduled-cards`, { ca, token });
-    total += (Array.isArray(cards) ? cards : cards.cards || cards.scheduled || []).length;
-  }
-  return total;
+  return countTopicsSchedules((p) => get(TOPICS + p, { ca, token }));
 }
 
 export async function readCounted({ codexDir, jcodeQueue, topics = defaultTopics } = {}) {

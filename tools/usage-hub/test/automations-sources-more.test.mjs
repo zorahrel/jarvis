@@ -9,7 +9,7 @@ import { readDesktop } from '../src/automations/sources/claude-desktop.mjs';
 import { readWorkflows } from '../src/automations/sources/workflows.mjs';
 import { createGithubSource } from '../src/automations/sources/github.mjs';
 import { createPcSource } from '../src/automations/sources/pc.mjs';
-import { readCounted } from '../src/automations/sources/counted.mjs';
+import { readCounted, countTopicsSchedules } from '../src/automations/sources/counted.mjs';
 
 const FIX = 'test/fixtures/automations';
 
@@ -122,4 +122,22 @@ test('counted: codex, jcode, topics noto o ignoto', async () => {
   assert.deepEqual(r.counts, { codex: 2, jcode: 3, topics: 0 });
   const r2 = await readCounted({ codexDir, jcodeQueue: queue, topics: async () => { throw new Error('giù'); } });
   assert.equal(r2.counts.topics, null);
+});
+
+test('counted: topics legge le rotte che Topics ha davvero e conta solo le ricorrenze accese', async () => {
+  // Forme vere misurate il 24/10: /api/all-boards/projects → {projects:[{projectId}]},
+  // /api/boards/:id/scheduled-cards → {schedules:[{enabled}]}. /api/boards non esiste (404).
+  const asked = [];
+  const routes = {
+    '/api/all-boards/projects': { projects: [{ projectId: 'a', name: 'A' }, { projectId: 'b c', name: 'B' }] },
+    '/api/boards/a/scheduled-cards': { schedules: [{ id: 1, enabled: true }, { id: 2, enabled: false }] },
+    '/api/boards/b%20c/scheduled-cards': { schedules: [{ id: 3, enabled: true }] },
+  };
+  const fetchJson = async (p) => {
+    asked.push(p);
+    if (!(p in routes)) throw new Error('http 404');
+    return routes[p];
+  };
+  assert.equal(await countTopicsSchedules(fetchJson), 2);
+  assert.ok(!asked.includes('/api/boards'), 'chiede /api/boards, che in Topics non esiste');
 });
