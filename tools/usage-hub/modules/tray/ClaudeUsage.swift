@@ -1232,10 +1232,12 @@ func automationsRow(actionTarget: AnyObject?) -> NSMenuItem {
 }
 
 // Ciò che il clic fa di sincrono prima che il menu compaia, oltre a costruirlo se non è pronto: oggi niente.
-// La mutazione della barra (scripts/tray-perf.sh --mutate) ci rimette una lettura di rete e la barra deve diventare rossa.
+// La mutazione della barra (scripts/tray-perf.sh --mutate) rimette nel clic il blocco di prima del 24/10: lettura di rete
+// e due letture dei processi a mezzo secondo l'una dall'altra sul thread principale. La barra deve diventare rossa.
 func clickWork() {
     #if TRAY_PERF_MUTATE
     _ = try? Data(contentsOf: URL(string: hubURL + "/api/overview")!)
+    let s = ProcSampler(); _ = s.sample(); Thread.sleep(forTimeInterval: 0.5); _ = s.sample()
     #endif
 }
 
