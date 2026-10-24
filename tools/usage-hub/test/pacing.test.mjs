@@ -79,11 +79,10 @@ test('il batch su un provider veloce aspetta finché il ritmo torna a 1', () => 
   assert.equal(new Date(g.waitUntil).toISOString(), new Date(NOW + 5 * D - 7 * D + 3.5 * D).toISOString());
 });
 
-test('avvisi di ritmo: veloce ed esaurito in anticipo, Muse escluso', async () => {
+test('avvisi di ritmo: solo esaurito in anticipo; Codex veloce tace (lo gestisce il gate), Muse escluso', async () => {
   const { paceAlerts } = await import('../src/alerts.mjs');
   const ev = paceAlerts({ at: NOW, pace: buildPace(overview, { now: NOW }) });
-  assert.deepEqual(ev.map((e) => e.id).sort(), ['empty:claude/account-b', 'pace:codex/codex']);
-  assert.match(ev.find((e) => e.id === 'pace:codex/codex').message, /volte il ritmo/);
+  assert.deepEqual(ev.map((e) => e.id).sort(), ['empty:claude/account-b']);
 });
 
 test('--provider: chiede solo per quel provider', () => {

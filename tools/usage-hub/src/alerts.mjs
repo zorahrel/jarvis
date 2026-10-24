@@ -43,17 +43,16 @@ function musePaceAlert(report) {
 }
 
 // Ritmo di ogni abbonamento (report.pace da src/pacing.mjs): un avviso a settimana per account
-// quando consuma troppo in fretta o finisce con più di un giorno di anticipo. Muse ha già il suo.
+// quando finisce con più di un giorno di anticipo. Muse ha già il suo.
+// Il «consuma N volte il ritmo» non avvisa più (24/10): 25 messaggi su 32 in una settimana, e sopra quel ritmo
+// il gate di delegate sposta già da solo il lavoro differibile sul gratis. Il ritmo resta nell'hub e nella tray.
 export function paceAlerts(report) {
   const out = [];
   for (const r of report.pace || []) {
     if (r.provider === 'muse') continue;
     const daysEarly = (r.resetsAt - (report.at || Date.now())) / 86400000;
     const reset = new Intl.DateTimeFormat('it-IT', { timeZone: 'Europe/Rome', weekday: 'short', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }).format(new Date(r.resetsAt));
-    if (r.status === 'veloce') {
-      out.push({ id: `pace:${r.provider}/${r.account}`, subject: `${r.provider} pace`, value: r.used, threshold: r.elapsedPct, week: r.resetsAt,
-        message: `${r.provider} (${r.account}) consuma ${formatPct(r.pace)} volte il ritmo: ${formatPct(r.used)}% usato col ${r.elapsedPct}% di settimana passato. Per arrivare al reset (${reset}) resta ${formatPct(r.perDay)}% al giorno: il lavoro differibile va sul gratis.` });
-    } else if (r.status === 'esaurito' && daysEarly > 1) {
+    if (r.status === 'esaurito' && daysEarly > 1) {
       out.push({ id: `empty:${r.provider}/${r.account}`, subject: `${r.provider} esaurito`, value: r.used, threshold: 100, week: r.resetsAt,
         message: `${r.provider} (${r.account}) è esaurito con ${formatPct(daysEarly)} giorni d'anticipo, torna ${reset}.` });
     }
