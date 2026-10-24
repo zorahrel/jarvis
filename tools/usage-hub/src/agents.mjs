@@ -83,7 +83,8 @@ export function workLabel(t = '', n = 60) {
     .replace(/(?<![\w/])(~|\.{1,2})?\/[^\s,;]+|\b[\w-]+\.(jsonl?|mjs|js|ts|tsx|swift|py|sh|md|ya?ml)\b/g, ' ')
     .replace(/\b[0-9a-f]{8}-[0-9a-f-]{27,}\b|\b[0-9a-f]{12,}\b/gi, ' ')
     .replace(/\s--?[a-z][\w-]*/g, ' ')
-    .replace(/\s+/g, ' ').trim()
+    .replace(/\s+/g, ' ').replace(/\s+([,.;:])/g, '$1').trim()
+    .replace(/^(in|on|at|nel|nella|dentro)[,:]\s*/i, '')                     // «In <percorso>, applica…» senza il percorso
     .replace(/^(TASK|Compito|Task|Dalla Regia|Da Regia|Dalla sessione[^.:]*)\s*[.:,-]?\s*/i, '')
     .replace(/^Richiesta di \w+[\s,]*[:.]?\s*/i, '')
     .replace(/^(sessione (del|di|della) [^:.,]+[:.,]?\s*)/i, '');

@@ -154,6 +154,7 @@ test('workLabel: il lavoro in parole, senza id, percorsi, comandi né preamboli'
   assert.equal(workLabel('Dalla Regia (sessione che coordina). Richiesta di Attilio, 24/10 13:20: sistema la tray. Poi fermati.'), 'Sistema la tray');
   assert.equal(workLabel('TASK (code on a clear spec, Python 3, in /Users/x/scripts/a.py) Scrivi il parser delle fatture'), 'Scrivi il parser delle fatture');
   assert.equal(workLabel('diag:chi-lancia'), 'Diagnosi: chi lancia');
+  assert.equal(workLabel('In /Users/x/repo, apply these fixes from an independent review'), 'Apply these fixes from an independent review');
   assert.equal(workLabel('Home page'), 'Home page');
   assert.equal(workLabel('Tray: verifica UI/UX'), 'Tray: verifica UI/UX');
   assert.equal(workLabel(''), '');
