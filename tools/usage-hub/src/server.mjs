@@ -452,7 +452,7 @@ export function createServer(config, deps = {}) {
       // I nomi vengono dai dati: il nome di questo Mac da macOS, quello del PC da config.pcName.
       if (req.url === '/api/machines') {
         const [mac, pc] = await Promise.all([macWatch.snapshot().catch(() => null), pcState()]);
-        return send(200, 'application/json', JSON.stringify([macMachine(mac, { name: computerName() }), pcMachine(pc, { name: config.pcName || 'PC', jobs: offloadJobs() })].filter(Boolean)));
+        return send(200, 'application/json', JSON.stringify([macMachine(mac, { name: computerName() }), pcMachine(pc, { name: config.pcName || 'PC', jobs: offloadJobs().map((j) => ({ ...j, title: (j.session && loadDesktopSessions().get(j.session)?.title) || null })) })].filter(Boolean)));
       }
       // per gli agenti: chi è sospetto e perché (?all=1 anche gli ok). Mai vecchio di 2 minuti; al primo giro si legge adesso.
       if (req.url.startsWith('/api/mac/trust')) { if (!trust.last.at) await trust.scan(); return send(200, 'application/json', JSON.stringify(trust.report({ all: /[?&]all=1/.test(req.url) }))); }

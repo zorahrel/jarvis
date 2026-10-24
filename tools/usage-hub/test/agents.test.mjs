@@ -147,3 +147,26 @@ test('openclawBucket: le chat di Jarvis tornano al loro bucket, i sottoagenti re
   assert.equal(openclawBucket('jarvis', 'a', { resolve }), 'jarvis');
   assert.equal(openclawBucket('openclaw/sottoagenti', 'a', {}), 'openclaw/sottoagenti');
 });
+
+test('workLabel: il lavoro in parole, senza id, percorsi, comandi né preamboli', async () => {
+  const { workLabel } = await import('../src/agents.mjs');
+  assert.equal(workLabel('[cron:e2c88c80-2e8a-4e1c-a494-c15115846c6e outreach-sync] Esegui il conteggio e aggiorna Ti aspetta: lancia lo script'), 'Esegui il conteggio e aggiorna Ti aspetta');
+  assert.equal(workLabel('Dalla Regia (sessione che coordina). Richiesta di Attilio, 24/10 13:20: sistema la tray. Poi fermati.'), 'Sistema la tray');
+  assert.equal(workLabel('TASK (code on a clear spec, Python 3, in /Users/x/scripts/a.py) Scrivi il parser delle fatture'), 'Scrivi il parser delle fatture');
+  assert.equal(workLabel('diag:chi-lancia'), 'Diagnosi: chi lancia');
+  assert.equal(workLabel('Home page'), 'Home page');
+  assert.equal(workLabel('Tray: verifica UI/UX'), 'Tray: verifica UI/UX');
+  assert.equal(workLabel(''), '');
+  assert.ok(workLabel('parola '.repeat(15)).endsWith('…'));
+});
+
+test('scanAgents: le chiamate che ricavano il titolo di una card non sono agenti al lavoro', async () => {
+  const { scanAgents } = await import('../src/agents.mjs');
+  const fs = await import('node:fs'); const os = await import('node:os'); const path = await import('node:path');
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'wl-')); const dir = path.join(root, '-Users-x-proj'); fs.mkdirSync(dir);
+  const line = (t) => JSON.stringify({ type: 'user', cwd: '/Users/x/proj', message: { role: 'user', content: t }, timestamp: new Date().toISOString() }) + '\n' + claudeLine(NOW - 1000, { cwd: '/Users/x/proj' }) + '\n';
+  fs.writeFileSync(path.join(dir, 'a.jsonl'), line('Da questa richiesta ricava un TITOLO breve per una card di lavoro: 3-6 parole'));
+  fs.writeFileSync(path.join(dir, 'b.jsonl'), line('Sistema la tray'));
+  const { agents } = scanAgents({ claudeRoot: root, codexRoot: path.join(root, 'no'), museRoot: path.join(root, 'no') });
+  assert.deepEqual(agents.map((a) => a.title), ['Sistema la tray']);
+});

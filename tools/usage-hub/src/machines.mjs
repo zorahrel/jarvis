@@ -56,12 +56,40 @@ export function offloadJobs({ dir = path.join(os.homedir(), '.cache', 'offload',
 }
 function pidAlive(pid) { try { process.kill(pid, 0); return true; } catch (e) { return e.code === 'EPERM'; } }
 
-// Il comando in parole: «i test di usage-hub», «la build di quadra»; il resto com'è, accorciato.
+// Il lavoro in parole, mai il comando: la descrizione data a offload (--cosa), sennò «i test di usage-hub»,
+// «la build di quadra», «l'installazione delle dipendenze di …»; un comando che non si riconosce è «un lavoro in <cartella>».
 export function jobText(j) {
+  if (j.what) return String(j.what);
   const c = String(j.cmd || '').trim(), d = j.dir || '';
   const what = /playwright|e2e/i.test(c) ? 'i test nel browser' : /\btest\b|vitest|jest|pytest/i.test(c) ? 'i test'
-    : /\bbuild\b|tsc\b|cargo build|make\b/i.test(c) ? 'la build' : null;
-  return what ? `${what}${d ? ' di ' + d : ''}` : (c.length > 40 ? c.slice(0, 39) + '…' : c) + (d ? ` (${d})` : '');
+    : /\bbuild\b|tsc\b|cargo build|make\b/i.test(c) ? 'la build'
+    : /\b(npm|pnpm|yarn|bun) (i|install|ci)\b/i.test(c) ? "l'installazione delle dipendenze"
+    : /\blint\b|eslint|biome/i.test(c) ? 'il controllo del codice' : null;
+  return what ? `${what}${d ? ' di ' + d : ''}` : `un lavoro${d ? ' in ' + d : ''}`;
+}
+
+// Il motivo grezzo di wf-autosleep (winfleet) in frasi: «ssh attivo (2 sessioni); processo node a 2,1 core» → parole.
+// CPU e GPU stanno già nelle barre, l'encoder è lo stream: non diventano righe.
+const APP = { node: 'Node', python: 'Python', python3: 'Python', chrome: 'Chrome', msedge: 'Edge', code: 'VS Code', ollama: 'Ollama', pwsh: 'PowerShell', powershell: 'PowerShell', sshd: 'il collegamento dal Mac', 'llama-server': 'un modello locale', obs64: 'OBS' };
+export const appName = (n = '') => { const b = String(n).split(/[\\/]/).pop().replace(/\.exe$/i, ''); return APP[b.toLowerCase()] || b; };
+export function pcWhy(why = '') {
+  const out = [];
+  for (const part of String(why).split(/;\s*/)) {
+    let m;
+    if ((m = part.match(/^ssh attivo \((\d+) session/))) out.push(m[1] === '1' ? 'Collegato dal Mac' : `Collegato dal Mac (${m[1]} connessioni)`);
+    else if (/^stream porta/.test(part)) out.push('Sta trasmettendo lo schermo');
+    else if ((m = part.match(/^processo\s+(\S+)\s+a\s+([\d.,]+)\s+core/))) out.push(`Il programma più pesante è ${appName(m[1])}, ${m[2].replace('.', ',')} core`);
+    else if ((m = part.match(/^richiesta di alimentazione:\s*(.*)/))) {
+      // «[DRIVER] NVIDIA High Definition Audio (HDAUDIO\…)» → il nome del driver; «[PROCESS] \Device\…\obs64.exe» → OBS
+      const raw = m[1].replace(/\s*\(.*$/, '').trim();
+      const who = /^\[DRIVER\]/i.test(raw) ? `Il driver ${raw.replace(/^\[\w+\]\s*/, '')}` : appName(raw.replace(/^\[\w+\]\s*/, ''));
+      out.push(`${cap(who || 'Un programma')} lo tiene sveglio`);
+    }
+    else if ((m = part.match(/^sospensione \(inattivo da (\d+) min/))) out.push(`Si sta addormentando: senza lavoro da ${m[1]} minuti`);
+    else if ((m = part.match(/^inattivo da (\d+) min \(soglia (\d+)/))) out.push(`Senza lavoro da ${m[1]} minuti: dorme fra ${Math.max(1, m[2] - m[1])}`);
+    else if ((m = part.match(/^inattivo: inizio conteggio \(soglia (\d+)/))) out.push(`Senza lavoro da poco: dorme dopo ${m[1]} minuti`);
+  }
+  return out;
 }
 
 export function pcMachine(p, { name = 'PC', id = 'pc', jobs = [], now = Date.now() } = {}) {
@@ -81,12 +109,12 @@ export function pcMachine(p, { name = 'PC', id = 'pc', jobs = [], now = Date.now
   // prima cosa sta facendo per noi: cosa, da quanto, per chi
   for (const j of jobs) {
     const mins = Math.max(0, Math.round((now - j.at) / 60000));
-    lines.push(`Sta lavorando: ${jobText(j)} · da ${mins < 1 ? 'meno di 1 min' : mins + ' min'} · per ${j.who || 'terminale'}`);
+    const who = j.title ? `«${j.title}»` : j.who === 'terminale' || !j.who ? 'un terminale' : j.who;
+    lines.push(`${cap(jobText(j))} per ${who}, da ${mins < 1 ? 'meno di un minuto' : mins === 1 ? '1 minuto' : mins + ' minuti'}`);
   }
-  if (procs.length) lines.push('Ci gira: ' + procs.map((x) => `${x.name} a ${num(x.cores)} core`).join(', '));
-  if (p.pc === 'acceso' && why) lines.push(cap(why));
-  if (p.pc === 'sconosciuto' && why) lines.push(cap(why));
-  if (p.avviso) lines.push(`Il Mac è a ${num(p.mac)} per core (soglia ${num(p.soglia)}) e questa macchina dorme: suite e build vanno con offload, che la sveglia`);
+  // il motivo di wf-autosleep in parole; quello che non si sa tradurre non si mostra (niente testo grezzo nella card)
+  if (p.pc !== 'dorme') lines.push(...pcWhy(why));
+  if (p.avviso) lines.push(`Il Mac è carico (${num(p.mac)} per core, soglia ${num(p.soglia)}) e il PC dorme: test e build pesanti lo svegliano da soli`);
   const level = p.avviso ? 1 : Math.max(0, ...metrics.map((m) => m.level));
   const caption = p.pc === 'dorme' ? 'si sveglia da sola con offload' : p.pc === 'sconosciuto' ? 'stato non letto' : 'dorme dopo 20 min senza lavoro';
   // offload attivo = sta lavorando per noi, anche se pc-state non l'ha ancora visto (legge una volta al minuto)

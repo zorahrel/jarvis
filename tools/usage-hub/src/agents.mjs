@@ -64,10 +64,38 @@ export function runStart(text, fallback) {
 }
 // Il titolo è il primo messaggio quando manca aiTitle: il contesto iniettato dagli harness (ambiente Claude Code,
 // intestazione OpenClaw) non è un titolo e da lì in poi si taglia tutto.
-export const clip = (s, n = 80) => { s = s.replace(/(#\s*Environment\b|:?\s*-\s*Primary working directory|Conversation info:\s*(\[|⟦)openclaw:ctx)[\s\S]*$/, '').replace(/\\n|\\t/g, ' ').replace(/\[[^\]]*GMT[^\]]*\]|<<<[^>]*>>>|<\/?[a-z-]+>|# Environment You have been invoked in the following environm\w*|\[Subagent Context\]|You are running as a subagent \([^)]*\)\.?|Complete the current \[Subagent Task\][^:]*:?|Conversation info: \[openclaw:ctx\]/g, ' ').replace(/\s+/g, ' ').trim();
+export const clip = (s, n = 240) => { s = s.replace(/(#\s*Environment\b|:?\s*-\s*Primary working directory|Conversation info:\s*(\[|⟦)openclaw:ctx)[\s\S]*$/, '').replace(/\\n|\\t/g, ' ').replace(/\[[^\]]*GMT[^\]]*\]|<<<[^>]*>>>|<\/?[a-z-]+>|# Environment You have been invoked in the following environm\w*|\[Subagent Context\]|You are running as a subagent \([^)]*\)\.?|Complete the current \[Subagent Task\][^:]*:?|Conversation info: \[openclaw:ctx\]/g, ' ').replace(/\s+/g, ' ').trim();
   // promemoria iniettati dall'app (sessioni collegate, sessione nata da un'altra) non sono un titolo: dopo i tag tolti
   if (/^(Linked sessions now \(status, not an instruction\)|Background \(from the session that started this one\))/.test(s)) s = '';
   return s.length > n ? s.slice(0, n - 1) + '…' : s; };
+
+// Il lavoro in parole per la tray: il titolo senza id, percorsi, comandi né preamboli dell'harness, prima frase sola.
+// «[cron:<id> nome] Esegui…» → «Esegui…», «TASK (spec…) Scrivi…» → «Scrivi…», «diag:freni» → «Diagnosi: freni».
+const STEP = { fix: 'Correzione', fix2: 'Correzione', diag: 'Diagnosi', verifica: 'Verifica', misura: 'Misura', review: 'Revisione', test: 'Test' };
+export function workLabel(t = '', n = 60) {
+  let s = String(t || '').replace(/…$/, '');
+  const step = s.match(/^([a-z0-9]+):([\w.-]+)$/i);
+  if (step) return `${STEP[step[1].toLowerCase()] || step[1]}: ${step[2].replace(/[-_]+/g, ' ')}`;
+  s = s.replace(/\[(cron|subagent|task)[^\]]*\]/gi, ' ')
+    .replace(/\([^)]*\)?/g, ' ')                                         // parentesi, anche quella tagliata dal clip
+    .replace(/`[^`]*`?/g, ' ')
+    .replace(/\b\d{1,2}[:.]\d{2}\b|\b\d{1,2}\/\d{1,2}(\/\d{2,4})?\b/g, ' ')         // ore e date del preambolo
+    .replace(/(?<![\w/])(~|\.{1,2})?\/[^\s,;]+|\b[\w-]+\.(jsonl?|mjs|js|ts|tsx|swift|py|sh|md|ya?ml)\b/g, ' ')
+    .replace(/\b[0-9a-f]{8}-[0-9a-f-]{27,}\b|\b[0-9a-f]{12,}\b/gi, ' ')
+    .replace(/\s--?[a-z][\w-]*/g, ' ')
+    .replace(/\s+/g, ' ').trim()
+    .replace(/^(TASK|Compito|Task|Dalla Regia|Da Regia|Dalla sessione[^.:]*)\s*[.:,-]?\s*/i, '')
+    .replace(/^Richiesta di \w+[\s,]*[:.]?\s*/i, '')
+    .replace(/^(sessione (del|di|della) [^:.,]+[:.,]?\s*)/i, '');
+  s = s.split(/(?<=[.!?])\s|\s[—–-]\s|;\s/)[0];
+  // «Tray: verifica UI/UX» resta intero (prima dei due punti c'è un nome); «Esegui il conteggio…: lancia lo script» si ferma lì
+  const colon = s.indexOf(': '); if (colon > 0 && s.slice(0, colon).split(' ').length >= 3) s = s.slice(0, colon);
+  s = s.replace(/[.:,;]+$/, '').trim();
+  if (s.length < 3) return '';
+  s = s[0].toUpperCase() + s.slice(1);
+  if (s.length > n) { const cut = s.slice(0, n - 1); s = (cut.slice(0, cut.lastIndexOf(' ')) || cut) + '…'; }
+  return s;
+}
 
 // Chiave progetto allineata a quella del report (gruppi, basename del cwd); le sessioni dentro ~/.openclaw sono sottoagenti Jarvis.
 export function keyFor(cwd, dirName, { groups = [], ocRoot } = {}) {
@@ -168,8 +196,10 @@ export function scanAgents({ now = Date.now(), claudeRoot = path.join(os.homedir
   codexSessions(codexRoot, now, opts, agents, lastSeen);
   museSessions(museRoot, now, opts, agents, lastSeen);
   for (const q of queue) if (q.status === 'running') agents.push({ kind: 'coda', provider: q.provider || 'muse', model: modelLabel(q.provider === 'claude' ? 'sonnet' : q.provider === 'codex' ? 'gpt' : 'muse'), project: q.project || '', title: clip(q.task), startedAt: q.startedAt, lastActivity: Date.now() });
-  agents.sort((a, b) => b.lastActivity - a.lastActivity);
-  return { agents, lastSeen };
+  // le chiamate one-shot con cui Topics ricava il titolo di una card non sono lavoro: 40 righe «sessione» in Home il 24/10
+  const real = agents.filter((a) => !/^Da questa richiesta ricava un TITOLO/i.test(a.title || ''));
+  real.sort((a, b) => b.lastActivity - a.lastActivity);
+  return { agents: real, lastSeen };
 }
 
 // Riassunto per progetto: conteggi per modello, avviso Opus.
@@ -179,7 +209,7 @@ export function summarize(agents, { now = Date.now(), claudePct = 0 } = {}) {
   const out = {};
   for (const [project, list] of Object.entries(by)) {
     const models = {};
-    for (const a of list) { const k = `${a.provider}|${a.model}`; models[k] = (models[k] || 0) + 1; }
+    for (const a of list) { const k = `${a.provider}|${a.model}`; models[k] = (models[k] || 0) + 1; a.work = workLabel(a.title) || null; }
     // i figli subito sotto la sessione che li ha lanciati, così le viste li rientrano senza ricostruire l'albero
     const kids = new Map(); for (const a of list) if (a.parent) kids.set(a.parent, [...(kids.get(a.parent) || []), a]);
     const roots = list.filter((a) => !a.parent || !list.some((b) => b.cliId === a.parent && !b.parent));
@@ -232,9 +262,10 @@ export function pickTopics(a, topics) {
 export function attachOpen(agents, { desktop = new Map(), topics = [] } = {}) {
   for (const a of agents) {
     const d = a.cliId && desktop.get(a.cliId);
-    if (d) { a.open = { url: desktopUrl(d.id), via: 'Claude Code desktop' }; continue; }
+    // il titolo che l'app dà alla sessione dice il lavoro in parole («Tray UI»), meglio del primo messaggio
+    if (d) { a.open = { url: desktopUrl(d.id), via: 'Claude Code desktop' }; if (d.title) a.title = clip(d.title); continue; }
     const t = a.provider === 'claude' && a.kind === 'sessione' && pickTopics(a, topics);
-    if (t) { a.open = { url: topicsUrl(t.sessionId), via: 'tab Topics' }; continue; }
+    if (t) { a.open = { url: topicsUrl(t.sessionId), via: 'tab Topics' }; if (t.title && t.title !== 'chat') a.title = clip(t.title); continue; }
     a.where = a.parent ? 'sottoagente di una sessione Claude Code: si segue dalla sessione che l\'ha lanciato'
       : a.kind === 'sottoagente' ? 'gira dentro OpenClaw come sottoagente: non ha una pagina da aprire'
       : a.kind === 'coda' ? 'lavoro della coda lanciato da delegate, senza finestra'
