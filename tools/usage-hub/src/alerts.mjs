@@ -46,16 +46,38 @@ function musePaceAlert(report) {
 // quando finisce con più di un giorno di anticipo. Muse ha già il suo.
 // Il «consuma N volte il ritmo» non avvisa più (24/10): 25 messaggi su 32 in una settimana, e sopra quel ritmo
 // il gate di delegate sposta già da solo il lavoro differibile sul gratis. Il ritmo resta nell'hub e nella tray.
+// Unica eccezione al silenzio sul ritmo (24/10): un account Claude oltre BYPASS_PACE volte il ritmo che nelle ultime
+// 2 ore è salito ancora, mentre un altro account è in linea. Il proxy VDM l'avrebbe già lasciato (strategia margin):
+// se sale, lo usa qualcuno fuori dal proxy, di solito il desktop, che resta sull'account dell'accesso. Solo Attilio
+// può spostarlo, quindi l'avviso chiede una cosa precisa.
+const BYPASS_PACE = 2;
+const BYPASS_RISE = 2; // punti percentuali in 2 ore
+function riseLast2h(history, used, now) {
+  const h = (history || []).filter((x) => Number.isFinite(x.t) && Number.isFinite(x.v) && x.t * 1000 <= now - 2 * 3600000);
+  if (!h.length) return null;
+  const base = h.sort((a, b) => a.t - b.t).pop().v;
+  return base > used ? null : used - base;
+}
+
 export function paceAlerts(report) {
   const out = [];
-  for (const r of report.pace || []) {
-    if (r.provider === 'muse') continue;
-    const daysEarly = (r.resetsAt - (report.at || Date.now())) / 86400000;
+  const now = report.at || Date.now();
+  const rows = report.pace || [];
+  for (const r of rows) {
+    if (r.provider === 'muse' || r.unknown) continue;
+    const daysEarly = (r.resetsAt - now) / 86400000;
     const reset = new Intl.DateTimeFormat('it-IT', { timeZone: 'Europe/Rome', weekday: 'short', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }).format(new Date(r.resetsAt));
     if (r.status === 'esaurito' && daysEarly > 1) {
       out.push({ id: `empty:${r.provider}/${r.account}`, subject: `${r.provider} esaurito`, value: r.used, threshold: 100, week: r.resetsAt,
         message: `${r.provider} (${r.account}) è esaurito con ${formatPct(daysEarly)} giorni d'anticipo, torna ${reset}.` });
+      continue;
     }
+    if (r.provider !== 'claude' || r.used >= 100 || r.pace == null || r.pace < BYPASS_PACE) continue;
+    const rise = riseLast2h(r.history, r.used, now);
+    const calm = rows.find((o) => o.provider === 'claude' && o !== r && !o.unknown && o.used < 90 && o.pace != null && o.pace <= 1);
+    if (rise == null || rise < BYPASS_RISE || !calm) continue;
+    out.push({ id: `bypass:claude/${r.account}`, subject: 'claude fuori dal proxy', value: r.used, threshold: r.elapsedPct, week: r.resetsAt,
+      message: `Claude ${r.account} consuma ${formatPct(r.pace)} volte il ritmo e nelle ultime 2 ore è salito di altri ${formatPct(rise)} punti, mentre ${calm.account} è in linea (ritmo ${formatPct(calm.pace)}). Il proxy non lo sceglie più: lo usa qualcuno che non passa da lì, di solito il desktop, che resta sull'account dell'accesso. Accedi al desktop con ${calm.account}.` });
   }
   return out;
 }

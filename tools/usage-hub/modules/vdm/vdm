@@ -686,7 +686,7 @@ cmd_config() {
     echo -e "  ${DIM}  vdm config proxy on${NC}"
     echo -e "  ${DIM}  vdm config autoswitch off${NC}"
     echo -e "  ${DIM}  vdm config notifications off${NC}"
-    echo -e "  ${DIM}  vdm config rotation sticky|conserve|round-robin|spread|drain-first|balance${NC}"
+    echo -e "  ${DIM}  vdm config rotation sticky|conserve|round-robin|spread|drain-first|balance|reset-first|margin${NC}"
     echo -e "  ${DIM}  vdm config interval 15|30|60|120${NC}"
     echo -e "  ${DIM}  vdm config max-concurrent 1-50${NC}  ${DIM}[BETA] per-account cap for rotation=balance${NC}"
     echo -e "  ${DIM}  vdm config serialize on|off${NC}  ${DIM}[BETA]${NC}"
@@ -747,10 +747,10 @@ cmd_config() {
     fi
   elif [[ "$key" == "rotationStrategy" ]]; then
     case "$value" in
-      sticky|conserve|round-robin|spread|drain-first|balance|priority) ;;
+      sticky|conserve|round-robin|spread|drain-first|balance|priority|reset-first|margin) ;;
       *)
         echo -e "${RED}Invalid strategy: $value${NC}"
-        echo "  Options: sticky, conserve, round-robin, spread, drain-first, balance, priority"
+        echo "  Options: sticky, conserve, round-robin, spread, drain-first, balance, priority, reset-first, margin"
         return 1
         ;;
     esac

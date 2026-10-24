@@ -15,7 +15,7 @@ import { loadBudgets, loadMuseBudget } from './budgets.mjs';
 import { ROOT } from './config.mjs';
 import { loadOverrides, activeOverrides, addOverride, revokeOverride, addHold, revokeHold } from './overrides.mjs';
 import { forecast, headline } from './forecast.mjs';
-import { buildPace, gate, CLASSES, providerStates, projectState } from './pacing.mjs';
+import { buildPace, carryLastReading, gate, CLASSES, providerStates, projectState } from './pacing.mjs';
 import { route } from './route.mjs';
 import { enqueue, cancel, loadQueue, tick, recoverRunning, launchDelegate, createNotifier, sendWhatsApp } from './queue.mjs';
 import { newState, scanToday } from './sessions.mjs';
@@ -77,7 +77,7 @@ export function createServer(config, deps = {}) {
   // (sotto carico l'overview della tray costa decine di secondi, la delega non può aspettarla).
   let paceCache = null; let paceInflight = null;
   const fetchRows = () => (paceInflight ||= hubFetch(`${(config.tray && config.tray.url) || 'http://127.0.0.1:3360'}/api/overview`, { signal: AbortSignal.timeout(20000) })
-    .then((r) => r.json()).then((o) => { paceCache = { at: Date.now(), rows: buildPace(o) }; return paceCache.rows; })
+    .then((r) => r.json()).then((o) => { paceCache = { at: Date.now(), rows: carryLastReading(buildPace(o), paceCache && paceCache.rows) }; return paceCache.rows; })
     .finally(() => { paceInflight = null; }));
   if (!deps.noLive && !deps.inProcess) setImmediate(() => fetchRows().catch(() => {}));
   async function paceRows() {

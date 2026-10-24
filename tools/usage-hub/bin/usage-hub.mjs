@@ -103,11 +103,20 @@ if (cmd === 'serve') {
   if (dry && applied.blocked.length) console.log(`[dry-run] bloccherei: ${applied.blocked.join(', ')}`);
 } else if (cmd === 'pace') {
   // Ritmo per abbonamento: % usata contro % di settimana trascorsa, e quanto si può spendere al giorno.
-  for (const r of buildPace(await trayOverview())) {
+  // Le righe sono quelle del gate (/api/pace: copia di 60 s, con l'ultima lettura tenuta se una sonda salta);
+  // hub giù = overview della tray. «attivo» = l'account che VDM sta usando.
+  const base = `${(config.tray && config.tray.url) || 'http://127.0.0.1:3360'}`;
+  let rows;
+  try { rows = await (await fetch(`${base}/api/pace`, { signal: AbortSignal.timeout(5000) })).json(); } catch { rows = buildPace(await trayOverview()); }
+  for (const r of rows) {
     if (r.unknown) { console.log(`${`${r.provider}/${r.account}`.padEnd(30)} quota non letta`); continue; }
-    console.log(`${`${r.provider}/${r.account}`.padEnd(30)} ${String(r.used).padStart(4)}%  settimana ${String(r.elapsedPct).padStart(3)}%  ritmo ${r.pace ?? '-'}  ${r.perDay}%/g  reset ${hhmm(r.resetsAt)}  ${r.status}`);
+    console.log(`${`${r.provider}/${r.account}`.padEnd(30)} ${String(r.used).padStart(4)}%  settimana ${String(r.elapsedPct).padStart(3)}%  ritmo ${r.pace ?? '-'}  ${r.perDay}%/g  reset ${hhmm(r.resetsAt)}  ${r.status}${r.provider === 'claude' && r.active ? '  attivo' : ''}${r.stale ? '  (lettura vecchia)' : ''}`);
   }
-  for (const o of activeOverrides(loadOverrides())) console.log(`override: ${o.provider}${o.class ? `/${o.class}` : ''} fino a ${hhmm(o.until)}, da ${o.by}: ${o.reason}`);
+  // Chi prende un lavoro nuovo, per classe: lo stesso gate di delegate e della coda.
+  const ov = activeOverrides(loadOverrides());
+  const pick = (cls, opts = {}) => { const g = gate(rows, cls, { overrides: ov, ...opts }); return g.go ? `${g.provider}${g.account && g.provider === 'claude' ? `/${g.account}` : ''}` : 'aspetta'; };
+  console.log(`\nlavoro nuovo: interattivo → ${pick('interattivo')} · gusto → ${pick('gusto')} · meccanico con strumenti → ${pick('massivo', { skip: ['free'] })} · differibile → ${pick('batch', { skip: ['free'] })}`);
+  for (const o of ov) console.log(`override: ${o.provider}${o.class ? `/${o.class}` : ''} fino a ${hhmm(o.until)}, da ${o.by}: ${o.reason}`);
 } else if (cmd === 'allow') {
   // allow <provider> [--hours N] [--class X] --by CHI --reason PERCHÉ | --list | --revoke <provider>
   // Toglie solo il freno di pacing a tempo; quota esaurita, finestra 5h e riserva restano.

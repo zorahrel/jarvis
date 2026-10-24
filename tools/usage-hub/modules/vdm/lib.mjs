@@ -700,6 +700,30 @@ export function pickResetFirst(accounts, stateManager, excludeTokens = new Set()
 }
 
 /**
+ * "margin" (24/10): quota settimanale che resta, in % al giorno fino al reset. Sopra 100/7 l'account è
+ * indietro sul suo ritmo, sotto corre: chi ha più margine non è mai uno oltre il ritmo finché un altro è
+ * in linea, e a poche ore dal reset la quota avanzata pesa di più da sola (usa-o-perdi, come reset-first).
+ * Reset sconosciuto = account fresco: 100% su sette giorni. Lo stesso conto del gate del hub (perDay).
+ */
+const WEEK_SEC = 7 * 86400;
+export const MARGIN_HYSTERESIS = 1.25;
+export function weeklyMargin(st, now = Date.now()) {
+  const nowSec = Math.floor(now / 1000);
+  const used = Math.min(Math.max(st?.utilization7d || 0, 0), 1);
+  const reset = st?.resetAt7d && st.resetAt7d > nowSec ? st.resetAt7d : nowSec + WEEK_SEC;
+  return (1 - used) * 100 / Math.max((reset - nowSec) / 86400, 1 / 24);
+}
+
+export function pickMostMargin(accounts, stateManager, excludeTokens = new Set(), now = Date.now()) {
+  const candidates = accounts
+    .filter(a => isSelectableAccount(a, stateManager, excludeTokens, now))
+    .filter(a => (stateManager.get(a.token)?.utilization7d || 0) < WINDOW_FULL)
+    .map(a => ({ ...a, margin: weeklyMargin(stateManager.get(a.token), now), score: scoreAccount(a.token, stateManager) }))
+    .sort((a, b) => (b.margin - a.margin) || (a.score - b.score));
+  return candidates[0] || null;
+}
+
+/**
  * Last-resort pick: try an account even if state says it's limited, in case that
  * state is stale.
  *
@@ -798,6 +822,7 @@ export const ROTATION_STRATEGIES = {
   balance:       { label: 'Balance',       desc: 'Spread concurrent requests across accounts, capped per account' },
   priority:      { label: 'Priority',      desc: 'Prefer your highest-priority account; fail over on limit, switch back when it recovers' },
   'reset-first': { label: 'Reset first',   desc: 'Use the account whose weekly limit resets soonest, so its leftover quota is not lost' },
+  margin:        { label: 'Margin',        desc: 'Use the account with the most weekly quota left per day until its reset; never one running ahead of pace while another is on pace' },
 };
 
 export const ROTATION_INTERVALS = [15, 30, 60, 120]; // minutes
@@ -835,9 +860,12 @@ export function pickByStrategy(opts) {
   if (!currentAvailable) {
     // Must switch  - pick a replacement. Honor the priority ordering when that
     // strategy is active, otherwise fall back to lowest utilization as a safe default.
+    // margin: il sostituto è quello con più margine, non la 5h più bassa (un account a settimana quasi finita
+    // con la 5h vuota vinceva, e la richiesta dopo ricambiava).
     const best = strategy === 'priority'
       ? pickByPriority(accounts, stateManager, excludeTokens, now)
-      : pickBestAccount(accounts, stateManager, excludeTokens);
+      : (strategy === 'margin' && pickMostMargin(accounts, stateManager, excludeTokens, now))
+        || pickBestAccount(accounts, stateManager, excludeTokens);
     return { account: best, rotated: !!best };
   }
 
@@ -891,6 +919,17 @@ export function pickByStrategy(opts) {
         return { account: soonest, rotated: true };
       }
       return { account: null, rotated: false };
+    }
+
+    case 'margin': {
+      // Ogni cambio di account fa perdere la cache dei prompt a tutte le sessioni: si cambia solo se un altro
+      // ha almeno un quarto di margine in più. Settimana piena o modello in pausa sull'attivo: si cambia subito.
+      const best = pickMostMargin(accounts, stateManager, excludeTokens, now);
+      if (!best || best.token === currentToken) return { account: null, rotated: false };
+      const cur = stateManager.get(currentToken);
+      const mustLeave = excludeTokens.has(currentToken) || (cur?.utilization7d || 0) >= WINDOW_FULL;
+      if (!mustLeave && best.margin <= weeklyMargin(cur, now) * MARGIN_HYSTERESIS) return { account: null, rotated: false };
+      return { account: best, rotated: true };
     }
 
     case 'priority': {

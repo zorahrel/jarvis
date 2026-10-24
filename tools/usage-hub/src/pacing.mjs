@@ -16,10 +16,21 @@ export const CLASSES = {
   batch: ['free', 'muse', 'codex', 'claude'],
 };
 
+// Abbonamenti che restano nel gate anche quando la lettura salta: il limite lo fa rispettare il provider.
+// Claude no: senza lettura non si vede la riserva di Attilio.
+const READ_OPTIONAL = new Set(['codex', 'muse']);
+const CARRY_MS = 2 * 3600000;
+
 // Una riga per account con quota settimanale, dalla overview della tray.
 export function buildPace(overview, { now = Date.now() } = {}) {
   const rows = [];
   for (const p of overview.providers || []) {
+    // Sonda fallita (Codex: `codex app-server` in timeout col Mac carico, 24/10): senza riga il gate saltava
+    // l'abbonamento e il lavoro meccanico finiva su Claude. Riga «ignota», come Muse col mint muto.
+    if (!(p.accounts || []).length && p.error && READ_OPTIONAL.has(p.id)) {
+      rows.push({ provider: p.id, account: p.id, active: true, unknown: true, used: null, elapsedPct: null, pace: null, perDay: null, resetsAt: null, last24h: null, history: [], fiveHour: null, status: 'ignota' });
+      continue;
+    }
     for (const a of p.accounts || []) {
       const week = (a.quotas || []).find((q) => q.key === '7d');
       // Account vivo senza lettura o senza ora di reset (Muse col mint muto, 21/10): una riga «ignota» e non il vuoto,
@@ -49,10 +60,25 @@ export function buildPace(overview, { now = Date.now() } = {}) {
         history: week.history || [],
         fiveHour: five ? { used: Number(five.usedPct ?? five.pct ?? 0), resetsAt: five.resetsAt * 1000 } : null,
         status: used >= 100 ? 'esaurito' : pace !== null && pace > FAST ? 'veloce' : 'ok',
+        readAt: now,
       });
     }
   }
   return rows;
+}
+
+// Un abbonamento letto fino a poco fa e ora senza lettura tiene la sua ultima riga per due ore (stale: true):
+// una sonda in timeout non deve cambiare la decisione del gate da un minuto all'altro. Poi resta «ignota».
+export function carryLastReading(rows, last = [], { now = Date.now() } = {}) {
+  const out = [...rows];
+  for (const id of new Set((last || []).map((r) => r.provider))) {
+    if (out.some((r) => r.provider === id && !r.unknown)) continue;
+    const prev = last.filter((r) => r.provider === id && !r.unknown && r.readAt && now - r.readAt <= CARRY_MS);
+    if (!prev.length) continue;
+    for (let i = out.length - 1; i >= 0; i--) if (out[i].provider === id) out.splice(i, 1);
+    out.push(...prev.map((r) => ({ ...r, stale: true })));
+  }
+  return out;
 }
 
 // Consumo delle ultime 24h dallo storico dei campioni della tray ({t in secondi, v = % settimanale}).
@@ -102,8 +128,7 @@ export function gate(rows, cls, { now = Date.now(), reserve = 10, skip = [], pro
   const waits = [];
   for (const provider of order) {
     if (provider === 'free') return { go: true, provider: 'free', account: null, reason: 'canali gratis, nessuna quota' };
-    // Dentro un provider prima l'account che si resetta prima: la sua quota avanzata altrimenti si perde.
-    const accounts = rows.filter((r) => r.provider === provider).sort((x, y) => x.resetsAt - y.resetsAt);
+    const accounts = byMargin(rows.filter((r) => r.provider === provider));
     for (const r of accounts) {
       const why = blocker(r, cls, { now, reserve, priority: project?.priority || 'normale' });
       if (!why) return { go: true, provider, account: r.account, reason: reasonFor(r, now) };
@@ -120,6 +145,18 @@ export function gate(rows, cls, { now = Date.now(), reserve = 10, skip = [], pro
     // Per account: perché aspetta e a quale condizione riparte (la tray lo scrive nel blocco dell'account).
     waits: waits.map(({ provider, account, kind, why, until, target }) => ({ provider, account, kind, why, until, ...(target != null ? { target } : {}) })),
   };
+}
+
+// Dentro un provider prima l'account con più margine rispetto al reset: % che resta al giorno fino al reset (perDay).
+// Sopra 100/7 l'account è indietro sul suo ritmo, sotto corre: chi ha più margine non è mai uno oltre il ritmo
+// finché un altro è in linea, e a poche ore dal reset la quota avanzata pesa di più (usa-o-perdi).
+// Prima (fino al 24/10) vinceva chi si azzera prima, e un account oltre il ritmo prendeva tutto.
+// L'account attivo di VDM vale un quarto in più: la stessa isteresi del proxy (modules/vdm/lib.mjs, strategia
+// margin), così il gate nomina l'account che userà davvero `claude -p` e un cambio non fa perdere la cache per poco.
+export const MARGIN_HYSTERESIS = 1.25;
+function byMargin(accounts) {
+  const score = (r) => (r.perDay ?? -1) * (r.active ? MARGIN_HYSTERESIS : 1);
+  return accounts.sort((x, y) => (score(y) - score(x)) || ((x.resetsAt ?? Infinity) - (y.resetsAt ?? Infinity)));
 }
 
 // Soglie di ritmo per priorità del progetto: l'alta corre di più, la bassa si ferma prima.

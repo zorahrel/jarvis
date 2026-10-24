@@ -14,6 +14,30 @@ survives an upgrade; run it first after re-applying:
 
 ---
 
+## 2026-10-24 - strategia `margin`: un account alla volta veniva svuotato
+
+**Sintomo:** dal registro di VDM della settimana 18-24/10, un solo account per volta prendeva
+tutto: zorahrel il 18-21/10 (100% col 43% di settimana), attilio il 21-23/10 (99% col 41%),
+poi hi. `reset-first` sceglie chi si azzera prima anche quando corre oltre il ritmo, e lo tiene
+finché non è pieno.
+
+**Fix:** `lib.mjs`: `weeklyMargin()` = quota settimanale che resta, in % al giorno fino al
+reset (reset ignoto = 100% su 7 giorni); `pickMostMargin()` sceglie il margine più alto fra
+gli account selezionabili sotto il 90%; strategia `margin` in `pickByStrategy` con isteresi
+1,25 (si lascia l'attivo solo se un altro ha un quarto di margine in più: ogni cambio fa
+perdere la cache dei prompt a tutte le sessioni), uscita immediata se l'attivo ha la settimana
+piena o il modello in pausa; quando l'attivo non è disponibile il sostituto lo sceglie il
+margine, non la 5h più bassa. Margine sotto 100/7 = oltre il ritmo, sopra = in linea, quindi
+non si sceglie mai un account che corre se un altro è in linea; a poche ore dal reset la quota
+avanzata pesa di più da sola (usa-o-perdi). `vdm`: la CLI accetta `reset-first` e `margin`.
+Il gate del hub (`src/pacing.mjs`) ordina gli account con lo stesso conto e la stessa isteresi.
+
+**Prova:** `test/margin.test.mjs` (8 controlli; uno mostra che `reset-first` sceglie l'account
+che corre). Suite seriale 359/359. Daemon riavviato il 24/10 alle 02:38 a richieste ferme,
+`vdm config rotation margin`.
+
+---
+
 ## 2026-10-03 - un reset esterno lascia l'account bloccato fino al vecchio retry-after
 
 **Causa:** il probe riportava `allowed`, 5h 0% e 7d 0%, mentre il picker conservava
