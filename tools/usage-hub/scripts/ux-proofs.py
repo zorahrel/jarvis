@@ -70,7 +70,7 @@ def live_extras(b, out):
     for w in (1440, 375):
         pg = b.new_context(viewport={'width': w, 'height': 900}).new_page(); pg.set_default_timeout(120000)
         pg.goto(LIVE + '/#usage', wait_until='domcontentloaded'); wait_loaded(pg, f'consumi {w}', 60)
-        pg.wait_for_selector('table.share'); pg.evaluate("document.querySelectorAll('#t-usage details').forEach(d => d.open = true)"); pg.wait_for_timeout(500)
+        pg.wait_for_selector('#t-usage table.share', state='attached'); pg.evaluate("document.querySelectorAll('#t-usage details').forEach(d => d.open = true)"); pg.wait_for_selector('#t-usage table.share'); pg.wait_for_timeout(500)
         pg.screenshot(path=str(out / f'r6-consumi-{w}.png'), full_page=True)
         pg.context.close()
     pg = b.new_context(viewport={'width': 1440, 'height': 900}).new_page(); pg.set_default_timeout(120000)
