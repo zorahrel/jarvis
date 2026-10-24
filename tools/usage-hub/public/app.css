@@ -36,7 +36,7 @@ a { color:var(--accent); text-decoration:none; } a:hover { text-decoration:under
 @media (prefers-color-scheme: dark) { .b-muse { --brand:#4DA3FF; }
 
   /* in scuro il tono pieno è già chiaro: scurirlo lo spegnerebbe */
-  .pill { color:var(--tone,var(--fg-2)); } .cx-chip.te { color:var(--warn); } .cx-chip.rotto { color:var(--bad); } .cx-chip.va { color:var(--ok); } }
+  .pill { color:var(--tone,var(--fg-2)); } }
 
 /* ===== Guscio: sidebar a sinistra, contenuto a destra ===== */
 .shell { display:grid; grid-template-columns:224px minmax(0,1fr); min-height:100vh; }
@@ -72,7 +72,8 @@ body.embed header.top { display:none; } body.embed .shell { display:block; }
   header.top { position:static; height:auto; overflow:visible; border-right:0; border-bottom:1px solid var(--line); }
   .top-in { gap:10px; padding:12px; }
   /* 150 px: «Panoramica» con l'icona e il badge sta dentro il bottone (a 128 il badge usciva sotto «Diario») */
-  nav { display:grid; grid-template-columns:repeat(auto-fill,minmax(150px,1fr)); gap:4px; }
+  /* 166 px: anche col badge a 3 cifre («188») tutto sta dentro (a 150 sporgeva fino a 6 px) */
+  nav { display:grid; grid-template-columns:repeat(auto-fill,minmax(166px,1fr)); gap:4px; }
   .ng { display:contents; } .ngt { display:none; }
   nav button { background:var(--surface); border:1px solid var(--line); }
   main { padding:18px 14px 48px; }
@@ -441,7 +442,7 @@ table.svc { table-layout:fixed; width:100%; } .svc th:nth-child(2) { width:110px
 .cx-panel .au-card:focus { outline:none; }
 .cx-ph { display:flex; align-items:center; gap:8px; padding:12px 16px; border-bottom:1px solid var(--line); position:sticky; top:0; background:var(--surface); z-index:1; }
 .cx-sys { color:var(--mut); line-height:22px; }
-.cx-x { margin-left:auto; display:grid; place-items:center; border:0; background:none; color:var(--mut); width:32px; height:32px; border-radius:6px; cursor:pointer; }
+.cx-x { margin-left:auto; display:grid; place-items:center; border:0; background:none; color:var(--mut); width:44px; height:44px; border-radius:6px; cursor:pointer; }
 .cx-x:hover { background:var(--surface-2); color:var(--fg); }
 .cx-pb { padding:18px 18px 24px; }
 .cx-pb h3 { margin:0 0 6px; font-size:18px; font-weight:600; letter-spacing:-.015em; color:var(--fg); }
@@ -585,3 +586,12 @@ body { padding-top:var(--demo-h, 0px); }
 table.share.m th:nth-child(2) { width:110px; } table.share.m th:nth-child(3) { width:auto; }
 /* in colonne strette l'intestazione con il nome del provider va a capo invece di uscire */
 table.share .pvh { white-space:normal; flex-wrap:wrap; justify-content:flex-end; }
+
+/* in scuro il tono pieno dei chip è già chiaro: scurirlo lo spegnerebbe (3,6:1). Sta qui, dopo le regole base,
+   perché a pari specificità vince l'ultima (in cima al file perdeva) */
+@media (prefers-color-scheme: dark) { .cx-chip.te { color:var(--warn); } .cx-chip.rotto { color:var(--bad); } .cx-chip.va { color:var(--ok); } }
+/* un link senza classe è un link nel testo: sottolineato, così si distingue anche senza colore («apri» delle righe agente) */
+.tab a:not([class]):not([role]) { text-decoration:underline; text-underline-offset:2px; }
+/* «Ti aspetta»: percorsi e testi lunghi senza spazi vanno a capo invece di far scorrere la pagina */
+.tile-t, .tile-p, .tile-f { overflow-wrap:anywhere; }
+@media (max-width:560px) { .hub-mark { min-height:44px; } }

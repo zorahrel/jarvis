@@ -44,16 +44,17 @@
     return out.slice(0, 6);
   };
 
-  // Comandi alti almeno `min` px. I link dentro una frase sono esenti (WCAG 2.5.8): conta solo ciò che non è inline.
+  // Comandi di almeno `min`×`min` px (WCAG 2.5.5): logo, nav, comandi della tab e del pannello. I link dentro una
+  // frase sono esenti (2.5.8): conta solo ciò che non è inline. Prima si guardava solo l'altezza dei bottoni dell'header.
   window.__taps = function (min) {
     const out = [];
-    for (const e of document.querySelectorAll('header button, .tab.on button, .tab.on select, .tab.on input:not([type=hidden]), .tab.on summary, .tab.on a[href], .tab.on [role=button]')) {
+    for (const e of document.querySelectorAll('header a[href], header button, .tab.on button, .tab.on select, .tab.on input:not([type=hidden]), .tab.on summary, .tab.on a[href], .tab.on [role=button], .cx-panel button, .cx-panel a[href], .cx-panel summary')) {
       if (!vis(e) || e.closest('[hidden], .sr, .au-sr')) continue;
       const cs = getComputedStyle(e);
       if (e.tagName === 'A' && cs.display === 'inline') continue;
       if (e.type === 'checkbox' || e.type === 'radio') { const l = e.closest('label, .sw'); if (l && l.getBoundingClientRect().height >= min) continue; }
       const r = e.getBoundingClientRect();
-      if (r.height < min - 0.5) out.push(sel(e) + ' «' + txt(e) + '» ' + Math.round(r.height) + 'px');
+      if (r.height < min - 0.5 || r.width < min - 0.5) out.push(sel(e) + ' «' + txt(e) + '» ' + Math.round(r.width) + '×' + Math.round(r.height) + 'px');
     }
     return out;
   };
@@ -61,9 +62,13 @@
   // Il badge di «Ti aspetta» sta dentro il suo bottone della nav.
   window.__badge = function () {
     const b = document.getElementById('nwait'); if (!b || !vis(b)) return ['badge non visibile'];
-    const r = b.getBoundingClientRect(), q = b.closest('button').getBoundingClientRect();
-    return r.left >= q.left - 0.5 && r.right <= q.right + 0.5 && r.top >= q.top - 0.5 && r.bottom <= q.bottom + 0.5 ? []
+    const r = b.getBoundingClientRect(), btn = b.closest('button'), q = btn.getBoundingClientRect();
+    const out = r.left >= q.left - 0.5 && r.right <= q.right + 0.5 && r.top >= q.top - 0.5 && r.bottom <= q.bottom + 0.5 ? []
       : ['badge ' + [r.left, r.right, r.top, r.bottom].map(Math.round).join(',') + ' fuori dal bottone ' + [q.left, q.right, q.top, q.bottom].map(Math.round).join(',')];
+    // e non tocca l'etichetta («Panoramica»): almeno 2 px d'aria fra le due
+    const lab = [...btn.children].find((c) => c.tagName === 'SPAN' && c !== b);
+    if (lab) { const l = lab.getBoundingClientRect(); if (l.right > r.left - 2 && l.top < r.bottom && l.bottom > r.top) out.push('badge attaccato all\'etichetta (' + Math.round(r.left - l.right) + ' px)'); }
+    return out;
   };
 
   // Un comando si clicca davvero: al suo centro c'è lui, non qualcosa sopra (la fascia della demo copriva «Chiudi»).
@@ -72,6 +77,24 @@
     const r = e.getBoundingClientRect(), x = r.left + r.width / 2, y = r.top + r.height / 2, hit = document.elementFromPoint(x, y);
     return hit && (hit === e || e.contains(hit)) ? [] : [selector + ' coperto da ' + (hit ? sel(hit) : 'niente')];
   };
+  // Un link dentro una frase si distingue dal testo intorno: sottolineato, o almeno 3:1 di contrasto (WCAG 1.4.1).
+  // axe lo segna solo se è sicuro; qui si misura sempre («apri» delle righe agente era 2,1:1 in scuro).
+  const rgb = (c) => { const n = (c.match(/[\d.]+/g) || []).map(Number); return /^color\(/.test(c) ? n.slice(0, 3).map((v) => v * 255) : n.slice(0, 3); };
+  const lum = (c) => { const [r, g, b] = rgb(c).map((v) => { v /= 255; return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); }); return 0.2126 * r + 0.7152 * g + 0.0722 * b; };
+  const ratio = (a, b) => { const x = lum(a), y = lum(b); return (Math.max(x, y) + 0.05) / (Math.min(x, y) + 0.05); };
+  window.__inlineLinks = function () {
+    const out = [];
+    for (const a of document.querySelectorAll('.tab.on a[href]')) {
+      if (!vis(a)) continue;
+      const cs = getComputedStyle(a); if (cs.display !== 'inline') continue;
+      const p = a.parentElement; if (![...p.childNodes].some((n) => n !== a && (n.textContent || '').trim())) continue;
+      if (/underline/.test(cs.textDecorationLine)) continue;
+      const r = ratio(cs.color, getComputedStyle(p).color);
+      if (r < 3) out.push(sel(p) + ' > a «' + txt(a) + '» senza sottolineatura, ' + r.toFixed(2) + ':1 col testo');
+    }
+    return out.slice(0, 6);
+  };
+
   // La fascia ESEMPIO della demo: c'è, è in cima allo schermo e nessuno la copre (anche dopo aver scorso e col
   // pannello aperto). Senza fascia la demo sembrerebbe l'hub vero.
   window.__band = function () {

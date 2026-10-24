@@ -59,6 +59,8 @@ export function seedDemoAttesa(root, now = Date.now()) {
   fs.writeFileSync(f, [
     { kind: 'apri', id: 'es1', tipo: 'spesa', title: 'Rinnovare un piano a pagamento', why: 'Spesa di prova: 19 dollari al mese.', from: 'demo', at: now - 3 * 3600000 },
     { kind: 'apri', id: 'es2', tipo: 'vista', title: 'Guarda una pagina nuova', why: 'Ok a vista di prova.', link: '#journal', from: 'demo', at: now - 40 * 60000 },
+    // testi lunghi senza spazi, come un percorso: non devono far scorrere la pagina in orizzontale
+    { kind: 'apri', id: 'es3', tipo: 'decisione', title: 'Scegli dove salvare /esempio/cartella_molto_lunga_senza_spazi/sottocartella_di_prova', why: 'Il file /esempio/progetti/cliente_di_prova/documenti_condivisi/versione_finale_definitiva.pdf è in due posti.', from: 'agente_di_prova_con_un_nome_molto_lungo_senza_spazi', at: now - 20 * 60000 },
   ].map((r) => JSON.stringify(r)).join('\n') + '\n');
   return f;
 }

@@ -213,6 +213,9 @@ def main():
                         pg.evaluate("(document.querySelector('.cx-panel') || {}).scrollTop = 99999"); pg.wait_for_timeout(150)
                         bp = pg.evaluate('__band()')
                         check(not bp, f'{w}px pannello aperto: fascia ESEMPIO in vista {bp}')
+                        if w <= 560:
+                            pt = [x for x in pg.evaluate('__taps(44)') if 'cx-' in x or 'au-' in x]
+                            check(not pt, f'{w}px pannello: comandi di almeno 44×44 px {pt[:5]}')
                         pg.evaluate("document.querySelectorAll('.cx-panel details').forEach(d => d.open = true)")
                         if shots:
                             pg.screenshot(path=str(shots / f'pannello-{w}.png'))
@@ -236,15 +239,29 @@ def main():
                     pd.goto(url + '/#overview', wait_until='domcontentloaded')
                     v = axe_tabs(pd, axe, AXE_TABS)
                     check(not v, f'{w}px axe su {len(AXE_TABS)} tab in scuro: nessuna violazione seria {v[:4]}')
+                    links = []
+                    for t in ('overview', 'projects', 'journal', 'services'):
+                        goto_tab(pd, t); pd.add_script_tag(content=CHECKS_JS)
+                        links += [t + ': ' + x for x in pd.evaluate('__inlineLinks()')]
+                    check(not links, f'{w}px in scuro i link nel testo si distinguono (sottolineati o 3:1) {links[:3]}')
+                    # e il pannello aperto in scuro (il chip «Rotta» perdeva contrasto solo lì)
+                    goto_tab(pd, 'automations')
+                    pd.locator('#t-automations .cx-row[data-cx]:not(.cx-hdr)').first.click(); pd.wait_for_selector('.cx-panel'); wait_loaded(pd)
+                    pd.evaluate("document.querySelectorAll('.cx-panel .cx-chip').forEach(c => { const r = c.cloneNode(true); r.className = 'cx-chip rotto'; const t = c.cloneNode(true); t.className = 'cx-chip te'; c.after(r, t); })")
+                    pd.add_script_tag(content=axe)
+                    vp = pd.evaluate(AXE_RUN)
+                    check(not vp, f'{w}px axe sul pannello aperto in scuro (chip Ok, Ti aspetta, Rotta): nessuna violazione seria {vp[:4]}')
                     pd.context.close()
             # 6. badge dentro il bottone dove la nav è una griglia
-            for w in (700, 820):   # a 700 e 820 la griglia della nav stringe i bottoni sotto 150 px
+            for w in (520, 560, 700, 820, 959):   # dove la griglia della nav stringe i bottoni al minimo
                 pg = b.new_context(viewport={'width': w, 'height': 900}).new_page()
                 pg.goto(url + '/#overview', wait_until='domcontentloaded')
                 pg.wait_for_selector('#nwait:not([hidden])', timeout=60000)
                 pg.add_script_tag(content=CHECKS_JS)
-                bb = pg.evaluate('__badge()')
-                check(not bb, f'{w}px badge di «Ti aspetta» dentro il bottone {bb}')
+                for n in ('3', '88', '188'):   # anche con 2 e 3 cifre
+                    pg.evaluate(f"document.getElementById('nwait').textContent = '{n}'"); pg.wait_for_timeout(50)
+                    bb = pg.evaluate('__badge()')
+                    check(not bb, f'{w}px badge «{n}» di «Ti aspetta» dentro il bottone {bb}')
                 pg.context.close()
             # 7. Panoramica lenta: la barra deve aspettare la pagina vera, non fotografare il segnaposto
             pg = b.new_context(viewport={'width': 1440, 'height': 900}).new_page()
