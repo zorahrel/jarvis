@@ -264,10 +264,11 @@ export function graphForSteps(card) {
   if (!steps.length) return null;
   const run = { at: card.last?.at ?? null, end: null, ms: null, outcome: card.last?.outcome ?? null };
   return {
-    key: card.key, title: card.title, run, from: ['workflow Lobster «' + (card.tech?.label || card.title) + '»'],
+    key: card.key, title: card.title, run,
+    from: [card.provider === 'lobster' ? 'workflow Lobster «' + (card.tech?.label || card.title) + '»' : 'esiti per passo registrati dal giro'],
     nodes: [{ id: 'trigger', kind: 'trigger', label: card.when || 'a mano', detail: card.who || '' }].concat(steps.map((s, i) => ({
       id: 's' + i, kind: s.executor ? 'model' : 'step', label: s.label || s.id, detail: s.model || '',
-      outcome: s.outcome ?? null, tokens: s.tokens ?? null,
+      outcome: s.outcome ?? null, tokens: s.tokens ?? null, ms: s.ms ?? null, error: s.outcome === 'error' ? (s.note || null) : null,
       options: s.executor ? [{ exec: s.executor, name: EXEC[s.executor] || s.executor, model: s.model, outcome: s.outcome ?? null, ms: null, tokens: s.tokens ?? null }] : undefined,
     }))),
   };
@@ -275,7 +276,8 @@ export function graphForSteps(card) {
 
 export function graphFor(key, { card = null, db } = {}) {
   if (key.startsWith('cron:')) return graphForCron(key, { card, db });
-  if (key.startsWith('launchd:')) return graphForLaunchd(card);
+  // Con gli esiti per passo registrati (es. manutenzione notturna) valgono quelli; senza, si legge lo script.
+  if (key.startsWith('launchd:')) return card?.steps?.length ? graphForSteps(card) : graphForLaunchd(card);
   if (card?.steps?.length) return graphForSteps(card);
   return null;
 }

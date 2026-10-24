@@ -2,7 +2,7 @@ import '../test-support/isolate-tmp.mjs';
 // Schema a passi: i passi vengono dallo script e dal prompt veri, gli esiti dal log del giro.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { parseScript, extractSources, runEvents, graphForJob } from '../src/automations/graph.mjs';
+import { parseScript, extractSources, runEvents, graphForJob, graphFor } from '../src/automations/graph.mjs';
 
 const SCRIPT = `#!/bin/bash
 ERRLOG="$HOME/logs/x.err.log"
@@ -72,4 +72,14 @@ test('graphForJob: ingresso e uscita del modello dal prompt e dal testo del giro
   assert.equal(m.ms, 60000);
   const g2 = graphForJob(job, { at: 1000, end: null, ms: null, outcome: 'error', output: null });
   assert.equal(g2.nodes.find((n) => n.kind === 'model').io.out, null);
+});
+
+test('graphFor launchd con esiti per passo: valgono quelli, con durata e nota dell\'errore', () => {
+  const card = { key: 'launchd:com.jarvis.manutenzione', provider: 'launchd', title: 'Manutenzione notturna', when: 'ogni notte alle 3:00', last: { at: 1, outcome: 'error' },
+    steps: [{ id: 'disk-hygiene', label: 'Pulizia del disco', executor: null, outcome: 'ok', ms: 4000 }, { id: 'tmp', label: 'Cartelle temporanee', executor: null, outcome: 'error', ms: 900, note: 'permesso negato' }] };
+  const g = graphFor(card.key, { card });
+  assert.deepEqual(g.nodes.map((n) => n.label + ':' + (n.outcome ?? '')), ['ogni notte alle 3:00:', 'Pulizia del disco:ok', 'Cartelle temporanee:error']);
+  assert.equal(g.nodes[1].ms, 4000);
+  assert.equal(g.nodes[2].error, 'permesso negato');
+  assert.match(g.from[0], /esiti per passo/);
 });

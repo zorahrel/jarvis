@@ -69,7 +69,7 @@ test('(b) a sistema sano nessuna card aperta: il pannello si apre solo scegliend
 test('(c) le sezioni sono sempre nello stesso ordine', () => {
   const order = (h) => secs(h).filter((s) => s !== 'since' && s !== 'review');
   assert.deepEqual(order(htmlOk), order(htmlPb));
-  assert.deepEqual(order(htmlOk), ['verdict', 'todo', 'auto', 'table', 'jobs', 'footer']);
+  assert.deepEqual(order(htmlOk), ['verdict', 'table', 'footer']);
 });
 
 test('(d) consegna mancata e prova esterna sono in parole', () => {
@@ -106,7 +106,7 @@ test('(f) il verdetto conta chi ti aspetta', () => {
 test('(g) gruppi per scopo, il sistema solo nel pannello', () => {
   const table = htmlPb.slice(htmlPb.indexOf('data-sec="table"'), htmlPb.indexOf('data-sec="footer"'));
   assert.doesNotMatch(visible(table), /OpenClaw|\bMac\b|launchd/);
-  assert.match(table, /<div class="cx-gh"><span class="cx-ghi">[^<]*<\/span><span>(Posta e avvisi|Backup e sicurezza)</);
+  assert.match(table, /<h3 class="bx-t">(Posta e avvisi|Backup e sicurezza)</);
   // Senza purpose l'area è stimata e lo dice.
   const c = structuredClone(pb.broken[0]);
   c.purpose = null;
@@ -147,7 +147,7 @@ test('(i) striscia delle 24 ore: un segno per quarto d\'ora, esito peggiore, ora
 test('(j) Da fare: solo chi aspetta o è rotto, come card con la mossa da fare; a sistema sano una riga calma', () => {
   const h = V.todoHtml(pb, pb.checkedAt);
   const n = [...pb.needsYou, ...pb.broken].filter((c) => c.level !== 'nascosto').length;
-  assert.equal((h.match(/<article class="td /g) || []).length, n);
+  assert.equal((h.match(/<article class="bx td /g) || []).length, n);
   assert.equal((h.match(/class="td-do"/g) || []).length, n);
   // Chi aspetta un ok sul passo dice quale passo.
   assert.match(h, /Dai l'ok al passo «approva-invio»/);
@@ -179,4 +179,18 @@ test('(l) icone da un solo set: niente emoji né simboli disegnati a mano nella 
   assert.match(html, /<svg class="ic/);
   assert.doesNotMatch(html.replace(/<pre[\s\S]*?<\/pre>/g, ''), /[▲✕✓⚠\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}]/u);
   delete globalThis.Icons;
+});
+
+test('(m) griglia bento: ogni riga somma a 12 colonne, niente buchi', () => {
+  const card = (n, id) => '<article class="bx area b-' + n + '" data-id="' + id + '"></article>';
+  const spans = (h) => [...h.matchAll(/b-(\d+)" data-id="(\w)"/g)].map((m) => m[2] + m[1]);
+  // 4+4+4 | 4+6 → l'ultima si allarga a 8 | 12
+  assert.deepEqual(spans(V.packRows(card(4, 'a') + card(4, 'b') + card(4, 'c') + card(4, 'd') + card(6, 'e') + card(12, 'f'))), ['a4', 'b4', 'c4', 'd4', 'e8', 'f12']);
+  // 6, poi una da 12 non entra: si porta avanti la 4 che entra nel resto, poi la riga si chiude a 12
+  assert.deepEqual(spans(V.packRows(card(6, 'a') + card(12, 'b') + card(4, 'c'))), ['a6', 'c6', 'b12']);
+  // Sulla pagina vera, ogni riga somma a 12.
+  const html = render(pb, { now: pb.checkedAt });
+  let used = 0;
+  for (const m of html.matchAll(/<article class="bx [^"]*\bb-(\d+)/g)) { used += Number(m[1]); assert.ok(used <= 12); if (used === 12) used = 0; }
+  assert.equal(used, 0);
 });

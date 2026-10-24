@@ -238,21 +238,21 @@
     var list = streak.length > 1
       ? '<p class="td-streak">Fallita le ultime ' + streak.length + ' volte: ' + streak.slice(0, 5).map(function (t) { return dm(t); }).join(', ') + (streak.length > 5 ? '…' : '') + '</p>'
       : '';
-    return '<article class="td ' + (te ? 'te' : 'rotto') + '">' +
+    return '<article class="bx td b-4 ' + (te ? 'te' : 'rotto') + '">' +
       '<div class="td-h"><span class="td-ic">' + ic(te ? 'hand' : 'circle-x') + '</span><span class="td-k">' + (te ? 'Ti aspetta' : 'Si è rotta') + '</span>' +
       (c.since && !/alle \d/.test(c.reason || '') ? '<span class="td-when">' + esc(lastWords({ at: c.since }, now)) + '</span>' : '') + '</div>' +
-      '<h3>' + esc(c.title) + '</h3>' +
+      '<h3 class="bx-t">' + esc(c.title) + '</h3>' +
       '<p class="td-what">' + esc(c.reason || '') + (ifBroken(c) ? '. ' + esc(ifBroken(c).replace(/^Attilio potrebbe/, 'Finché resta così potresti')) : '') + '</p>' +
       list +
       '<p class="td-do">' + esc(todoAction(c)) + '</p>' +
       '<div class="td-act"><button class="cx-btn" data-cx="' + esc(c.key) + '">Vedi dettagli</button>' +
       (url ? '<a class="cx-btn ghost" href="' + esc(url) + '" target="_blank" rel="noopener">' + esc(LINK_WORD[c.provider] || 'Apri') + ic('external-link') + '</a>' : '') + '</div></article>';
   }
+  // Le card «da fare», in testa alla griglia: chi aspetta un ok prima, poi le rotte, le più recenti per prime.
   function todoHtml(model, now) {
     var items = allCards(model).filter(isProblem).sort(function (a, b) { return (a.level === 'te' ? 0 : 1) - (b.level === 'te' ? 0 : 1) || (b.since || 0) - (a.since || 0); });
-    if (!items.length) return '<section class="cx-sec" data-sec="todo"><div class="cx-sh"><h2>Da fare</h2></div><p class="td-none">' + ic('check') + 'Niente da fare: nessuna automazione aspetta te e nessuna è rotta.</p></section>';
-    return '<section class="cx-sec" data-sec="todo"><div class="cx-sh"><h2>Da fare</h2><span class="cx-shn">' + items.length + '</span></div>' +
-      '<div class="td-grid">' + items.map(function (c) { return todoCard(c, now); }).join('') + '</div></section>';
+    if (!items.length) return '<article class="bx calm b-4"><h3 class="bx-t">' + ic('check') + 'Niente da fare</h3><p>Nessuna automazione aspetta te e nessuna è rotta.</p></article>';
+    return items.map(function (c) { return todoCard(c, now); }).join('');
   }
   // Striscia delle 24 ore (stile Cronitor): finestra da 22 h fa a 2 h avanti, un segno per quarto d'ora
   // con giri, colorato per l'esito peggiore; linea dell'ora attuale; il prossimo giro come segno vuoto.
@@ -287,7 +287,7 @@
       '<span class="cx-t"><span class="cx-tt">' + esc(c.title) + '</span>' + (isProblem(c) && c.reason ? '<small class="' + esc(c.level) + '">' + esc(c.reason) + '</small>' : '') + '</span>' +
       stripHtml(c.day || (c.history || []).map(function (h) { return [h.at, h.outcome]; }), c.next, now) +
       '<span class="cx-c' + (c.last && c.last.at ? '' : ' dim') + '">' + esc(short(c.last && c.last.at, now)) + '</span>' +
-      '<span class="cx-c nx dim">' + esc(nx) + '</span><span class="cx-c rt dim">' + (c.runsToday || 0) + '</span></div>';
+      '<span class="cx-c nx dim">' + esc(nx) + '</span></div>';
   }
   // Riga di un lavoro lanciato da una sessione: niente orario né «prossimo», ma quando, quanto, quanti agenti e token.
   function wfRowHtml(w, ui, now) {
@@ -357,37 +357,29 @@
     return '<section class="cx-since" data-sec="since"><b>Da ieri: ' + esc(p.join(', ')) + '</b> <span>' + titles.map(esc).join(' · ') + '</span></section>';
   }
 
-  // Le automazioni: tutto ciò che parte da solo (orario, evento), raggruppato per scopo. Le rotte restano nel loro
-  // gruppo col segno rosso: la card in «Da fare» dice cosa fare, la riga dice dove sta.
-  function tableHtml(model, ui, now) {
-    var cards = allCards(model).filter(function (c) { return matches(c, ui); });
-    var searching = !!(ui.q || '').trim() || (ui.filter && ui.filter !== 'all');
-    var h = '<div class="cx-row cx-hdr" aria-hidden="true"><span></span><span>Nome</span><span class="cx-strip">ultime 24 ore</span><span class="cx-c">Ultimo</span><span class="cx-c nx">Prossimo</span><span class="cx-c rt">Oggi</span></div>';
-    var shown = 0;
-    var areas = (model.areas && model.areas.length ? model.areas : AREAS);
-    for (const a of areas) {
-      var all = allCards(model).filter(function (c) { return areaOf(c) === a.id; });
-      var rest = cards.filter(function (c) { return areaOf(c) === a.id; })
-        .sort(function (x, y) { return (isProblem(y) ? 1 : 0) - (isProblem(x) ? 1 : 0); });
-      if (!rest.length) continue;
-      var te = all.filter(function (c) { return c.level === 'te'; }).length;
-      var ro = all.filter(function (c) { return c.level === 'rotto'; }).length;
-      h += '<div class="cx-gh"><span class="cx-ghi">' + ic(a.icon || areaIcon(a.id)) + '</span><span>' + esc(a.title) + '</span><span class="cx-cnt"><span>' + (all.length - te - ro) + ' ok</span>' +
-        (te ? '<span class="te">' + te + ' ti ' + (te === 1 ? 'aspetta' : 'aspettano') + '</span>' : '') + (ro ? '<span class="bad">' + ro + (ro === 1 ? ' rotta' : ' rotte') + '</span>' : '') + '</span></div>';
-      for (const c of rest) h += rowHtml(c, ui, now);
-      shown += rest.length;
-    }
-    if (!shown && searching) {
-      h += '<div class="cx-empty"><b>Niente da mostrare</b>' + ((ui.q || '').trim() ? 'Nessuna automazione contiene «' + esc(ui.q.trim()) + '».' : 'Nessuna voce con questo filtro.') + ' <button class="cx-btn" data-au-clear="1">Togli il filtro</button></div>';
-    }
-    if (!allCards(model).length) h += '<div class="cx-empty"><b>Nessuna automazione letta</b>Le fonti non hanno ancora risposto.</div>';
-    return '<section class="cx-sec" data-sec="auto"><div class="cx-sh"><h2>Automazioni</h2><span class="cx-shn">' + allCards(model).length + '</span>' +
-      '<p class="cx-shd">Partono da sole, a orario o a evento.</p></div>' + toolsHtml(model, ui) +
-      '<div class="cx-tbl" data-sec="table">' + h + '</div></section>';
+  // ---- Griglia bento: da fare, automazioni per scopo, lavori delle sessioni ----
+  // La misura dice l'importanza: chi chiede una mossa e le aree con più voci prendono più spazio;
+  // gli elenchi stanno solo dentro le card che ne hanno bisogno.
+  // Un'area grande occupa tutta la riga con l'elenco su due colonne: una card alta accanto a una bassa lascerebbe un buco.
+  function sizeFor(n) {
+    return n >= 12 ? 'b-12' : n >= 7 ? 'b-6' : 'b-4';
   }
-
-  // I lavori lanciati a mano da una sessione (workflow di Claude Code): una volta sola, niente orario.
-  function jobsHtml(model, ui, now) {
+  function countsHtml(all) {
+    var te = all.filter(function (c) { return c.level === 'te'; }).length;
+    var ro = all.filter(function (c) { return c.level === 'rotto'; }).length;
+    return '<span class="cx-cnt"><span>' + (all.length - te - ro) + ' ok</span>' +
+      (te ? '<span class="te">' + te + ' ti ' + (te === 1 ? 'aspetta' : 'aspettano') + '</span>' : '') + (ro ? '<span class="bad">' + ro + (ro === 1 ? ' rotta' : ' rotte') + '</span>' : '') + '</span>';
+  }
+  function areaCard(a, all, rows, ui, now) {
+    var hdr = '<div class="cx-row cx-hdr" aria-hidden="true"><span></span><span>Nome</span><span class="cx-strip">ultime 24 ore</span><span class="cx-c">Ultimo</span><span class="cx-c nx">Prossimo</span></div>';
+    var size = sizeFor(all.length);
+    var list = function (rs) { return '<div class="bx-list">' + hdr + rs.map(function (c) { return rowHtml(c, ui, now); }).join('') + '</div>'; };
+    var half = Math.ceil(rows.length / 2);
+    var body = size === 'b-12' && rows.length > 6 ? '<div class="bx-cols">' + list(rows.slice(0, half)) + list(rows.slice(half)) + '</div>' : list(rows);
+    return '<article class="bx area ' + size + '" data-area="' + esc(a.id) + '"><header class="bx-h"><span class="cx-ghi">' + ic(a.icon || areaIcon(a.id)) + '</span>' +
+      '<h3 class="bx-t">' + esc(a.title) + '</h3>' + countsHtml(all) + '</header>' + body + '</article>';
+  }
+  function jobsCard(model, ui, now) {
     var wf = model.workflows || {};
     var q = (ui.q || '').trim().toLowerCase();
     var ws = (wf.byName || []).filter(function (w) {
@@ -398,10 +390,50 @@
     if (!ws.length) return '';
     var h = '<div class="cx-row wr cx-hdr" aria-hidden="true"><span></span><span>Lavoro</span><span class="cx-c">Quando</span><span class="cx-c du">Durata</span><span class="cx-c ag">Agenti</span><span class="cx-c rt">Token</span></div>';
     for (const w of ws) h += wfRowHtml(w, ui, now);
-    return '<section class="cx-sec" data-sec="jobs"><div class="cx-sh"><h2>Lavori lanciati dalle sessioni</h2><span class="cx-shn">' + ws.length + '</span>' +
-      '<p class="cx-shd">Workflow a più agenti partiti a mano da una sessione di Claude Code, negli ultimi ' + (wf.days || 7) + ' giorni: ' + (wf.total || 0) + (wf.total === 1 ? ' giro' : ' giri') +
-      (wf.failed ? ', ' + wf.failed + (wf.failed === 1 ? ' fallito' : ' falliti') : '') + '. Non hanno un orario e non ripartono.</p></div>' +
-      '<div class="cx-tbl">' + h + '</div></section>';
+    return '<article class="bx jobs b-12"><header class="bx-h"><span class="cx-ghi">' + ic('workflow') + '</span><h3 class="bx-t">Lavori lanciati dalle sessioni</h3>' +
+      '<span class="cx-cnt"><span>' + (wf.total || 0) + (wf.total === 1 ? ' giro' : ' giri') + '</span>' + (wf.failed ? '<span class="bad">' + wf.failed + (wf.failed === 1 ? ' fallito' : ' falliti') + '</span>' : '') + '</span></header>' +
+      '<p class="bx-d">Workflow a più agenti partiti a mano da una sessione di Claude Code negli ultimi ' + (wf.days || 7) + ' giorni. Non hanno un orario e non ripartono.</p>' +
+      '<div class="bx-list">' + h + '</div></article>';
+  }
+  // Impagina su 12 colonne: ogni riga somma a 12. Se la card dopo non entra, prima cerca più avanti
+  // una che entri nel resto; se non c'è, allarga l'ultima della riga. Così non restano buchi.
+  function packRows(html) {
+    var items = html.split(/(?=<article class="bx )/).filter(Boolean);
+    var span = function (it) { var m = /class="bx [^"]*\bb-(\d+)/.exec(it); return m ? Number(m[1]) : 12; };
+    var setSpan = function (it, n) { return it.replace(/(class="bx [^"]*\b)b-\d+/, '$1b-' + n); };
+    var out = [], row = [], used = 0;
+    var close = function () {
+      if (row.length && used < 12) row[row.length - 1] = setSpan(row[row.length - 1], span(row[row.length - 1]) + 12 - used);
+      out = out.concat(row); row = []; used = 0;
+    };
+    while (items.length) {
+      var it = items.shift(), n = span(it);
+      if (used + n > 12) {
+        var k = items.findIndex(function (x) { return used + span(x) <= 12; });
+        if (k !== -1) { items.unshift(it); it = items.splice(k + 1, 1)[0]; n = span(it); } else close();
+      }
+      row.push(it); used += n;
+      if (used === 12) close();
+    }
+    close();
+    return out.join('');
+  }
+  function tableHtml(model, ui, now) {
+    var cards = allCards(model).filter(function (c) { return matches(c, ui); });
+    var searching = !!(ui.q || '').trim() || (ui.filter && ui.filter !== 'all');
+    var areas = (model.areas && model.areas.length ? model.areas : AREAS).map(function (a) {
+      var all = allCards(model).filter(function (c) { return areaOf(c) === a.id; });
+      var rows = cards.filter(function (c) { return areaOf(c) === a.id; }).sort(function (x, y) { return (isProblem(y) ? 1 : 0) - (isProblem(x) ? 1 : 0); });
+      return { a: a, all: all, rows: rows, pb: all.filter(isProblem).length };
+    }).filter(function (x) { return x.rows.length; })
+      // Le aree con un problema vengono prima, poi le più grandi.
+      .sort(function (x, y) { return (y.pb ? 1 : 0) - (x.pb ? 1 : 0) || y.all.length - x.all.length; });
+    var h = packRows((searching ? '' : todoHtml(model, now)) + areas.map(function (x) { return areaCard(x.a, x.all, x.rows, ui, now); }).join('') + jobsCard(model, ui, now));
+    if (!areas.length && searching) {
+      h += '<div class="bx cx-empty b-12"><b>Niente da mostrare</b>' + ((ui.q || '').trim() ? 'Nessuna automazione contiene «' + esc(ui.q.trim()) + '».' : 'Nessuna voce con questo filtro.') + ' <button class="cx-btn" data-au-clear="1">Togli il filtro</button></div>';
+    }
+    if (!allCards(model).length) h += '<div class="bx cx-empty b-12"><b>Nessuna automazione letta</b>Le fonti non hanno ancora risposto.</div>';
+    return '<section class="cx-sec" data-sec="table">' + toolsHtml(model, ui) + '<div class="bento">' + h + '</div></section>';
   }
 
   var VOTE_WORD = { ok: 'va bene', cambia: 'da cambiare' };
@@ -661,10 +693,10 @@
   function render(model, ui) {
     ui = ui || {};
     var now = (ui.now != null) ? ui.now : model.checkedAt;
-    return verdictHtml(model, ui) + todoHtml(model, now) + tableHtml(model, ui, now) + jobsHtml(model, ui, now) + footerHtml(model) + panelHtml(model, ui, now);
+    return verdictHtml(model, ui) + tableHtml(model, ui, now) + footerHtml(model) + panelHtml(model, ui, now);
   }
 
-  var api = { modelStory: modelStory, prettyModel: prettyModel, todoHtml: todoHtml, render: render, skeleton: skeleton, errorHtml: errorHtml, lastWords: lastWords, deliveredWords: deliveredWords, esc: esc, card: card, graphHtml: graphHtml, stripHtml: stripHtml, areaOf: areaOf, runTokens: runTokens, flowHtml: flowHtml };
+  var api = { packRows: packRows, modelStory: modelStory, prettyModel: prettyModel, todoHtml: todoHtml, render: render, skeleton: skeleton, errorHtml: errorHtml, lastWords: lastWords, deliveredWords: deliveredWords, esc: esc, card: card, graphHtml: graphHtml, stripHtml: stripHtml, areaOf: areaOf, runTokens: runTokens, flowHtml: flowHtml };
   // Sempre sul globale: così il test con createRequire trova tutto anche se `module.exports` non esce.
   root.AutomationsView = api;
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
