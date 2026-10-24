@@ -87,13 +87,28 @@ def transcript(tmp, cartella, righe, quiete_s):
     return tr
 
 
-def sotto(tmp, cartella, quiete_s):
-    """Un sottoagente in foreground: il suo file sta in <cli>/subagents/, scritto quiete_s secondi fa."""
+def sotto(tmp, cartella, quiete_s, nome="agent-1", meta=None):
+    """Un sottoagente: il suo file sta in <cli>/subagents/, scritto quiete_s secondi fa; il meta.json, se c'è, dice per
+    quale tool lavora."""
     d = os.path.join(tmp, "projects", cartella, CLI, "subagents")
     os.makedirs(d, exist_ok=True)
-    f = os.path.join(d, "agent-1.jsonl")
+    f = os.path.join(d, nome + ".jsonl")
     with open(f, "w") as fh:
         fh.write('{"type": "assistant"}\n')
+    os.utime(f, (time.time() - quiete_s, time.time() - quiete_s))
+    if meta is not None:
+        with open(os.path.join(d, nome + ".meta.json"), "w") as fh:
+            json.dump(meta, fh)
+
+
+def desktop_meta(tmp, account, archiviata, quiete_s):
+    """Una copia dei metadati di local_aaaa in una cartella d'account, scritta quiete_s secondi fa."""
+    d = os.path.join(tmp, "desktop", account, "prog")
+    os.makedirs(d, exist_ok=True)
+    f = os.path.join(d, "local_aaaa.json")
+    with open(f, "w") as fh:
+        json.dump({"sessionId": "local_aaaa", "cliSessionId": CLI, "title": "Quadra per commercialisti",
+                   "isArchived": archiviata}, fh)
     os.utime(f, (time.time() - quiete_s, time.time() - quiete_s))
 
 
@@ -190,7 +205,7 @@ with tempfile.TemporaryDirectory() as tmp:
 with tempfile.TemporaryDirectory() as tmp:
     RICHIESTE.clear()
     scena(tmp, [tool_uso("toolu_agente", "Agent", 1500)], quiete_s=1500)
-    sotto(tmp, "-Users-x", quiete_s=60)
+    sotto(tmp, "-Users-x", quiete_s=60, meta={"toolUseId": "toolu_agente"})
     gira(tmp)
     esiti.append(check("(f) Agent da 25 min, sottoagente attivo 1 min fa → nessuna voce", not richieste_attesa(),
                        f"richieste={[r['body'] for r in RICHIESTE]}"))
@@ -283,6 +298,98 @@ with tempfile.TemporaryDirectory() as tmp:
                        len(righe_diario) == 1 and "non è passata" in righe_diario[0] and rc == 0
                        and bool(stato(tmp).get("attesa")) and not stato(tmp).get("fallite"),
                        f"diario={righe_diario} stato={stato(tmp)}"))
+
+# (g2) specchio di (g): la copia nuova (chiusa) sta nella cartella che viene prima nell'ordine di glob, la vecchia è in sospeso
+with tempfile.TemporaryDirectory() as tmp:
+    RICHIESTE.clear()
+    scena(tmp, [tool_uso("toolu_nuovo", "Read", 1500), tool_esito("toolu_nuovo", 1490), testo_fine(1480)],
+          quiete_s=1500, cartella="-Users-aaa")
+    transcript(tmp, "-Users-zzz", [tool_uso("toolu_vecchio", "AskUserQuestion", 4000)], quiete_s=3000)
+    gira(tmp)
+    esiti.append(check("(g2) copia nuova chiusa, vecchia in sospeso → nessuna voce", not richieste_attesa(),
+                       f"richieste={[r['body'] for r in RICHIESTE]}"))
+
+# (o) tool MCP: conta l'ultima parte del nome (mcp__computer-use__request_access → «usare un'app», non «un'azione»)
+with tempfile.TemporaryDirectory() as tmp:
+    RICHIESTE.clear()
+    scena(tmp, [tool_uso("toolu_app", "mcp__computer-use__request_access", 1500)], quiete_s=1500)
+    gira(tmp)
+    v = voci()
+    esiti.append(check("(o) tool MCP request_access → «per usare un'app»",
+                       len(v) == 1 and v[0]["body"]["why"].endswith("aspetta il tuo permesso per usare un'app"),
+                       f"voci={[r['body'] for r in v]}"))
+
+# (p) sottoagenti scritti da poco ma non per il tool in attesa (altro toolUseId, o in background) non rimandano l'avviso
+with tempfile.TemporaryDirectory() as tmp:
+    RICHIESTE.clear()
+    scena(tmp, [tool_uso("toolu_agente", "Agent", 1500)], quiete_s=1500)
+    sotto(tmp, "-Users-x", quiete_s=60, nome="agent-altro", meta={"toolUseId": "toolu_altro"})
+    sotto(tmp, "-Users-x", quiete_s=60, nome="agent-bg", meta={"requestShape": "background"})
+    gira(tmp)
+    esiti.append(check("(p) sottoagenti scritti da poco ma non in attesa → la voce c'è lo stesso", len(voci()) == 1,
+                       f"richieste={[r['body'] for r in RICHIESTE]}"))
+
+# (q) stessa sessione in due cartelle d'account: vale la copia con il file più recente, e archiviata lì è archiviata
+with tempfile.TemporaryDirectory() as tmp:
+    RICHIESTE.clear()
+    scena(tmp, [tool_uso("toolu_domanda", "AskUserQuestion", 1500)], quiete_s=1500)
+    desktop_meta(tmp, "acc", archiviata=False, quiete_s=5000)
+    desktop_meta(tmp, "nuovo", archiviata=True, quiete_s=0)
+    gira(tmp)
+    esiti.append(check("(q) due copie, la più recente archiviata → nessuna voce", not richieste_attesa(),
+                       f"richieste={[r['body'] for r in RICHIESTE]}"))
+
+# (r) l'ultima riga del transcript è tagliata (sta scrivendo): la voce già aperta non si chiude
+with tempfile.TemporaryDirectory() as tmp:
+    RICHIESTE.clear()
+    scena(tmp, [tool_uso("toolu_domanda", "AskUserQuestion", 1500)], quiete_s=1500)
+    gira(tmp)
+    prima = len(richieste_attesa())
+    tr = os.path.join(tmp, "projects", "-Users-x", CLI + ".jsonl")
+    with open(tr, "w") as f:
+        f.write(json.dumps(testo_fine(3000)) + "\n")
+        f.write('{"type": "assistant", "timestamp": "' + ora_iso(1500) + '", "message": {"content": [{"type": "tool_use", "id": "toolu_domanda"')
+    os.utime(tr, (time.time() - 1500, time.time() - 1500))
+    gira(tmp)
+    esiti.append(check("(r) ultima riga del transcript tagliata → la voce aperta non si chiude",
+                       prima == 1 and len(richieste_attesa()) == prima and bool(stato(tmp).get("attesa")),
+                       f"prima={prima} dopo={len(richieste_attesa())} stato={stato(tmp).get('attesa')}"))
+
+# (s) metadati illeggibili (file in scrittura): la voce già aperta non si chiude
+with tempfile.TemporaryDirectory() as tmp:
+    RICHIESTE.clear()
+    scena(tmp, [tool_uso("toolu_domanda", "AskUserQuestion", 1500)], quiete_s=1500)
+    gira(tmp)
+    prima = len(richieste_attesa())
+    with open(os.path.join(tmp, "desktop", "acc", "prog", "local_aaaa.json"), "w") as f:
+        f.write('{"sessionId": "loc')
+    gira(tmp)
+    esiti.append(check("(s) metadati illeggibili → la voce aperta non si chiude",
+                       prima == 1 and len(richieste_attesa()) == prima and bool(stato(tmp).get("attesa")),
+                       f"prima={prima} dopo={len(richieste_attesa())} stato={stato(tmp).get('attesa')}"))
+
+# (t) sottoagente in attesa: la frase dice che aspetta il permesso lui, non «per avviare un sottoagente»
+with tempfile.TemporaryDirectory() as tmp:
+    RICHIESTE.clear()
+    scena(tmp, [tool_uso("toolu_agente", "Agent", 1500)], quiete_s=1500)
+    gira(tmp)
+    v = voci()
+    esiti.append(check("(t) Agent in attesa → «un sottoagente aspetta il tuo permesso»",
+                       len(v) == 1 and v[0]["body"]["why"].endswith("un sottoagente aspetta il tuo permesso"),
+                       f"voci={[r['body'] for r in v]}"))
+
+# (u) una voce non passata, poi la sessione si risolve: la chiave non resta in «fallite»
+with tempfile.TemporaryDirectory() as tmp:
+    RICHIESTE.clear()
+    scena(tmp, [tool_uso("toolu_domanda", "AskUserQuestion", 1500)], quiete_s=1500)
+    RIFIUTA["on"] = True
+    gira(tmp)
+    RIFIUTA["on"] = False
+    prima_fallite = stato(tmp).get("fallite")
+    scena(tmp, [tool_uso("toolu_domanda", "AskUserQuestion", 1500), tool_esito("toolu_domanda", 60)], quiete_s=60)
+    gira(tmp)
+    esiti.append(check("(u) voce non passata, poi sessione risolta → «fallite» si svuota",
+                       bool(prima_fallite) and not stato(tmp).get("fallite"), f"prima={prima_fallite} dopo={stato(tmp).get('fallite')}"))
 
 HUB.shutdown()
 ok = all(esiti)

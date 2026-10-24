@@ -11,9 +11,9 @@ account): «weekly limit resets Oct 25 at 9am» → «dopo il reset del 25/10 al
   · con un reset → elenco per la Regia, che decide se servono ancora e le riprende con un messaggio
   · limite di spesa senza reset → una voce «Ti aspetta» (tipo spesa): è una spesa, decide Attilio; si chiude da sola
 «aspetta Attilio» (secondo rilevamento, solo desktop): una sessione non archiviata con un tool_use senza risultato
-in coda (anche più di uno, se lavora in parallelo), e né il transcript né i suoi sottoagenti in foreground scrivono
+in coda (anche più di uno, se lavora in parallelo), e né il transcript né i sottoagenti che lavorano per quel tool scrivono
 da 20 minuti → una voce «Ti aspetta» per tool (tipo decisione), una volta sola; si chiude da sola quando il tool
-riceve il risultato o la sessione si archivia o sparisce. Tool più vecchi di 48 ore non contano.
+riceve il risultato o la sessione si archivia. Tool più vecchi di 48 ore non contano. Una sessione letta male non si tocca.
 Stato per sessione:tool in «attesa» dello state JSON.
 Le sessioni dell'Agent SDK (OpenClaw, delegate, cron) non c'entrano: ripiego e ripresa li gestisce chi le lancia.
 Elenco in <note della Regia>/sessioni-limite.md, riga nel diario quando qualcosa diventa riprendibile, stato in
@@ -30,9 +30,9 @@ REGIA = os.environ.get("REGIA_NOTES", os.path.join(H, "Library/Application Suppo
 HUB = os.environ.get("SESSIONI_HUB_URL", "http://127.0.0.1:3360/api/attesa")
 ATTESA_MIN = 20 * 60  # quiete del transcript prima di dire «aspetta Attilio»: sotto, il tool può essere in corso
 PAROLE = {"AskUserQuestion": "ti ha fatto una domanda", "Bash": "un comando", "Edit": "modificare un file",
-          "MultiEdit": "modificare un file", "Write": "modificare un file", "request_access": "accedere a una cartella",
-          "request_directory": "accedere a una cartella", "change_directory": "accedere a una cartella",
-          "Agent": "avviare un sottoagente"}
+          "MultiEdit": "modificare un file", "Write": "modificare un file", "request_access": "usare un'app",
+          "request_directory": "accedere a una cartella", "change_directory": "accedere a una cartella"}
+SOTTOAGENTE = ("Agent", "Task")  # il tool che avvia un sottoagente: chi aspetta il permesso è il sottoagente
 DIARIO = os.environ.get("SESSIONI_DIARIO", os.path.join(H, ".claude", "jarvis", "scripts", "task-sync", "diario.mjs"))
 LIMITE = re.compile(r"hit your (?:\w+ )?limit|usage limit|spend limit|limit (?:will )?resets?", re.I)
 SPESA = re.compile(r"spend limit", re.I)
@@ -76,15 +76,15 @@ def valida(riga):
 
 
 def coda(f):
-    """Messaggi di user e assistant nella coda del file, dal più recente. Un'ultima riga più grande della finestra
-    (un Write grande) si rilegge a 1 MB; se nemmeno così si legge, niente: meglio non decidere che decidere su una
-    risposta che non si vede."""
+    """Messaggi di user e assistant nella coda del file, dal più recente, e se la coda si è letta intera. Un'ultima riga
+    più grande della finestra (un Write grande) si rilegge a 1 MB; se nemmeno così si legge, niente: meglio non decidere
+    che decidere su una risposta che non si vede. Un'ultima riga tagliata vuol dire transcript in scrittura: non intera."""
     for finestra in (64000, 1000000):
         righe = [l for l in righe_coda(f, finestra) if l.strip()]
         if os.stat(f).st_size <= finestra or (righe and valida(righe[-1])):
             break
     else:
-        return []
+        return [], False
     out = []
     for l in reversed(righe):
         try:
@@ -93,7 +93,7 @@ def coda(f):
             continue
         if e.get("type") in ("assistant", "user"):
             out.append(e)
-    return out
+    return out, not righe or valida(righe[-1])
 
 
 def testo(e):
@@ -121,14 +121,38 @@ def stato_da(testo_limite, stop, now):
     return None, "dopo una spesa"  # limite di spesa senza reset: decide Attilio
 
 
-def desktop(now):
-    """Sessioni del desktop dai loro file: account (la cartella), titolo, attività pianificata, errore e quando."""
-    out = []
+def transcript_of(cli):
+    """Il transcript più recente di una sessione, in qualunque cartella di progetto; None se non c'è."""
+    if not cli:
+        return None
+    return max(glob.glob(os.path.join(ROOT, "*", cli + ".jsonl")), key=os.path.getmtime, default=None)
+
+
+def desktop_copies():
+    """Le sessioni del desktop, una per sessionId. Se la cartella del progetto è collegata una sessione sta in più account:
+    vale la copia con il file dei metadati più recente. Ritorna sessionId → copia, e i sessionId con una copia illeggibile
+    (il nome del file è il sessionId: di quelli non si chiude niente, non si sa cosa dicono)."""
+    picked, unreadable = {}, set()
     for f in glob.glob(os.path.join(DESKTOP, "*", "*", "local_*.json")):
         try:
             d = json.load(open(f))
         except (ValueError, OSError):
-            continue  # file in scrittura
+            unreadable.add(os.path.basename(f)[:-5])  # file in scrittura
+            continue
+        sid = d.get("sessionId") or ""
+        if not sid:
+            continue
+        mt = os.path.getmtime(f)
+        if sid not in picked or mt > picked[sid]["mt"]:
+            picked[sid] = {"d": d, "f": f, "mt": mt, "tr": transcript_of(d.get("cliSessionId") or "")}
+    return picked, unreadable
+
+
+def desktop(now):
+    """Sessioni del desktop dai loro file: account (la cartella), titolo, attività pianificata, errore e quando."""
+    out = []
+    for c in desktop_copies()[0].values():
+        d, f = c["d"], c["f"]
         err, at = d.get("error") or "", (d.get("errorAt") or 0) / 1000
         if d.get("isArchived") or not LIMITE.search(err) or now - at > 48 * 3600 or now - at < 20 * 60:
             continue
@@ -148,7 +172,7 @@ def terminale(now):
         idle = now - os.stat(f).st_mtime
         if idle > 48 * 3600 or idle < 20 * 60:
             continue
-        msgs = coda(f)
+        msgs, _ = coda(f)
         if not msgs or (msgs[0].get("entrypoint") or "") != "cli":
             continue  # desktop: dai suoi file; sdk-cli: ripiego e ripresa li gestisce chi le lancia
         e = msgs[0]
@@ -168,10 +192,14 @@ def giro(now):
 
 
 def cosa(nome):
-    """La richiesta in parole: una domanda o un permesso per un tool, senza nomi interni."""
-    if nome == "AskUserQuestion":
-        return PAROLE[nome]
-    return "aspetta il tuo permesso per " + PAROLE.get(nome, "un'azione")
+    """La richiesta in parole: una domanda o un permesso per un tool, senza nomi interni. Il nome può arrivare con il
+    prefisso del server MCP (mcp__server__tool): conta solo l'ultima parte."""
+    base = nome.rsplit("__", 1)[-1]
+    if base in SOTTOAGENTE:
+        return "un sottoagente aspetta il tuo permesso"
+    if base == "AskUserQuestion":
+        return PAROLE[base]
+    return "aspetta il tuo permesso per " + PAROLE.get(base, "un'azione")
 
 
 def quando(t):
@@ -180,10 +208,25 @@ def quando(t):
     return time.strftime(fmt, time.localtime(t))
 
 
-def quiete_di(tr, now):
-    """Da quanto non scrive né il transcript né i suoi sottoagenti: un Agent in foreground resta fermo sul transcript
-    anche 40 minuti mentre il sottoagente scrive nel suo file."""
-    file = [tr] + glob.glob(os.path.join(os.path.splitext(tr)[0], "subagents", "*.jsonl"))
+def subagent_counts(f, pending_ids):
+    """Il sottoagente di questo file lavora per un tool in attesa? Dal suo meta.json: il toolUseId, se c'è; altrimenti
+    conta a meno che non sia in background. Senza meta non si sa per chi lavora: non conta."""
+    try:
+        meta = json.load(open(os.path.splitext(f)[0] + ".meta.json"))
+    except (ValueError, OSError):
+        return False
+    if not isinstance(meta, dict):
+        return False
+    if meta.get("toolUseId"):
+        return meta["toolUseId"] in pending_ids
+    return meta.get("requestShape") != "background"
+
+
+def quiete_di(tr, now, pending_ids):
+    """Da quanto non scrive né il transcript né i sottoagenti che lavorano per un tool in attesa: un Agent in foreground
+    resta fermo sul transcript anche 40 minuti mentre il sottoagente scrive nel suo file."""
+    file = [tr] + [f for f in glob.glob(os.path.join(os.path.splitext(tr)[0], "subagents", "*.jsonl"))
+                   if subagent_counts(f, pending_ids)]
     return now - max(os.path.getmtime(f) for f in file)
 
 
@@ -205,27 +248,46 @@ def pendenti(msgs, now, mtime):
     return {i: v for i, v in usati.items() if i not in risposti and now - v[0] <= 48 * 3600}
 
 
+def tool_ids(msgs):
+    """Tutti gli id dei tool_use nella coda, con o senza risultato."""
+    out = set()
+    for e in msgs:
+        contenuto = (e.get("message") or {}).get("content")
+        if isinstance(contenuto, list):
+            out.update(x.get("id") for x in contenuto if isinstance(x, dict) and x.get("type") == "tool_use")
+    return out
+
+
 def in_attesa(now):
-    """Desktop non archiviate con un tool_use senza risultato in coda: chiave sessione:tool → dati. Se la cartella del
-    progetto è collegata con un link, il transcript sta in due cartelle: vale il più recente.
-    La quiete dice quando segnalare, non quando chiudere: una sessione che riparte resta in lista finché il tool
+    """Desktop non archiviate con un tool_use senza risultato in coda: chiave sessione:tool → dati. Ritorna anche le
+    chiavi che si possono chiudere senza dubbio (il tool_use è nella coda letta e ha il suo risultato) e le sessioni
+    archiviate. Una sessione letta male (metadati illeggibili, ultima riga del transcript tagliata) non si apre né si
+    chiude. La quiete dice quando segnalare, non quando chiudere: una sessione che riparte resta in lista finché il tool
     ha il suo risultato."""
-    out = {}
-    for f in glob.glob(os.path.join(DESKTOP, "*", "*", "local_*.json")):
-        try:
-            d = json.load(open(f))
-        except (ValueError, OSError):
-            continue  # file in scrittura
-        sid, cli = d.get("sessionId") or "", d.get("cliSessionId") or ""
-        if d.get("isArchived") or not sid or not cli:
+    out, resolved, archived = {}, set(), set()
+    picked, unreadable = desktop_copies()
+    for sid, c in picked.items():
+        if sid in unreadable:
             continue
-        tr = max(glob.glob(os.path.join(ROOT, "*", cli + ".jsonl")), key=os.path.getmtime, default=None)
+        d, tr = c["d"], c["tr"]
+        if d.get("isArchived"):
+            archived.add(sid)
+            continue
         if not tr:
             continue
-        for id_, (at, nome) in pendenti(coda(tr), now, os.path.getmtime(tr)).items():
+        try:
+            msgs, intera = coda(tr)
+        except OSError:
+            continue  # il transcript è sparito mentre lo leggevo
+        if not intera:
+            continue
+        pend = pendenti(msgs, now, os.path.getmtime(tr))
+        quiete = quiete_di(tr, now, set(pend))
+        for id_, (at, nome) in pend.items():
             out[f"{sid}:{id_}"] = {"sessione": sid, "titolo": d.get("title") or "", "stop": at,
-                                   "cosa": cosa(nome), "quiete": quiete_di(tr, now)}
-    return out
+                                   "cosa": cosa(nome), "quiete": quiete}
+        resolved.update(f"{sid}:{id_}" for id_ in tool_ids(msgs) if id_ not in pend)
+    return out, resolved, archived
 
 
 def attesa(body):
@@ -261,7 +323,8 @@ def posta(stato, chiave, body):
 
 def main():
     now = time.time()
-    xs, ferme = giro(now), in_attesa(now)
+    xs = giro(now)
+    ferme, resolved, archived = in_attesa(now)
     if "--dry-run" in sys.argv:
         print(json.dumps({"limite": xs, "aspetta": [p for p in ferme.values() if p["quiete"] >= ATTESA_MIN]},
                          indent=1, ensure_ascii=False))
@@ -288,7 +351,7 @@ def main():
                              "link": f"claude://claude.ai/epitaxy/{p['sessione']}", "from": "sessioni-limite"})
         if r is not None:
             attese[k] = (r.get("row") or {}).get("id") or ""
-    for k in [k for k in attese if k not in ferme]:  # il tool ha avuto il risultato, o la sessione è archiviata o sparita
+    for k in [k for k in attese if k not in ferme and (k in resolved or k.partition(":")[0] in archived)]:  # risultato arrivato, o archiviata
         if attese[k] and posta(stato, "chiudi " + k, {"kind": "chiudi", "ref": attese[k]}) is None:
             continue  # il hub non ha chiuso: resta in lista, il giro dopo riprova
         attese.pop(k)
@@ -311,6 +374,9 @@ def main():
         msg = f"{len(ora)} sessioni di Claude ferme su un limite sono di nuovo riprendibili (nota sessioni-limite della Regia)"
         subprocess.run(["node", DIARIO, msg, "--source", "sessioni-limite"], capture_output=True, timeout=30)
         print(msg)
+    vive = set(ferme) | set(attese) | {"chiudi " + k for k in attese} | ({"spesa"} if spesa else set()) \
+        | ({"chiudi spesa"} if stato.get("voce") else set())
+    stato["fallite"] = [c for c in stato.get("fallite", []) if c in vive]  # niente falliti di sessioni ormai ferme o chiuse
     stato.update({"giro": int(now), "ferme": len(xs), "riprendibili": chiavi, "spesa": len(spesa)})
     os.makedirs(os.path.dirname(STATE), exist_ok=True)
     json.dump(stato, open(STATE, "w"), indent=1)
