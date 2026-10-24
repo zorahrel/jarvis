@@ -193,7 +193,7 @@ test('findings: errori al job, rumore a te, battito libero', () => {
   const items = [raw({ key: 'cron:abcdef12-3456' }), raw({ key: 'cron:12345678-abcd' })];
   const { byKey, loose } = fromFindings([
     { kind: 'errori', line: 'posta (abcdef12): 3 errori nelle ultime 24h' },
-    { kind: 'rumore', line: 'riepilogo (12345678): 14 messaggi consegnati in 7 giorni' },
+    { kind: 'rumore', line: 'riepilogo (12345678): consegna spesso, 14 messaggi in 7 giorni' },
     { kind: 'heartbeat', line: "scratch dell'heartbeat a 42 KB" },
   ], items);
   assert.equal(byKey.get('cron:abcdef12-3456').level, 'rotto');

@@ -36,8 +36,10 @@ export function findings(f) {
       out.push({ kind: 'attesa fissa', line: `${name(j)}: aspetta una quota fino al ${when} a ora fissa: un altro provider libero fa lo stesso lavoro? Altrimenti cron-when arm ${j.id.slice(0, 8)} --free any` });
     }
     // Rumore che è già finito (quota-guard: 14 messaggi il 16-18/10, poi zero dopo la correzione) non è rumore adesso.
+    // «consegna spesso» prima del numero: un silenzio («health:<nome> (<id>): consegna spesso») vale a ogni conteggio
+    // senza coprire gli errori dello stesso job (24/10: mailwatch, avvisare è il suo mestiere).
     const sent = f.delivered[j.id] || 0, lastSent = f.lastDelivered?.[j.id];
-    if (sent > 10 && !(f.now - lastSent > 2 * DAY)) out.push({ kind: 'rumore', line: `${name(j)}: ${sent} messaggi consegnati in 7 giorni` });
+    if (sent > 10 && !(f.now - lastSent > 2 * DAY)) out.push({ kind: 'rumore', line: `${name(j)}: consegna spesso, ${sent} messaggi in 7 giorni` });
   }
   if (f.scratchLen > 4000) out.push({ kind: 'heartbeat', line: `scratch dell'heartbeat a ${Math.round(f.scratchLen / 1000)} KB: con compiti chiusi dentro il modello gira sempre; vuoto = nessun turno` });
   for (const d of f.doctor || []) out.push({ kind: 'doctor', line: `doctor ${d.severity}: ${d.checkId} — ${(d.message || '').slice(0, 140)}` });

@@ -14,7 +14,7 @@
   },
   {
    "kind": "rumore",
-   "line": "rumore-prova (aaaa0004): 14 messaggi consegnati in 7 giorni"
+   "line": "rumore-prova (aaaa0004): consegna spesso, 14 messaggi in 7 giorni"
   },
   {
    "kind": "errori",
@@ -44,7 +44,7 @@
   },
   {
    "kind": "rumore",
-   "line": "rumore-prova (aaaa0004): 14 messaggi consegnati in 7 giorni"
+   "line": "rumore-prova (aaaa0004): consegna spesso, 14 messaggi in 7 giorni"
   },
   {
    "kind": "heartbeat",
