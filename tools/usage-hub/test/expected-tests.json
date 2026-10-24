@@ -34,7 +34,7 @@
  "modules/vdm/test/upstream-capacity-retry.test.mjs": 5,
  "modules/vdm/test/usage-caps.test.mjs": 22,
  "test/actions.test.mjs": 3,
- "test/agents.test.mjs": 13,
+ "test/agents.test.mjs": 14,
  "test/alerts-dedupe.test.mjs": 4,
  "test/automations-api.test.mjs": 3,
  "test/automations-falsi-verdi.test.mjs": 10,

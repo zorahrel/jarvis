@@ -129,9 +129,12 @@ function claudeSessions(root, now, opts, out, seen) {
       const tl = tail(f, st);
       const model = (lastMatch(tl, /"model":"([^"<]+)"/) || [])[1];
       if (!model || model === '<synthetic>') continue; // senza risposte del modello non è un agente al lavoro
-      const title = (lastMatch(tl, /"aiTitle":"([^"]+)"/) || [])[1] || (hd.match(/"type":"user"[\s\S]*?"content":"([^"]{5,200})/) || [])[1] || '';
+      const ai = (lastMatch(tl, /"aiTitle":"([^"]+)"/) || [])[1];
+      const title = ai || (hd.match(/"type":"user"[\s\S]*?"content":"([^"]{5,200})/) || [])[1] || '';
+      // claude -p e l'SDK (delegate, workflow, generatori di titoli) scrivono entrypoint sdk-cli: non sono sessioni di qualcuno
+      const headless = /"entrypoint":"sdk-cli"/.test(hd);
       const started = runStart(tl, st.mtimeMs);
-      out.push({ kind: project === 'openclaw/sottoagenti' ? 'sottoagente' : 'sessione', provider: 'claude', model: modelLabel(model), project, cwd, cliId: path.basename(n, '.jsonl'), file: f, title: clip(title), startedAt: started, lastActivity: st.mtimeMs });
+      out.push({ kind: project === 'openclaw/sottoagenti' ? 'sottoagente' : 'sessione', provider: 'claude', model: modelLabel(model), project, cwd, cliId: path.basename(n, '.jsonl'), file: f, title: clip(title), titleFrom: ai ? 'ai' : 'prompt', headless, startedAt: started, lastActivity: st.mtimeMs });
     }
     // Sottoagenti di Claude Code: <sessione>/subagents/agent-*.jsonl, e un livello in più per i workflow
     // (subagents/workflows/<wf>/). Si guardano solo le sessioni toccate da poco: la sessione madre aspetta e può non scrivere.
@@ -210,7 +213,10 @@ export function summarize(agents, { now = Date.now(), claudePct = 0 } = {}) {
   const out = {};
   for (const [project, list] of Object.entries(by)) {
     const models = {};
-    for (const a of list) { const k = `${a.provider}|${a.model}`; models[k] = (models[k] || 0) + 1; a.work = workLabel(a.title) || null; }
+    for (const a of list) { const k = `${a.provider}|${a.model}`; models[k] = (models[k] || 0) + 1;
+      // il lavoro in parole viene da un titolo (dell'app o di Claude Code), mai dal testo di un prompt (24/10)
+      if (a.provider !== 'claude' || a.kind === 'coda') a.headless = true;
+      a.work = a.titleFrom === 'prompt' || (a.headless && a.kind !== 'workflow') ? null : workLabel(a.title) || null; }
     // i figli subito sotto la sessione che li ha lanciati, così le viste li rientrano senza ricostruire l'albero
     const kids = new Map(); for (const a of list) if (a.parent) kids.set(a.parent, [...(kids.get(a.parent) || []), a]);
     const roots = list.filter((a) => !a.parent || !list.some((b) => b.cliId === a.parent && !b.parent));
@@ -264,9 +270,9 @@ export function attachOpen(agents, { desktop = new Map(), topics = [] } = {}) {
   for (const a of agents) {
     const d = a.cliId && desktop.get(a.cliId);
     // il titolo che l'app dà alla sessione dice il lavoro in parole («Tray UI»), meglio del primo messaggio
-    if (d) { a.open = { url: desktopUrl(d.id), via: 'Claude Code desktop' }; if (d.title) a.title = clip(d.title); continue; }
+    if (d) { a.open = { url: desktopUrl(d.id), via: 'Claude Code desktop' }; if (d.title) { a.title = clip(d.title); a.titleFrom = 'app'; } continue; }
     const t = a.provider === 'claude' && a.kind === 'sessione' && pickTopics(a, topics);
-    if (t) { a.open = { url: topicsUrl(t.sessionId), via: 'tab Topics' }; if (t.title && t.title !== 'chat') a.title = clip(t.title); continue; }
+    if (t) { a.open = { url: topicsUrl(t.sessionId), via: 'tab Topics' }; if (t.title && t.title !== 'chat') { a.title = clip(t.title); a.titleFrom = 'app'; } continue; }
     a.where = a.parent ? 'sottoagente di una sessione Claude Code: si segue dalla sessione che l\'ha lanciato'
       : a.kind === 'sottoagente' ? 'gira dentro OpenClaw come sottoagente: non ha una pagina da aprire'
       : a.kind === 'coda' ? 'lavoro della coda lanciato da delegate, senza finestra'

@@ -171,3 +171,14 @@ test('scanAgents: le chiamate che ricavano il titolo di una card non sono agenti
   const { agents } = scanAgents({ claudeRoot: root, codexRoot: path.join(root, 'no'), museRoot: path.join(root, 'no') });
   assert.deepEqual(agents.map((a) => a.title), ['Sistema la tray']);
 });
+
+test('summarize: claude -p è headless e senza lavoro; il testo di un prompt non diventa mai il nome del lavoro', () => {
+  const list = [
+    { project: 'p', provider: 'claude', model: 'Opus', kind: 'sessione', title: 'Apply these fixes from an independent review', titleFrom: 'prompt', startedAt: 1 },
+    { project: 'p', provider: 'claude', model: 'Opus', kind: 'sessione', title: 'Tray UI', titleFrom: 'app', startedAt: 1 },
+    { project: 'p', provider: 'claude', model: 'Sonnet', kind: 'sessione', title: 'Rifai i test', titleFrom: 'ai', headless: true, startedAt: 1 },
+    { project: 'p', provider: 'codex', model: 'GPT', kind: 'codex', title: 'TASK scrivi il parser', startedAt: 1 },
+  ];
+  const out = summarize(list).p.list;
+  assert.deepEqual(out.map((a) => [a.work, !!a.headless]), [[null, false], ['Tray UI', false], [null, true], [null, true]]);
+});
