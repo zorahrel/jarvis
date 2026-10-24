@@ -36,7 +36,11 @@ python3 scripts/ui-bar.py
 python3 scripts/prova-automazioni.py
 # 8. niente lasciato nel TMPDIR della barra, niente processi demo vivi
 left="$(ls -A "$BT")"; [ -z "$left" ] || { echo "ROSSO la barra ha lasciato in TMPDIR: $(echo $left)"; exit 1; }
-alive="$(ps eww -ax -o pid=,command= | grep -F "$BT" | grep -v grep | awk '{print $1}')"
+# ps eww mostra anche l'ambiente: senza TMPDIR per ps e foto su file, il controllo non trova sé stesso (awk e
+# grep della pipeline ereditano il TMPDIR della barra e facevano un falso rosso)
+sleep 2; PS="${BT%/}.ps"
+env -u TMPDIR ps eww -ax -o pid=,command= > "$PS"
+alive="$(env -u TMPDIR awk -v bt="$BT" -v me="$$" 'index($0, bt) && $1 != me {print $1}' "$PS")"; rm -f "$PS"
 [ -z "$alive" ] || { echo "ROSSO processi della barra ancora vivi: $(echo $alive)"; kill -9 $alive 2>/dev/null; exit 1; }
 rmdir "$BT"
 echo 'BARRA VERDE'
