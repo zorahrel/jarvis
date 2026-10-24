@@ -357,3 +357,20 @@ test('ore silenziose: notte e Mac fermo da 30 minuti; Mac usato o giorno = si pa
   assert.equal(isQuiet(at(9), 3600), false);
   assert.equal(isQuiet(at(3), null), true, 'inattività illeggibile di notte: si tiene');
 });
+
+// 24/10: «diario.mjs --help» scriveva «--help» nel Diario vero come se fosse un evento.
+test('diario.mjs da riga di comando: --help e opzioni al posto del testo non scrivono niente', async () => {
+  const { execFileSync } = await import('node:child_process');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'diario-cli-'));
+  const cli = path.join(path.dirname(new URL(import.meta.url).pathname), 'diario.mjs');
+  const run = (...args) => { try { execFileSync(process.execPath, [cli, ...args], { env: { ...process.env, DIARIO_DIR: dir }, stdio: 'pipe' }); return 0; } catch (e) { return e.status; } };
+  try {
+    assert.equal(run('--help'), 0);
+    assert.equal(run('-h'), 0);
+    assert.equal(run('--source', 'x'), 64);
+    assert.deepEqual(fs.readdirSync(dir), [], 'nessun file del giorno: niente scritto');
+    assert.equal(run('evento vero', '--source', 'prova'), 0);
+    const [f] = fs.readdirSync(dir);
+    assert.equal(JSON.parse(fs.readFileSync(path.join(dir, f), 'utf8')).text, 'evento vero');
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
