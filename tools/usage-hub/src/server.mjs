@@ -195,6 +195,7 @@ export function createServer(config, deps = {}) {
     return agentCache.v;
   };
   const scanLiveAgents = async (queue) => {
+    const startedAt = Date.now();   // una lettura partita prima del report non lo ha visto, anche se finisce dopo
     const groups = config.groups || [];
     const resolve = await openclawResolve();
     if (Date.now() - weekSeen.at > 10 * 60000) weekSeen = { at: Date.now(), v: scanAgents({ groups, seenDays: 7, resolve }).lastSeen };
@@ -207,7 +208,7 @@ export function createServer(config, deps = {}) {
     }
     // quanto consuma ogni sessione: dai tracker che l'hub aggiorna già per i progetti
     attachSessionUse(agents, trackers, cache, { weights: config.weights });
-    agentCache = { at: Date.now(), v: { agents, lastSeen: { ...weekSeen.v, ...lastSeen }, topics: topicsByProject(terminals, { groups, ocRoot: path.join(os.homedir(), '.openclaw') }) } };
+    agentCache = { at: Date.now(), from: startedAt, v: { agents, lastSeen: { ...weekSeen.v, ...lastSeen }, topics: topicsByProject(terminals, { groups, ocRoot: path.join(os.homedir(), '.openclaw') }) } };
     return agentCache.v;
   };
   if (runsLive) { setTimeout(() => liveAgents(loadQueue()).catch(() => {}), 3000).unref(); setInterval(() => liveAgents(loadQueue()).catch(() => {}), 40000).unref(); }
@@ -314,7 +315,7 @@ export function createServer(config, deps = {}) {
         const top = new Set([...projects].sort((a, b) => b.total - a.total).slice(0, 8).map((p) => p.name));
         projects = projects.filter((p) => p.agents || p.budgetPct != null || top.has(p.name))
           .sort((a, b) => ((b.agents ? b.agents.count : 0) > 0) - ((a.agents ? a.agents.count : 0) > 0));
-        return send(200, 'application/json', JSON.stringify({ at: live.at, projects, error: live.error || null }));
+        return send(200, 'application/json', JSON.stringify({ at: live.at, agentsAt: agentCache.from || 0, projects, error: live.error || null }));   // agentsAt: quando sono state lette le sessioni (la barra aspetta che sia dopo il report)
       }
       // Budget e priorità di un progetto dalla tray: {name, budgetPct?, priority?}
       if (req.url === '/api/project-settings' && req.method === 'POST') {

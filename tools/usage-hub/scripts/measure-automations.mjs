@@ -47,7 +47,14 @@ try {
     if (missing.length) fail.push('senza titolo o esito: ' + missing.join(', '));
     // P05: la tabella dei progetti mostra il consumo vero della settimana. Il serve --no-live non lo calcola,
     // quindi si legge dal :3360 vivo, solo in GET: almeno 3 progetti vivi con una percentuale sopra zero.
-    const live = await fetch('http://127.0.0.1:3360/api/live', { signal: AbortSignal.timeout(60000) }).then((r) => r.json()).catch(() => null);
+    // un hub appena riavviato non ha ancora il primo report (at 0, sotto carico ~1 minuto): si aspetta, al massimo 3 minuti,
+    // invece di misurare il vuoto (giro 10: la barra lanciata subito dopo un kickstart cadeva su «sessioni senza consumo»)
+    const getLive = () => fetch('http://127.0.0.1:3360/api/live', { signal: AbortSignal.timeout(60000) }).then((r) => r.json()).catch(() => null);
+    let live = await getLive();
+    for (let i = 0; i < 36 && !(live && live.at > 0); i++) { await new Promise((r) => setTimeout(r, 5000)); live = await getLive(); }
+    if (!(live && live.at > 0)) fail.push('l\'hub vivo non ha il report dei progetti dopo 3 minuti');
+    // le sessioni si rileggono col report nuovo: si aspetta una lettura successiva al report (al massimo 2 minuti)
+    for (let i = 0; i < 24 && live && live.at > 0 && !(live.agentsAt >= live.at); i++) { await new Promise((r) => setTimeout(r, 5000)); live = await getLive() || live; }
     const withUse = ((live && live.projects) || []).filter((p) => !p.dead && (p.total || 0) > 0);
     console.log(`progetti vivi con consumo della settimana: ${withUse.length} (${withUse.slice(0, 3).map((p) => p.name + ' ' + p.total + '%').join(', ')})`);
     if (withUse.length < 3) fail.push(`solo ${withUse.length} progetti vivi con consumo nella tabella (minimo 3)`);
