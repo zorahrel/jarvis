@@ -40,6 +40,11 @@ export function findings(f) {
     // senza coprire gli errori dello stesso job (24/10: mailwatch, avvisare è il suo mestiere).
     const sent = f.delivered[j.id] || 0, lastSent = f.lastDelivered?.[j.id];
     if (sent > 10 && !(f.now - lastSent > 2 * DAY)) out.push({ kind: 'rumore', line: `${name(j)}: consegna spesso, ${sent} messaggi in 7 giorni` });
+    // 24/10: aws-case-check avvisava su WhatsApp senza destinatario, ogni giro finiva in errore e l'avviso non sarebbe
+    // mai arrivato. Un cron «at» fallisce una volta sola e la regola degli errori (2 in 24h) non lo vede: qui si guarda
+    // la configurazione. «last» non vuole destinatario.
+    const d = j.delivery;
+    if (d?.mode === 'announce' && d.channel && d.channel !== 'last' && !d.to) out.push({ kind: 'senza destinatario', line: `${name(j)}: avvisa su ${d.channel} senza destinatario, l'avviso non arriva: openclaw cron edit ${j.id} --to …` });
   }
   if (f.scratchLen > 4000) out.push({ kind: 'heartbeat', line: `scratch dell'heartbeat a ${Math.round(f.scratchLen / 1000)} KB: con compiti chiusi dentro il modello gira sempre; vuoto = nessun turno` });
   for (const d of f.doctor || []) out.push({ kind: 'doctor', line: `doctor ${d.severity}: ${d.checkId} — ${(d.message || '').slice(0, 140)}` });
