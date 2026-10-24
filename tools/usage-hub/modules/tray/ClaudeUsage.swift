@@ -170,7 +170,9 @@ func trustOf(_ pids: [pid_t]) -> [TrustItem] { (liveTrust?.items ?? []).filter {
 // di offload e PC che dorme, cioè il lavoro pesante sta girando qui invece che là.
 // Una macchina, dall'hub (/api/machines): questo Mac, il PC, domani altre. Tutte la stessa card: niente nomi nel codice.
 struct MachineMetric: Codable { let key: String; let name: String; let pct: Int; let level: Int; let limit: Double?; let note: String; let history: [HistoryPoint]? }
-struct Machine: Codable { let id: String; let name: String; let local: Bool; let state: String; let level: Int; let caption: String?; let lines: [String]; let metrics: [MachineMetric]; let foot: String? }
+struct Machine: Codable { let id: String; let name: String; let local: Bool; let state: String; let level: Int; let caption: String?; let lines: [String]; let metrics: [MachineMetric]; let foot: String?; let offload: Int? }
+// Un'altra macchina sta facendo girare lavori nostri (offload): la barra lo segna, sennò resta com'è.
+func remoteOffload() -> Bool { liveMachines?.contains { !$0.local && ($0.offload ?? 0) > 0 } ?? false }
 var liveMachines: [Machine]?
 var snapshotMode = false
 struct PcResp: Codable { let pc: String; let perche: String?; let mac: Double?; let soglia: Double?; let avviso: Bool }
@@ -416,8 +418,21 @@ class UsageBarView: NSView {
     }
     private func macColWidth(_ c: MacCol) -> CGFloat { max(vBarW, (c.tag as NSString).size(withAttributes: [.font: tagFont]).width) }
     private func macCellWidth() -> CGFloat {
-        guard let cols = macCell() else { return 0 }
-        return cols.map { macColWidth($0) }.reduce(0, +) + colGap * CGFloat(cols.count - 1)
+        let cols = macCell() ?? []
+        let mac = cols.isEmpty ? 0 : cols.map { macColWidth($0) }.reduce(0, +) + colGap * CGFloat(cols.count - 1)
+        return remoteOffload() ? mac + (mac > 0 ? pcMarkGap : 0) + pcMarkW() : mac
+    }
+    // Segno del PC al lavoro: lo schermo sopra, la sigla sotto, come le colonne del Mac
+    private let pcMarkGap: CGFloat = 4
+    private func pcMarkW() -> CGFloat { max(9, ("PC" as NSString).size(withAttributes: [.font: tagFont]).width) }
+    private func drawPCMark(x: CGFloat) {
+        let w = pcMarkW(), tw = ("PC" as NSString).size(withAttributes: [.font: tagFont]).width
+        drawBaseline("PC", x: x + (w - tw) / 2, baseline: rowBotBaseline, font: tagFont, color: .white, shadow: true)
+        let cfg = NSImage.SymbolConfiguration(pointSize: 9, weight: .semibold).applying(.init(paletteColors: [.white]))
+        if let img = NSImage(systemSymbolName: "desktopcomputer", accessibilityDescription: "PC al lavoro")?.withSymbolConfiguration(cfg) {
+            let sz = img.size
+            img.draw(in: NSRect(x: x + (w - sz.width) / 2, y: vBarY + (vBarTop - vBarY - sz.height) / 2, width: sz.width, height: sz.height))
+        }
     }
 
     private func layout() -> (groups: [GroupFrame], width: CGFloat, macW: CGFloat) {
@@ -506,7 +521,8 @@ class UsageBarView: NSView {
         }
         let (groups, _, macW) = layout()
         var px = padX
-        if let cols = macCell() {
+        if macW > 0 {
+            let cols = macCell() ?? []
             var cx = px
             for c in cols {
                 let w = macColWidth(c)
@@ -529,6 +545,7 @@ class UsageBarView: NSView {
                 NSRect(x: r.minX, y: r.minY + h * CGFloat(c.limit) / 100, width: vBarW, height: 1).fill()
                 cx += w + colGap
             }
+            if remoteOffload() { drawPCMark(x: cols.isEmpty ? px : cx - colGap + pcMarkGap) }
             px += macW + acctGap
         }
         if let ps = paceSummary(snapshot) {
@@ -1150,6 +1167,12 @@ func macRow() -> NSMenuItem? {
 
 // Una macchina come card: stato a parole nel badge, una misura per riquadro col grafico 24 h quando c'è, sotto cosa pesa.
 // Senza misure (spenta, addormentata) una riga sola. La macchina su cui gira la tray ha i processi nel sottomenu.
+// I lavori nostri sulla macchina (offload) uno per riga, in testa; il resto in una riga come prima
+func machineText(_ lines: [String], jobs: Int) -> String {
+    guard jobs > 0 else { return lines.joined(separator: " · ") }
+    let rest = Array(lines.dropFirst(jobs))
+    return (Array(lines.prefix(jobs)) + (rest.isEmpty ? [] : [rest.joined(separator: " · ")])).joined(separator: "\n")
+}
 func machineItem(_ m: Machine) -> NSMenuItem {
     let tone: (Int) -> NSColor = { $0 == 0 ? toneOK : $0 == 1 ? toneWarn : toneBad }
     var lines = m.lines
@@ -1162,7 +1185,7 @@ func machineItem(_ m: Machine) -> NSMenuItem {
     // senza misure la riga sotto dice cosa aspettarsi (la didascalia), lo stato è già nel badge
     let v = AccountBlockView(icon: sym(m.local ? "laptopcomputer" : "desktopcomputer", pt: 14, color: .labelColor), name: m.name, caption: quiet ? nil : m.caption,
                              badge: m.state, badgeColor: quiet && m.level == 0 ? .secondaryLabelColor : tone(m.level),
-                             brake: lines.isEmpty ? nil : lines.joined(separator: " · "), bars: bars,
+                             brake: lines.isEmpty ? nil : machineText(lines, jobs: m.offload ?? 0), bars: bars,
                              single: quiet ? txt(m.caption ?? "nessuna misura adesso", rowSmall, .secondaryLabelColor) : nil)
     if !quiet { v.foot = m.foot; v.vertical = true }
     let it = NSMenuItem()
@@ -1440,7 +1463,8 @@ final class AccountBlockView: NSView {
     static func brakeH(_ brake: String?) -> CGFloat {
         guard let b = brake else { return 0 }
         let h = (b as NSString).boundingRect(with: NSSize(width: brakeW, height: 100), options: [.usesLineFragmentOrigin], attributes: [.font: brakeFont]).height
-        return min(ceil(h), 28)
+        // due righe al massimo; un testo già diviso a capo (i lavori del PC, uno per riga) ne tiene una per pezzo
+        return min(ceil(h), max(28, 14 * CGFloat(b.components(separatedBy: "\n").count) + 2))
     }
     static func top(_ brake: String?) -> CGFloat { brake == nil ? 27 : 27 + brakeH(brake) + 4 }
     required init?(coder: NSCoder) { nil }

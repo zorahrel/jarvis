@@ -43,3 +43,22 @@ test('sessionUse: solo il giro attuale, ultima ora a parte, quota solo per Claud
   assert.deepEqual(cx, { tokens: 500, hourTokens: 500, pct: null, hourPct: null });
   assert.equal(sessionUse({ provider: 'claude', startedAt: 0 }, {}), null);
 });
+
+test('offload attivo: il PC dice cosa sta facendo, da quanto e per chi', async () => {
+  const { pcMachine, offloadJobs } = await import('../src/machines.mjs');
+  const fs = await import('node:fs'); const os = await import('node:os'); const path = await import('node:path');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'offload-'));
+  fs.writeFileSync(path.join(dir, '1.json'), JSON.stringify({ pid: 1, at: 1000, dir: 'usage-hub', cmd: 'npm test', who: 'Claude Code' }));
+  fs.writeFileSync(path.join(dir, '2.json'), JSON.stringify({ pid: 2, at: 2000, dir: 'quadra', cmd: 'pnpm build', who: 'Codex' }));
+  fs.writeFileSync(path.join(dir, '3.json'), JSON.stringify({ pid: 3, at: 3000, dir: 'x', cmd: 'y', who: 'z' }));
+  const jobs = offloadJobs({ dir, alive: (pid) => pid !== 3 });
+  assert.equal(jobs.length, 2, 'il pid morto non conta');
+  const m = pcMachine({ pc: 'acceso', perche: 'inattivo da 2 min' }, { jobs, now: 1000 + 12 * 60000 });
+  assert.equal(m.state, 'lavora');
+  assert.equal(m.offload, 2);
+  assert.equal(m.lines[0], 'Sta lavorando: i test di usage-hub · da 12 min · per Claude Code');
+  assert.match(m.lines[1], /^Sta lavorando: la build di quadra · da 12 min · per Codex$/);
+  const idle = pcMachine({ pc: 'dorme', perche: '' }, { jobs: [] });
+  assert.equal(idle.state, 'dorme');
+  assert.equal(idle.offload, 0);
+});
