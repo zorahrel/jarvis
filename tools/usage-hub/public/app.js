@@ -44,8 +44,9 @@ const empty = (t) => `<div class="mut small">${t}</div>`;
 
 // ---------- Panoramica ----------
 // Grafico dell'andamento accanto alla barra, come nella tray: scala 0–100 fissa, linea a gradini con l'area, punto sull'ultimo valore.
+// Solo i punti fra l'inizio della finestra e adesso: uno dopo «adesso» (orologio indietro) usciva dalla card (giro 10).
 function spark(points, spanMs, tone = '') {
-  const now = Date.now(), from = now - spanMs, pts = (points || []).filter((p) => p.t * 1000 >= from).sort((a, b) => a.t - b.t);
+  const now = Date.now(), from = now - spanMs, pts = (points || []).filter((p) => p.t * 1000 >= from && p.t * 1000 <= now).sort((a, b) => a.t - b.t);
   if (pts.length < 2) return '<span class="spk"></span>';
   const x = (t) => ((t * 1000 - from) / spanMs) * 120, y = (v) => 22 - (Math.min(Math.max(v, 0), 100) / 100) * 20;
   let d = `M${x(pts[0].t).toFixed(1)},${y(pts[0].v).toFixed(1)}`;
