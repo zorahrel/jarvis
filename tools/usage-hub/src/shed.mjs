@@ -125,7 +125,7 @@ export const DIGEST = { quietMs: 10 * MIN, minStrainMs: 10 * MIN, sampleMs: 2 * 
 const ADVICE = { tsserver: 'riavvia quella sessione, se non ti serve più', app: 'chiudila se non ti serve', sessione: 'chiudi la sessione se non ti serve', altro: 'chiudilo se non ti serve' };
 
 // mcpChildren: async () => [{ name, pid, inFlight, memMB }] dei server figli del gateway MCP; remountMcp(name) li rimonta.
-export function createShedDigest({ send = () => {}, log = () => {}, hogs = async () => [], offloads = async () => [], restartGateway = null, mcpChildren = async () => [], remountMcp = null, now = Date.now, limits = DIGEST } = {}) {
+export function createShedDigest({ send = () => {}, diary = () => {}, log = () => {}, hogs = async () => [], offloads = async () => [], restartGateway = null, mcpChildren = async () => [], remountMcp = null, now = Date.now, limits = DIGEST } = {}) {
   let ep = null;
   let lastRestartAt = -Infinity, lastCalmSample = -Infinity;
   const advised = new Map(); // nome → quando gliel'ho detto: lo stesso consiglio una volta al giorno
@@ -217,7 +217,11 @@ export function createShedDigest({ send = () => {}, log = () => {}, hogs = async
       ].filter((l) => l && l !== '.').join('\n');
       const push = Boolean(did);
       recent.unshift({ at, from: e.from, to: e.to, text, push }); recent.length = Math.min(recent.length, 10);
-      if (push) send(text); else log(text.replace('\n', ' '));
+      // Il dettaglio (chi pesava, quanti lavori in pausa) va nel diario; su WhatsApp una riga sola, solo se ho fatto
+      // qualcosa o c'è un consiglio, senza etichette di lavori né chiavi di sessione (Attilio, 24/10).
+      diary({ source: 'freno-mac', kind: 'freno', text: text.replace('\n', ' '), outcome: e.open ? 'error' : 'ok' });
+      const line = `Mac sotto sforzo dalle ${hhmm(e.from)} alle ${hhmm(e.to)}: ${did}${n ? (e.open ? ', alcuni lavori pesanti sono ancora in pausa' : ', i lavori pesanti messi in pausa sono ripartiti') : ''}.`;
+      if (push) send(line); else log(text.replace('\n', ' '));
       return { text, push };
     },
   };

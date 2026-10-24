@@ -23,8 +23,18 @@ const mask = (s) => String(s || '').replace(/\+?\d[\d ]{8,}\d/g, '…').replace(
 // Diario scritto da altri (sync dei task e simili): una riga JSONL per evento in <dir>/YYYY-MM-DD.jsonl,
 // {ts, source, text, kind?, ref?, outcome?, link?}. Si leggono solo i file dei giorni chiesti; una riga rotta si salta.
 export const DIARY_DIR = process.env.USAGE_HUB_DIARIO || path.join(os.homedir(), '.claude/jarvis/state/diario');
-const SRC = { 'task-sync': 'Task Topics ↔ Promemoria' };
+const SRC = { 'task-sync': 'Task Topics ↔ Promemoria', delega: 'Coda delega', 'freno-mac': 'Freno del Mac', 'controllo-processi': 'Processi sospetti', 'quota-guard': 'Budget dei progetti', 'usage-hub-check': 'Soglie per progetto' };
 const OUTCOMES = new Set(['ok', 'error', 'skipped']);
+// Scrive righe nello stesso formato che scrivono gli altri (scripts/task-sync/diario.mjs): file del giorno a Roma, append.
+const romeDay = (ts) => new Intl.DateTimeFormat('sv-SE', { timeZone: 'Europe/Rome', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(ts));
+export function appendDiary(rows, { dir = DIARY_DIR, now = Date.now() } = {}) {
+  const list = (Array.isArray(rows) ? rows : [rows]).filter((r) => r && r.text);
+  if (!list.length) return;
+  const lines = list.map((r) => { const o = { ts: r.ts ?? now, source: r.source || 'hub', text: String(r.text), kind: r.kind, ref: r.ref, outcome: r.outcome || 'ok', link: r.link };
+    for (const k of Object.keys(o)) if (o[k] == null) delete o[k]; return JSON.stringify(o); });
+  try { fs.mkdirSync(dir, { recursive: true }); fs.appendFileSync(path.join(dir, romeDay(now) + '.jsonl'), lines.join('\n') + '\n'); } catch { /* il diario non deve fermare chi scrive */ }
+}
+
 export function readDiary({ dir = DIARY_DIR, now = Date.now(), days = 7 } = {}) {
   const out = [];
   let files = [];

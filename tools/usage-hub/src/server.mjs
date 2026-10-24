@@ -35,7 +35,7 @@ import { createAutomations, findRunFile, workflowRunCost } from './automations/i
 import { validate as validateFeedback } from './automations/feedback.mjs';
 import { operatore } from './operatore.mjs';
 import { readAttesa, writeAttesa, validateAttesa, fromAutomations } from './attesa.mjs';
-import { journal, readDiary } from './journal.mjs';
+import { journal, readDiary, appendDiary } from './journal.mjs';
 import { fixTask } from './fix.mjs';
 import { readAll as readFeedback } from './automations/feedback.mjs';
 import { localConfig } from './local-config.mjs';
@@ -91,11 +91,13 @@ export function createServer(config, deps = {}) {
     return paceCache.rows;
   }
   // Coda dei lavori frenati: riprova ogni 5 minuti, avvisi WhatsApp raggruppati (max uno ogni 15).
-  const notifier = createNotifier({ send: deps.sendNotice || sendWhatsApp });
+  // Diario dell'hub: dettagli di coda, freno e processi sospetti. In test e demo non si scrive niente su disco.
+  const diary = deps.writeDiary || (deps.inProcess || deps.noLive ? () => {} : (r) => appendDiary(r));
+  const notifier = createNotifier({ diary });
   const queueTick = () => tick({
     routeFn: async (item) => {
       const info = (live.projects || []).find((p) => p.name === item.project) || null;
-      return route(await paceRows(), item.task, { project: item.project, projectInfo: info, cls: item.cls, overrides: activeOverrides(loadOverrides()), ...(deps.classify ? { classify: deps.classify } : {}) });
+      return route(await paceRows(), item.task, { project: item.project, projectInfo: info, cls: item.cls, writer: item.writer || '', overrides: activeOverrides(loadOverrides()), ...(deps.classify ? { classify: deps.classify } : {}) });
     },
     launch: (item, done) => launchDelegate(item, done, { bin: path.join(ROOT, 'bin', 'delegate') }),
     projectOf: (name) => (live.projects || []).find((p) => p.name === name) || null,
@@ -127,11 +129,11 @@ export function createServer(config, deps = {}) {
   const macWatch = createMacWatch({ groups: config.groups || [], priorityOf, getShed: () => macShed, openclawResolve });
   // Attendibilità dei processi: un giro ogni 2 minuti (≈0,1 s con le firme in cache), i gravi su WhatsApp una volta al giorno
   const trust = createTrust({ allow: (config.trust && config.trust.allow) || [] });
-  const trustAlert = createTrustAlert({ send: deps.sendNotice || sendWhatsApp, file: deps.inProcess || deps.noLive ? null : path.join(os.homedir(), '.cache', 'claude-usage-hub', 'trust-alerts.json') });
+  const trustAlert = createTrustAlert({ send: deps.sendNotice || sendWhatsApp, diary, file: deps.inProcess || deps.noLive ? null : path.join(os.homedir(), '.cache', 'claude-usage-hub', 'trust-alerts.json') });
   const trustTick = () => trust.scan().then((r) => trustAlert(r.items)).then((n) => { if (n) console.log(`[trust] avviso WhatsApp: ${n} processi sospetti`); }).catch(() => {});
   if (!deps.noLive && !deps.inProcess) { setTimeout(trustTick, 15000).unref(); setInterval(trustTick, 120000).unref(); }
   const shedDigest = createShedDigest({
-    send: deps.sendNotice || sendWhatsApp, log: (l) => console.log('[shed] ' + l), hogs: async () => topHogs(await processTable(), 5),
+    send: deps.sendNotice || sendWhatsApp, diary, log: (l) => console.log('[shed] ' + l), hogs: async () => topHogs(await processTable(), 5),
     // i giri di `offload` finiti sul PC (una riga per giro in ~/.cache/offload/runs.jsonl, la scrive offload stesso)
     offloads: async (from, to) => { try { return fs.readFileSync(path.join(os.homedir(), '.cache', 'offload', 'runs.jsonl'), 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l)).filter((r) => r.at >= from && r.at <= to); } catch { return []; } },
     // oc-restart senza opzioni non taglia turni: se il gateway lavora si stacca e riavvia appena è libero (max 6 h)
@@ -452,12 +454,12 @@ export function createServer(config, deps = {}) {
       if (req.url === '/api/pace' || req.url.startsWith('/api/gate') || req.url.startsWith('/api/route')) {
         const rows = await paceRows();
         if (req.url === '/api/pace') return send(200, 'application/json', JSON.stringify(rows));
-        // Delega: /api/route?task=...&project=nome[&class=taste|mechanical] → chi esegue, deciso da Jev + gate.
+        // Delega: /api/route?task=...&project=nome[&class=taste|mechanical|verify][&writer=muse|claude:opus…] → chi esegue.
         if (req.url.startsWith('/api/route')) {
           const q = new URL(req.url, 'http://x').searchParams;
           const project = q.get('project') || '';
           const projectInfo = (live.projects || []).find((p) => p.name === project) || null;
-          const r = await route(rows, q.get('task') || '', { project, projectInfo, cls: q.get('class'), overrides: activeOverrides(loadOverrides()), ...(deps.classify ? { classify: deps.classify } : {}) });
+          const r = await route(rows, q.get('task') || '', { project, projectInfo, cls: q.get('class'), writer: q.get('writer') || '', overrides: activeOverrides(loadOverrides()), ...(deps.classify ? { classify: deps.classify } : {}) });
           return send(200, 'application/json', JSON.stringify(r));
         }
         // Per la tray: la decisione di ogni classe e il freno davanti a museagent e codexagent (classe batch).

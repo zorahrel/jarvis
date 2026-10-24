@@ -1,5 +1,6 @@
 // Coda dei lavori frenati: `delegate` accoda invece di perderli, il server li riprova ogni pochi minuti.
 // Un file JSON, un lavoro alla volta per provider, ordine = priorità del progetto poi anzianità.
+import { appendDiary } from './journal.mjs';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -21,12 +22,12 @@ function save(items, file) {
 }
 
 // ref: la voce dell'hub a cui il lavoro si riferisce (es. la chiave di un'automazione per «Risolvi tu»).
-export function enqueue({ task, dir, project, cls, priority, waitUntil, ref }, { file = queueFile(), now = Date.now() } = {}) {
+export function enqueue({ task, dir, project, cls, priority, waitUntil, ref, writer, night }, { file = queueFile(), now = Date.now() } = {}) {
   if (!task || typeof task !== 'string') throw new Error('task mancante');
   if (priority && !(priority in RANK)) throw new Error('priorità: alta, normale, bassa');
   const items = loadQueue(file);
   const item = { id: crypto.randomBytes(3).toString('hex'), task, dir: dir || os.homedir(), project: project || '', cls: cls || null,
-    priority: priority || null, status: 'queued', createdAt: now, waitUntil: waitUntil || null, ...(ref ? { ref: String(ref) } : {}) };
+    priority: priority || null, status: 'queued', createdAt: now, waitUntil: waitUntil || null, ...(ref ? { ref: String(ref) } : {}), ...(writer ? { writer } : {}), ...(night ? { night: true } : {}) };
   save([...items, item], file);
   return item;
 }
@@ -39,6 +40,11 @@ export function cancel(id, file = queueFile()) {
   return true;
 }
 
+// Lavoro notturno (bin/board-notte): parte solo fra l'1 e le 7, ora del Mac. Di giorno resta in coda e aspetta la notte dopo.
+export const isNight = (now = Date.now()) => { const h = new Date(now).getHours(); return h >= 1 && h < 7; };
+// Log di un lavoro venuto da una card: suo, così board-notte ne legge le righe finali senza pescarle dal log comune.
+export const cardLogFile = (id) => path.join(path.dirname(queueFile()), 'logs', `${id}.log`);
+
 const rankOf = (item, projectInfo) => RANK[item.priority || projectInfo?.priority || 'normale'] ?? 1;
 
 // Un giro: per ogni lavoro in attesa (priorità poi anzianità) chiede al router se può partire; se sì e il suo
@@ -50,6 +56,7 @@ export async function tick({ routeFn, launch, projectOf = () => null, notify = (
     .sort((a, b) => rankOf(a, projectOf(a.project)) - rankOf(b, projectOf(b.project)) || a.createdAt - b.createdAt);
   const started = [];
   for (const item of waiting) {
+    if (item.night && !isNight(now)) continue;
     let d;
     try { d = await routeFn(item); } catch { continue; }
     item.waitUntil = d.go ? null : d.waitUntil || null;
@@ -86,29 +93,24 @@ export function recoverRunning(file = queueFile()) {
   return n;
 }
 
-export function launchDelegate(item, done, { bin, log = logFile() } = {}) {
+export function launchDelegate(item, done, { bin, log = item.ref?.startsWith('card:') ? cardLogFile(item.id) : logFile() } = {}) {
   fs.mkdirSync(path.dirname(log), { recursive: true });
   const out = fs.openSync(log, 'a');
   fs.writeSync(out, `\n[${new Date().toISOString()}] ${item.id} ${item.provider} ${item.project}: ${item.task}\n`);
-  const args = ['-C', item.dir, '--no-queue', ...(item.cls ? ['--class', item.cls] : []), item.task];
+  const args = ['-C', item.dir, '--no-queue', ...(item.cls ? ['--class', item.cls] : []), ...(item.writer ? ['--writer', item.writer] : []), item.task];
   const child = spawn(bin, args, { stdio: ['ignore', out, out], env: { ...process.env, PATH: `/opt/homebrew/bin:${process.env.HOME}/bin:${process.env.PATH}` } });
   child.on('exit', (code) => { fs.writeSync(out, `[${new Date().toISOString()}] ${item.id} exit ${code}\n`); fs.closeSync(out); done(code ?? 1); });
   child.on('error', () => done(1));
 }
 
-// Avvisi raggruppati: al massimo un messaggio ogni `gapMs`, con tutto ciò che si è accumulato.
-export function createNotifier({ send, gapMs = 15 * 60000, now = () => Date.now() }) {
-  let pending = []; let last = 0;
+// Eventi della coda delega («in coda», «finito», «fallito», «Risolvi tu»): vanno nel diario dell'hub, non su WhatsApp.
+// Attilio 24/10: su WhatsApp solo righe umane in italiano, niente id né compiti; questi sono dettagli da consultare.
+// send resta nella firma per chi lo passa ancora, ma non si usa.
+export function createNotifier({ diary = (r) => appendDiary(r) } = {}) {
   return {
-    push: (line) => { pending.push(line); },
-    flush() {
-      if (!pending.length || now() - last < gapMs) return false;
-      const text = `Coda delega:\n${pending.map((l) => `• ${l}`).join('\n')}`;
-      pending = []; last = now();
-      send(text);
-      return true;
-    },
-    get pending() { return pending.length; },
+    push: (line) => diary({ source: 'delega', kind: 'coda', text: String(line), outcome: /^fallito/.test(line) ? 'error' : 'ok' }),
+    flush: () => false,
+    get pending() { return 0; },
   };
 }
 

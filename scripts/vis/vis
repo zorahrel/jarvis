@@ -17,6 +17,9 @@
 #   vis diff A B [--soglia N]    quanto differiscono due immagini + mappa
 #   vis frames VIDEO [--ogni N]  estrae fotogrammi da un video
 #   vis sheet VIDEO              contact sheet: un video in una immagine sola
+#   vis affianca REF [PRIMA] DOPO [--out F]  reference, prima e dopo affiancati alla
+#                                stessa altezza, con l'etichetta: da mostrare con la
+#                                domanda di conferma a ogni consegna di UI
 #   vis watch VIDEO "domanda"    guarda il video in movimento (Gemini, gratis)
 #                                [--fps N] fotogrammi al secondo letti (5; 10-24 per
 #                                animazioni veloci) · [--modello M] · [--da S --a S]
@@ -161,6 +164,31 @@ case "$cmd" in
     ffmpeg -loglevel error -i "$V" -vf "fps=1/$OGNI" "$OUT/frame-%03d.png" </dev/null
     N=$(find "$OUT" -name 'frame-*.png' | wc -l | tr -d ' ')
     echo "$N fotogrammi (uno ogni ${OGNI}s) in: $OUT"
+    ;;
+
+  affianca)
+    # Ogni UI consegnata si mostra accanto alla reference (P10, Attilio 16/10: «1 a 1 con le reference»):
+    # stessa altezza, etichetta sopra, una immagine sola da mettere nel pannello con la domanda di conferma.
+    IMGS=(); OUT=""
+    while [[ $# -gt 0 ]]; do
+      case "$1" in
+        --out) OUT="${2:-}"; shift 2 ;;
+        *) IMGS+=("$1"); shift ;;
+      esac
+    done
+    [[ ${#IMGS[@]} -lt 2 || ${#IMGS[@]} -gt 3 ]] && die "uso: vis affianca REF [PRIMA] DOPO [--out FILE]"
+    for f in "${IMGS[@]}"; do need_file "$f"; done
+    need magick imagemagick
+    if [[ ${#IMGS[@]} -eq 3 ]]; then LAB=(reference prima dopo); else LAB=(reference dopo); fi
+    [[ -z "$OUT" ]] && OUT="$(mktemp -t vis-affianca).png"
+    FONT=/System/Library/Fonts/Supplemental/Arial.ttf; [[ -f "$FONT" ]] || FONT=""
+    ARGS=()
+    for i in "${!IMGS[@]}"; do ARGS+=(-label "${LAB[$i]}" "${IMGS[$i]}"); done
+    # Altezza comune 900 px: una reference da 2x e uno screenshot da 1x restano confrontabili a occhio.
+    magick montage ${FONT:+-font "$FONT"} -pointsize 28 "${ARGS[@]}" -tile "${#IMGS[@]}x1" -geometry 'x900+16+16' \
+      -background '#f4f4f4' "$OUT" 2>/dev/null
+    [[ -f "$OUT" ]] || die "montage non ha prodotto $OUT"
+    echo "$OUT"
     ;;
 
   sheet)

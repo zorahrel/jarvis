@@ -133,7 +133,7 @@ export function createTrust({ exec = run, now = Date.now, home = os.homedir(), a
 
 // Un messaggio per eseguibile al giorno: un miner che resta acceso non deve riempire WhatsApp.
 // Il registro sta su file: senza, ogni riavvio del hub rimandava lo stesso avviso.
-export function createTrustAlert({ send, now = Date.now, everyMs = 86400000, file = null } = {}) {
+export function createTrustAlert({ send, diary = () => {}, now = Date.now, everyMs = 86400000, file = null } = {}) {
   let sent = new Map();
   if (file) { try { sent = new Map(Object.entries(JSON.parse(fs.readFileSync(file, 'utf8')))); } catch { /* primo avvio */ } }
   const save = () => { if (!file) return; try { fs.mkdirSync(path.dirname(file), { recursive: true }); fs.writeFileSync(file, JSON.stringify(Object.fromEntries(sent))); } catch { /* resta in memoria */ } };
@@ -144,7 +144,9 @@ export function createTrustAlert({ send, now = Date.now, everyMs = 86400000, fil
     for (const i of fresh) sent.set(i.path, t);
     for (const [p, at] of sent) if (at < t - everyMs) sent.delete(p);
     save();
-    await send(`⚠️ Mac: ${fresh.length === 1 ? 'un processo sospetto' : fresh.length + ' processi sospetti'}\n` + fresh.slice(0, 5).map((i) => `• ${i.name} (pid ${i.pid}) ${i.path}\n  ${i.reasons.join('; ')}`).join('\n') + '\nDettagli: tray › Mac, o GET :3360/api/mac/trust');
+    // Su WhatsApp una riga senza pid né percorsi; nome, percorso e motivi nel diario dell'hub (Attilio, 24/10).
+    diary(fresh.map((i) => ({ source: 'controllo-processi', kind: 'sospetto', outcome: 'error', text: `${i.name} (pid ${i.pid}) ${i.path}: ${i.reasons.join('; ')}` })));
+    await send(`Sul Mac ${fresh.length === 1 ? "c'è un programma sospetto" : `ci sono ${fresh.length} programmi sospetti`}: i dettagli sono nel diario dell'hub.`);
     return fresh.length;
   };
 }

@@ -62,18 +62,13 @@ test('fine lavoro: done, failed, exit 10 torna in coda; riavvio recupera i runni
   assert.equal(loadQueue(f).find((i) => i.task === 'race').status, 'queued');
 });
 
-test('avvisi: un messaggio raggruppato ogni 15 minuti', () => {
-  let t = 1e9; const sent = [];
-  const n = createNotifier({ send: (m) => sent.push(m), now: () => t });
-  n.push('uno'); n.push('due');
-  assert.equal(n.flush(), true);
-  assert.match(sent[0], /uno[\s\S]*due/);
-  n.push('tre'); t += 5 * 60000;
-  assert.equal(n.flush(), false); // troppo presto, resta in attesa
-  t += 10 * 60000;
-  assert.equal(n.flush(), true);
-  assert.equal(sent.length, 2);
-  assert.equal(n.flush(), false); // niente da dire, niente messaggio
+test('avvisi della coda: nel diario, mai su WhatsApp', () => {
+  const sent = [], diary = [];
+  const n = createNotifier({ send: (m) => sent.push(m), diary: (r) => diary.push(r) });
+  n.push('in coda abc123 (p): uno'); n.push('fallito (exit 1) abc123: due');
+  assert.equal(n.flush(), false);
+  assert.deepEqual(sent, []);
+  assert.deepEqual(diary.map((r) => [r.source, r.outcome]), [['delega', 'ok'], ['delega', 'error']]);
 });
 
 test('sendWhatsApp senza destinatario configurato non manda niente e non fallisce', () => {
@@ -86,4 +81,16 @@ test('sendWhatsApp senza destinatario configurato non manda niente e non fallisc
     process.env.HOME = prevHome;
     if (prevTo !== undefined) process.env.USAGE_HUB_WHATSAPP_TO = prevTo;
   }
+});
+
+test('lavoro notturno: di giorno resta in coda, fra l\'1 e le 7 parte', async () => {
+  const f = tmp();
+  const day = new Date(2026, 9, 24, 15, 0).getTime(); const night = new Date(2026, 9, 25, 2, 0).getTime();
+  enqueue({ task: 'card di notte', night: true, ref: 'card:b/1' }, { file: f, now: 1 });
+  enqueue({ task: 'normale' }, { file: f, now: 2 });
+  const launched = [];
+  await tick({ file: f, now: day, routeFn: async (i) => ({ go: true, provider: i.night ? 'muse' : 'codex' }), launch: (it) => launched.push(it.task) });
+  assert.deepEqual(launched, ['normale']);
+  await tick({ file: f, now: night, routeFn: async () => ({ go: true, provider: 'muse' }), launch: (it) => launched.push(it.task) });
+  assert.deepEqual(launched, ['normale', 'card di notte']);
 });
