@@ -113,7 +113,7 @@ test('sweepStaleDemoRoots: anche le demo annidate e le cartelle di prova vecchie
   // demo viva sepolta a tre livelli: resta, e con lei tutta la catena
   const deepLive = mk('tmpvivo/x/y/usage-hub-demo-viva', process.pid); age(deepLive);
   // demo con .pid morto ma un file appena scritto dentro: non è vecchia, resta
-  const fresh = mk('tmpfresco/usage-hub-demo-5', 999999); age(fresh); fs.mkdirSync(path.join(fresh, 'log'));
+  const fresh = mk('tmpfresco/usage-hub-demo-5', 999999); fs.mkdirSync(path.join(fresh, 'log')); age(fresh);   // vecchia lei, recente solo log/
   const n = sweepStaleDemoRoots(tmp);
   const left = fs.readdirSync(tmp).sort();
   assert.deepEqual(left, ['demo-tmp-viva', 'tmpaltrui', 'tmpfresco', 'tmpmisto', 'tmpvivo', 'ui-bar-recente'], 'rimaste: ' + left);

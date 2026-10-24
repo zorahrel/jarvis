@@ -15,7 +15,10 @@ if (!['check', 'write'].includes(mode) || !junit) { console.error('uso: test-cou
 
 const xml = fs.readFileSync(junit, 'utf8');
 const got = {};
-for (const m of xml.matchAll(/<testcase\b([^>]*)>/g)) {
+// un test saltato (test.skip, todo) compare nel report ma non è stato eseguito: non conta (giro 10, mutante)
+// gli attributi si leggono rispettando le virgolette: un nome di test con «>» dentro spezzava il tag
+for (const m of xml.matchAll(/<testcase\b((?:[^>"]|"[^"]*")*?)(?:\/>|>([\s\S]*?)<\/testcase>)/g)) {
+  if (/<skipped\b/.test(m[2] || '')) { got['(saltati)'] = (got['(saltati)'] || 0) + 1; continue; }
   // alcuni casi (sottotest) non hanno file: contano sotto «(senza file)», così anche la loro sparizione si vede
   const fm = m[1].match(/\bfile="([^"]+)"/);
   if (!fm) { got['(senza file)'] = (got['(senza file)'] || 0) + 1; continue; }
