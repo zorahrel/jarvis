@@ -87,7 +87,19 @@
     var base = String(x.cwd).replace(/[\\/]+$/, '').split(/[\\/]/).pop();
     return humanProject(base);
   }
-  function sessionText(t) { return noIds(t); }
+  // Testi della cronologia: i messaggi di servizio fra sessioni di OpenClaw diventano una frase, gli orari fra
+  // parentesi quadre spariscono, i nomi degli strumenti mcp__server__nome diventano parole, i percorsi si accorciano
+  // alle ultime due cartelle.
+  function sessionText(t) {
+    var s = String(t == null ? '' : t).trim().replace(/^\[(?:[A-Z][a-z]{2} )?\d{4}-\d{2}-\d{2}[ T][\d:]+(?: ?GMT[+-]?\d*| ?UTC)?\]\s*/, '');
+    if (/^\[Inter-session message\]|^I acknowledge\b[^.]*inter-session|inter-session (?:routing|message)|routing data/i.test(s)) return 'Messaggio di servizio fra sessioni';
+    s = s.replace(/\bmcp__([a-z0-9-]+)__([a-z0-9_-]+)/gi, function (_, srv, name) { return 'Strumento di ' + srv + ': ' + name; })
+      .replace(/(?:~|\/(?:Users|home|private|tmp|var|opt)\b)(?:\/[^\s/:;,'"()]+)+/g, function (p) {
+        var parts = p.split('/').filter(Boolean);
+        return parts.length > 2 ? '…/' + parts.slice(-2).join('/') : p;
+      });
+    return noIds(s);
+  }
   // Consumo di una sessione: token letti dai suoi log e, dove l'hub la sa, la quota della settimana che pesa.
   function tokWords(n) {
     if (!(n > 0)) return '';

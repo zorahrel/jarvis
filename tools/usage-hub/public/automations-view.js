@@ -8,14 +8,17 @@
   // Via i caratteri che rompono l'HTML.
   // Testo libero senza id: gruppi WhatsApp, canali Discord, uuid e marcatori interni di OpenClaw (anche troncati)
   // diventano niente. Vale per descrizioni scritte a mano e per i messaggi delle sessioni.
-  function noIds(t) {
-    return String(t == null ? '' : t)
+  function noIds(t, keepSpace) {
+    var r = String(t == null ? '' : t)
       .replace(/<<<[A-Z_]*(?:>>>|…|\.\.\.)?/g, '')
       .replace(/\s*\((?:canale|channel|gruppo|group|chat|id)\s+[\d@a-z.:-]*\d{6,}[\d@a-z.:-]*\)/gi, '')
       .replace(/\s+(?:con id|with id|channel|canale|chat|id)\s+\d{6,}(?:@[a-z.]+)?/gi, '')
       .replace(/\b\d{12,}(?:@[a-z.]+)?/gi, '')
       .replace(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi, '')
-      .replace(/\(\s*\)/g, '').replace(/[ \t]{2,}/g, ' ').replace(/\s+([,.;:)])/g, '$1').trim();
+      .replace(/\b(account|conto|chat|utente|user)\s+\d{9,}/gi, '$1')
+      .replace(/\(\s*\)/g, '');
+    // nei <pre> (comandi, domande, errori) spazi e a capo restano com'erano
+    return keepSpace ? r : r.replace(/[ \t]{2,}/g, ' ').replace(/\s+([,.;:)])/g, '$1').trim();
   }
   function esc(s) {
     return String(s ?? '').replace(/[&<>"]/g, function (c) {
@@ -495,7 +498,7 @@
     if (srcs.length > 1) rows.push('<dt>Fonti</dt><dd>' + srcs.map(function (s) { return esc(SYS[s.provider] || s.provider || 'altra fonte'); }).join('<br>') + '</dd>');
     var cmd = t.command || t.prompt;
     return '<details class="tech"><summary>Dettagli tecnici</summary><dl class="cx-dl">' + rows.join('') + '</dl>' +
-      (cmd ? '<pre>' + esc(String(cmd).replace(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi, '…')) + '</pre>' : '') + (t.url && c.provider === 'github' ? '<a href="' + esc(t.url) + '" target="_blank" rel="noopener">Vedi il giro su GitHub</a>' : '') + '</details>';
+      (cmd ? '<pre>' + esc(noIds(String(cmd).replace(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi, '…'), true)) + '</pre>' : '') + (t.url && c.provider === 'github' ? '<a href="' + esc(t.url) + '" target="_blank" rel="noopener">Vedi il giro su GitHub</a>' : '') + '</details>';
   }
 
   // ---- Chi risponde: il nodo modello raccontato in parole ----
@@ -579,12 +582,12 @@
         : n.kind !== 'sources' && n.kind !== 'trigger' ? '<span class="gmeta">' + gStatus(n.outcome, n.inferred, n.ms) + '</span>' : '');
     var io = n.io || {};
     // Il dettaglio tecnico è una riga: sempre visibile. Si apre solo ciò che è lungo (domanda, risposta, errore).
-    var more = (io.in ? '<div class="gio"><span>Cosa gli è stato chiesto</span><pre tabindex="0">' + esc(io.in) + '</pre></div>' : '') +
-      (io.out ? '<div class="gio"><span>Cosa ha risposto <i>' + esc(io.outFrom || '') + '</i></span><pre tabindex="0">' + esc(io.out) + '</pre></div>'
+    var more = (io.in ? '<div class="gio"><span>Cosa gli è stato chiesto</span><pre tabindex="0">' + esc(noIds(io.in, true)) + '</pre></div>' : '') +
+      (io.out ? '<div class="gio"><span>Cosa ha risposto <i>' + esc(io.outFrom || '') + '</i></span><pre tabindex="0">' + esc(noIds(io.out, true)) + '</pre></div>'
         : n.kind === 'model' ? '<div class="gio"><span>Cosa ha risposto</span><p>Il testo di questo giro non è stato registrato.</p></div>' : '') +
-      (n.error ? '<div class="gio bad"><span>Errore</span><pre tabindex="0">' + esc(n.error) + '</pre></div>' : '');
+      (n.error ? '<div class="gio bad"><span>Errore</span><pre tabindex="0">' + esc(noIds(n.error, true)) + '</pre></div>' : '');
     var openLbl = n.kind === 'model' ? 'Mostra domanda e risposta' : 'Mostra l\'errore';
-    return '<li class="gn ' + esc(n.kind) + '"><div class="gh2">' + head + '</div>' + (n.detail && n.kind !== 'sources' ? '<div class="gd">' + esc(n.detail) + '</div>' : '') + body + (more
+    return '<li class="gn ' + esc(n.kind) + '"><div class="gh2">' + head + '</div>' + (n.detail && n.kind !== 'sources' ? '<div class="gd">' + esc(noIds(n.detail)) + '</div>' : '') + body + (more
       ? '<details class="gmore"><summary>' + ic('chevron-right', 'gchev') + openLbl + '</summary>' + more + '</details>' : '') + '</li>';
   }
   function graphHtml(g, now) {

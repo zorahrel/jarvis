@@ -10,7 +10,7 @@
 #   5. ogni numero di consumo dice il suo provider, niente cella fuori dalla sua card, comandi alti 44 px a 375;
 #   6. il badge di «Ti aspetta» dentro il suo bottone (600 e 900 px), «Chiudi» del pannello non coperto;
 #   7. la Panoramica con /api/attesa lenta 6 s e /api/live lenta 12 s: la barra aspetta la pagina vera, non il segnaposto.
-import os, pathlib, socket, subprocess, sys, tempfile, time, urllib.request, json
+import atexit, shutil, os, pathlib, socket, subprocess, sys, tempfile, time, urllib.request, json
 from playwright.sync_api import sync_playwright
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
@@ -23,7 +23,8 @@ assert 'ownerSVGElement' in AUDIT_JS, 'ui-audit.js è cambiato: il filtro delle 
 CLIP_JS = (ROOT / 'scripts/ui-clip.js').read_text()
 CHECKS_JS = (ROOT / 'scripts/ui-checks.js').read_text()
 TABS = ['overview', 'journal', 'automations', 'sessions', 'projects', 'activity', 'context', 'accounts', 'usage', 'services', 'settings', 'logs']
-WIDTHS = (1440, 700, 375)
+WIDTHS = (1440, 860, 700, 375)  # 860: la fascia 761-959 dove la nav diventa griglia
+GRAPH_DELAY_MS = int(os.environ.get('UI_BAR_GRAPH_DELAY', '2500'))
 LONG = 'sottotitolo di prova lunghissimo ' * 14
 red = []
 
@@ -54,6 +55,7 @@ def free_port():
 def serve():
     port = free_port()
     d = pathlib.Path(tempfile.mkdtemp(prefix='ui-bar-'))
+    atexit.register(shutil.rmtree, d, True)  # HOME finta e file della prova: non restano in $TMPDIR
     # come le prove: HOME finto e --no-live, la demo inventa da sé «Ti aspetta», diario, quote e Mac
     (d / 'home').mkdir()
     env = {k: v for k, v in os.environ.items() if not k.startswith('USAGE_HUB_')}
@@ -94,7 +96,7 @@ def wait_loaded(pg, secs=40):
     return False
 
 
-AXE_RUN = "async () => (await axe.run(document, {runOnly: ['wcag2a', 'wcag2aa']})).violations.filter(v => ['serious', 'critical'].includes(v.impact)).map(v => v.id + ':' + v.nodes.slice(0, 2).map(n => n.target).join('|'))"
+AXE_RUN = "async () => [...(await axe.run(document, {runOnly: ['wcag2a', 'wcag2aa']})).violations.filter(v => ['serious', 'critical'].includes(v.impact)), ...(await axe.run(document, {runOnly: {type: 'rule', values: ['empty-table-header', 'th-has-data-cells', 'td-has-header']}})).violations].map(v => v.id + ':' + v.nodes.slice(0, 2).map(n => n.target).join('|'))"
 AXE_TABS = ['overview', 'journal', 'automations', 'context', 'usage', 'projects', 'accounts', 'sessions', 'services']
 
 
@@ -126,8 +128,8 @@ def main():
             b = p.webkit.launch()
             for w in WIDTHS:
                 pg = b.new_context(viewport={'width': w, 'height': 900}).new_page()
-                # lo schema del pannello arriva dopo 2,5 s: il pannello deve mostrare lo scheletro nel frattempo
-                pg.add_init_script("(() => { const f = window.fetch; window.fetch = (u, o) => String(u).includes('/api/automations/graph') ? new Promise((r) => setTimeout(r, 2500)).then(() => f(u, o)) : f(u, o); })()")
+                # lo schema del pannello arriva dopo 2,5 s (UI_BAR_GRAPH_DELAY per provare che oltre 4 s è rosso): il pannello deve mostrare lo scheletro nel frattempo
+                pg.add_init_script("(() => { const f = window.fetch; window.fetch = (u, o) => String(u).includes('/api/automations/graph') ? new Promise((r) => setTimeout(r, %d)).then(() => f(u, o)) : f(u, o); })()" % GRAPH_DELAY_MS)
                 pg.set_default_timeout(90000)
                 errs = []
                 pg.on('pageerror', lambda e: errs.append(str(e)[:160]))
@@ -165,7 +167,7 @@ def main():
                 check(not stuck, f'{w}px ogni tab finisce di caricare entro 40 s {stuck}')
                 check(not cuts, f'{w}px nessun testo tagliato su {len(TABS)} tab {cuts[:4]}')
                 # 5. provider, card, comandi: Panoramica, Progetti e Consumi con i «Altri N» aperti
-                prov, out, taps = [], [], []
+                prov, out, taps, leak, heads = [], [], [], [], []
                 for t in TABS:
                     goto_tab(pg, t)
                     pg.evaluate("document.querySelectorAll('.tab.on details').forEach(d => d.open = true)")
@@ -173,6 +175,8 @@ def main():
                     pg.add_script_tag(content=CHECKS_JS)
                     prov += [t + ': ' + x for x in pg.evaluate('__provLabels()')]
                     out += [t + ': ' + x for x in pg.evaluate('__contained()')]
+                    leak += [t + ': ' + x for x in pg.evaluate('__internal()')]
+                    heads += [t + ': ' + x for x in pg.evaluate('__tableHeads()')]
                     if w <= 560:
                         taps += [t + ': ' + x for x in pg.evaluate('__taps(44)')]
                 # 8. la fascia della demo resta in vista dopo aver scorso fino in fondo
@@ -186,6 +190,15 @@ def main():
                 check(not band, f'{w}px fascia ESEMPIO in vista dopo lo scorrimento {band}')
                 check(not prov, f'{w}px ogni numero di consumo ha il suo provider {prov[:4]}')
                 check(not out, f'{w}px nessuna cella fuori dalla sua card {out[:4]}')
+                check(not leak, f'{w}px nessun testo interno (OpenClaw, mcp__, percorsi, id) su {len(TABS)} tab {leak[:4]}')
+                check(not heads, f'{w}px ogni tabella ha le intestazioni delle colonne {heads[:4]}')
+                # Sessioni e Consumi disegnati con i dati del proxy finto, non vuoti
+                goto_tab(pg, 'sessions')
+                ns = pg.evaluate("document.querySelectorAll('#t-sessions .card').length")
+                check(ns >= 3, f'{w}px Sessioni disegnata con dati ({ns} schede)')
+                goto_tab(pg, 'usage'); pg.wait_for_selector('#usage-main table', timeout=20000)
+                nu = pg.evaluate("document.querySelectorAll('#usage-main table tbody tr').length")
+                check(nu >= 4, f'{w}px Consumi disegnata con dati ({nu} righe)')
                 if w <= 560:
                     check(not taps, f'{w}px comandi alti almeno 44 px ({len(taps)} sotto) {taps[:5]}')
                 if axe:
@@ -203,7 +216,7 @@ def main():
                         pg.wait_for_selector('.cx-panel')
                         skl = pg.evaluate("!!document.querySelector('.cx-panel .cx-graph .au-skl')")
                         check(skl, f'{w}px pannello: mentre lo schema arriva c\'è il suo scheletro (non un pannello che sembra finito)')
-                        check(wait_loaded(pg), f'{w}px pannello: lo scheletro dello schema sparisce')
+                        check(wait_loaded(pg, 4), f'{w}px pannello: lo schema arriva entro 4 s (non 40)')
                         drawn = pg.evaluate("document.querySelectorAll('.cx-panel .cx-graph .gflow li').length")
                         check(drawn >= 3, f'{w}px pannello: lo schema della voce è disegnato ({drawn} passi)')
                         pg.wait_for_timeout(300)

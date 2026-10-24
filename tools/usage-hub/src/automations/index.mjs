@@ -187,16 +187,18 @@ export function createAutomations(opts = {}) {
 export function workflowRunCost(runFile, weekShare) {
   const dir = path.join(path.dirname(path.dirname(runFile)), 'subagents', 'workflows', path.basename(runFile, '.json'));
   let weighted = 0, agents = 0;
-  const seen = new Set();
+  // una usage per message.id, l'ULTIMA: le righe intermedie di un messaggio hanno l'output parziale (come in usage.mjs)
+  const byId = new Map();
   let files = [];
   try { files = fs.readdirSync(dir).filter((f) => /^agent-.*\.jsonl$/.test(f)); } catch { return { ok: false, error: 'trascrizioni degli agenti non trovate' }; }
   for (const f of files) {
     agents++;
     for (const line of fs.readFileSync(path.join(dir, f), 'utf8').split('\n')) {
       if (!line.includes('"usage"')) continue;
-      try { const j = JSON.parse(line); const id = j.message?.id; if (!j.message?.usage || (id && seen.has(id))) continue; if (id) seen.add(id); weighted += weighUsage(j.message.usage); } catch { /* riga troncata */ }
+      try { const j = JSON.parse(line); if (!j.message?.usage) continue; const id = j.message.id; if (id) byId.set(f + '|' + id, j.message.usage); else weighted += weighUsage(j.message.usage); } catch { /* riga troncata */ }
     }
   }
+  for (const u of byId.values()) weighted += weighUsage(u);
   const pct = weekShare ? weekShare(weighted) : null;
   return { ok: true, agents, weighted: Math.round(weighted), weekPct: pct == null ? null : Math.round(pct * 100) / 100, estimate: true };
 }

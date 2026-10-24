@@ -287,6 +287,7 @@ table.svc { table-layout:fixed; width:100%; } .svc th:nth-child(2) { width:110px
 /* telefono: ogni comando alto almeno 44 px (nav, bottoni, tendine, campi, «Altri N») */
 @media (max-width:560px) {
   nav button, .btn, .cx-btn, button.b, .tab button, input[type=number], input[type=text], input[type=search], details > summary, details.more > summary { min-height:44px; }
+  button.b { min-width:44px; } /* −/+ della priorità degli account: 30 px di larghezza non si prendono col dito */
   details > summary { display:flex; align-items:center; }
   /* WebKit ignora l'altezza delle tendine native: aspetto proprio, freccia disegnata */
   select { -webkit-appearance:none; appearance:none; height:44px; padding-right:28px; background:var(--surface) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%2362626b' stroke-width='2.5'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E") no-repeat right 10px center; }

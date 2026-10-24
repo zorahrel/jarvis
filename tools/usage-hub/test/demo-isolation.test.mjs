@@ -1,3 +1,4 @@
+import '../test-support/isolate-tmp.mjs';
 // La demo è tutta di prova: nessun giro vivo (avvisi, gateway, pausa dei processi) e niente dati di questo Mac nelle risposte.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -10,6 +11,7 @@ import fs from 'node:fs';
 import { liveJobs } from '../src/server.mjs';
 import { localConfig } from '../src/local-config.mjs';
 import { sweepStaleDemoRoots } from '../src/demo.mjs';
+import { snapshotReal, realChanges, realStrings, phoneLike } from '../test-support/real-data.mjs';
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -24,8 +26,12 @@ test('liveJobs: solo l\'hub vero fa giri vivi, mai test, --no-live o --demo', ()
 const stop = (p) => new Promise((r) => { if (p.exitCode != null) return r(); const t = setTimeout(() => p.kill('SIGKILL'), 5000); p.on('exit', () => { clearTimeout(t); r(); }); p.kill('SIGTERM'); });
 const freePort = () => new Promise((resolve) => { const s = net.createServer(); s.listen(0, '127.0.0.1', () => { const p = s.address().port; s.close(() => resolve(p)); }); });
 
+// tutte le API che la pagina della demo legge (anche quelle del proxy VDM, finte in demo)
+const DEMO_APIS = ['/api/hub-config', '/api/automations', '/api/overview', '/api/live', '/api/pace', '/api/gates', '/api/mac', '/api/contesto', '/api/diario?days=7', '/api/attesa', '/api/services', '/api/projects', '/api/heavy', '/api/machines', '/api/pc', '/api/queue', '/api/alerts',
+  '/vdm/api/profiles', '/vdm/api/settings', '/vdm/api/sessions', '/vdm/api/token-usage?days=7', '/vdm/api/activity'];
+
 test('serve --demo con l\'HOME vero: nessun account, cartella o nome utente di questo Mac nelle API', { timeout: 120000 }, async () => {
-  const port = await freePort();
+  const port = await freePort(), before = snapshotReal();
   const p = spawn(process.execPath, ['bin/usage-hub.mjs', 'serve', '--demo', '--port', String(port)], { cwd: ROOT, stdio: 'ignore',
     env: { ...process.env, USAGE_HUB_ATTESA: '', USAGE_HUB_DIARIO: '', USAGE_HUB_FEEDBACK_DIR: '' } });
   try {
@@ -35,17 +41,23 @@ test('serve --demo con l\'HOME vero: nessun account, cartella o nome utente di q
     const esc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     // anche ogni valore di config.local (numero e link WhatsApp di Jarvis, operatore…): in demo non esce nessuno
     const leaves = (o) => (o && typeof o === 'object' ? Object.values(o).flatMap(leaves) : typeof o === 'string' && o.length >= 6 ? [o] : []);
-    const real = new RegExp([user, home, '.openclaw', '/jarvis', ...leaves(localConfig())].map(esc).join('|'), 'i');
-    for (const u of ['/api/hub-config', '/api/automations', '/api/overview', '/api/live', '/api/pace', '/api/gates', '/api/mac', '/api/contesto', '/api/diario?days=7', '/api/attesa', '/api/services', '/api/projects', '/api/heavy', '/api/machines', '/api/pc', '/vdm/api/profiles', '/vdm/api/settings']) {
+    // e i testi veri di diario e «Ti aspetta» e il numero di notify.json: la demo non legge niente di vero
+    const real = new RegExp([user, home, '.openclaw', '/jarvis', ...leaves(localConfig()), ...realStrings()].map(esc).join('|'), 'i');
+    for (const u of DEMO_APIS) {
       const body = await (await fetch(url + u, { signal: AbortSignal.timeout(60000) })).text();
       const m = body.match(real);
       assert.equal(m, null, `${u} contiene «${m && body.slice(Math.max(0, m.index - 40), m.index + 40)}»`);
+      // nessun numero di telefono in nessuna forma (+39…, 39…@s.whatsapp.net, wa.me/…)
+      let j = null; try { j = JSON.parse(body); } catch { /* non JSON */ }
+      if (j) assert.deepEqual(phoneLike(j), [], `${u} ha un numero di telefono`);
     }
     const hc = await (await fetch(url + '/api/hub-config')).json();
     assert.equal(hc.demo, true);
     // i bottoni «Scrivi a Jarvis» della demo: link d'esempio, nessun numero di telefono
     for (const v of Object.values(hc.jarvis)) { assert.match(String(v), /^https:\/\/esempio\.it\//); assert.doesNotMatch(String(v), /\d{7,}|wa\.me|discord\.(com|gg)/); }
   } finally { await stop(p); }
+  // la demo non scrive nei file veri (diario, «Ti aspetta», feedback): nella barra HOME è finta e si confronta tutto
+  assert.deepEqual(realChanges(before), []);
 });
 
 test('serve --demo fermato con SIGTERM toglie la sua cartella; una rimasta da un SIGKILL si toglie alla partenza dopo', { timeout: 60000 }, async () => {

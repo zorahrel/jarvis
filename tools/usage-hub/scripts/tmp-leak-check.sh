@@ -22,8 +22,23 @@ trap 'rm -rf "$R"' EXIT
 # HOME vuota: i test non devono leggere i log veri del Mac (con quelli, 3 file duravano oltre 90 s l'uno
 # invece di 1-2 s) e il giro non dipende da cosa c'è in ~/.claude. Il TMPDIR sta accanto, non dentro.
 mkdir "$R/home" "$R/tmp"
-HOME="$R/home" TMPDIR="$R/tmp/" node --test test/ modules/vdm/test/ modules/tray/server/test.mjs >"$R/out" 2>&1
+# Sentinelle nei file «veri» della HOME finta (diario, Ti aspetta, numero WhatsApp): i test non devono né mostrarle
+# (demo-isolation le cerca nelle API della demo) né cambiarle (HUB_TEST_SANDBOX=1 fa confrontare i file prima e dopo).
+H="$R/home"; mkdir -p "$H/.claude/jarvis/state/diario" "$H/.claude/jarvis/private/automazioni/feedback" "$H/.config/claude-usage-hub"
+day="$(TZ=Europe/Rome date +%Y-%m-%d)"; now="$(($(date +%s) * 1000))"  # ora vera: con ts 1 (1970) /api/diario?days=7 la scartava e un diario vero letto non si vedeva
+echo '{"ts":'"$now"',"source":"sentinella","text":"SENTINELLA diario vero da non mostrare","outcome":"ok"}' > "$H/.claude/jarvis/state/diario/$day.jsonl"
+echo '{"kind":"apri","id":"s1","tipo":"decisione","title":"SENTINELLA attesa vera da non mostrare","why":"SENTINELLA motivo vero","from":"sentinella","at":'"$now"'}' > "$H/.claude/jarvis/private/ti-aspetta.jsonl"
+echo '{"whatsapp":"+393330001122"}' > "$H/.config/claude-usage-hub/notify.json"
+cp -R "$H" "$R/home-prima"
+# quota-guard vero (sta nella HOME vera): il test lo prova su fixture, senza la HOME vera non avrebbe chi provare
+QG="$HOME/.openclaw/bin/quota-guard.py"
+HOME="$H" TMPDIR="$R/tmp/" HUB_TEST_SANDBOX=1 QUOTA_GUARD_PY="$QG" node --test test/ modules/vdm/test/ modules/tray/server/test.mjs >"$R/out" 2>&1
 rc=$?
+grep -E "^✖|^not ok" "$R/out" | sort -u | head -20 | sed "s/^/     /"; tail -n 8 "$R/out" | sed "s/^/     /"
+# i file veri della HOME finta sono quelli di prima
+changed="$(diff -rq "$R/home-prima/.claude/jarvis" "$H/.claude/jarvis" 2>&1; diff -rq "$R/home-prima/.config" "$H/.config" 2>&1)"
+if [ -n "$changed" ]; then echo "FAIL i test hanno toccato i file veri (nella HOME finta):"; echo "$changed" | sed 's/^/     /'; exit 1; fi
+[ "$rc" = 0 ] || { echo "FAIL i test escono $rc (HOME e TMPDIR finti)"; exit 1; }
 left="$(ls -A "$R/tmp" | wc -l | tr -d ' ')"
 if [ "$left" != 0 ]; then
     echo "FAIL $left voci lasciate in \$TMPDIR dopo un giro (test exit $rc):"

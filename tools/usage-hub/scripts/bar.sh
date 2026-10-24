@@ -3,8 +3,8 @@
 #   npm run bar
 set -e
 cd "$(dirname "$0")/.."
-# 1. ciò che è verde resta verde
-npm test
+# 1. ciò che è verde resta verde: tutti i test con HOME e TMPDIR finti, sentinelle nei file veri, niente lasciato in $TMPDIR
+sh scripts/tmp-leak-check.sh
 node modules/tray/server/test.mjs
 node --test modules/vdm/test/
 node --test modules/tray/assets/bar-icons.test.mjs

@@ -7,7 +7,7 @@ Pagine vere dal hub che gira (:3360, solo GET), alle tre larghezze e nei due tem
 giro in video su un serve --demo --no-live a parte, con HOME finto: dati tutti inventati e fascia «ESEMPIO» su ogni vista.
 Esce 1 se una pagina resta sullo scheletro di caricamento (oltre 60 s nelle foto, oltre 4 s nel video).
 """
-import json, os, pathlib, shutil, socket, subprocess, sys, tempfile, time, urllib.request
+import atexit, json, os, pathlib, shutil, socket, subprocess, sys, tempfile, time, urllib.request
 from playwright.sync_api import sync_playwright
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
@@ -103,6 +103,7 @@ def tour(b, url, out, d):
 def main():
     out = pathlib.Path(sys.argv[1]); out.mkdir(parents=True, exist_ok=True)
     d = pathlib.Path(tempfile.mkdtemp(prefix='ux-proofs-'))
+    atexit.register(shutil.rmtree, d, True)  # HOME finta e video grezzi: non restano in $TMPDIR
     with sync_playwright() as pw:
         b = pw.webkit.launch()
         shots(b, LIVE, ['overview', 'journal', 'automations', 'context'], [1440, 700, 375], ['light', 'dark'], 'r6-', out)

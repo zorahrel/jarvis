@@ -22,6 +22,7 @@ import { newState, scanToday } from './sessions.mjs';
 import { projectSummary, saveProjectSetting, loadLabels, labelFor, explainProjects } from './live.mjs';
 import { scanAgents, summarize, attachOpen, loadDesktopSessions, topicsByProject } from './agents.mjs';
 import { attachSessionUse, shareFromReport } from './session-use.mjs';
+import { demoVdm } from './demo-vdm.mjs';
 import { macMachine, pcMachine, offloadJobs } from './machines.mjs';
 import https from 'node:https';
 import { createMacWatch, attachResources } from './macwatch.mjs';
@@ -193,10 +194,13 @@ export function createServer(config, deps = {}) {
     const groups = config.groups || [];
     const resolve = await openclawResolve();
     if (Date.now() - weekSeen.at > 10 * 60000) weekSeen = { at: Date.now(), v: scanAgents({ groups, seenDays: 7, resolve }).lastSeen };
-    const { agents, lastSeen } = scanAgents({ groups, queue, resolve });
-    const terminals = await topicsTerminals();
-    attachOpen(agents, { desktop: loadDesktopSessions(), topics: terminals.filter((t) => t.source === 'topics') });
-    try { attachResources(agents, (await macWatch.snapshot()).trees); } catch { /* senza misure le righe restano senza risorse */ }
+    // deps.scanAgents: i test passano gli agenti, così arrivano qui (quota per sessione) senza toccare il Mac vero
+    const { agents, lastSeen } = (deps.scanAgents || scanAgents)({ groups, queue, resolve });
+    const terminals = deps.scanAgents ? [] : await topicsTerminals();
+    if (!deps.scanAgents) {
+      attachOpen(agents, { desktop: loadDesktopSessions(), topics: terminals.filter((t) => t.source === 'topics') });
+      try { attachResources(agents, (await macWatch.snapshot()).trees); } catch { /* senza misure le righe restano senza risorse */ }
+    }
     // quanto consuma ogni sessione: dai tracker che l'hub aggiorna già per i progetti
     attachSessionUse(agents, trackers, cache, { weights: config.weights });
     agentCache = { at: Date.now(), v: { agents, lastSeen: { ...weekSeen.v, ...lastSeen }, topics: topicsByProject(terminals, { groups, ocRoot: path.join(os.homedir(), '.openclaw') }) } };
@@ -501,7 +505,12 @@ export function createServer(config, deps = {}) {
         return send(200, 'application/json', JSON.stringify({ rules: config.alerts.rules || [], firing: evaluateRules(r, config.alerts.rules) }));
       }
       // Il proxy VDM (account, impostazioni, sessioni) resta il motore; la sua pagina non c'è più: la dashboard è questa.
-      if (req.url.startsWith('/vdm/') && deps.demo) return send(503, 'application/json', JSON.stringify({ error: 'in demo il proxy VDM (account veri) non si legge' }));
+      // in demo il proxy vero (account veri) non si legge: risponde quello finto, solo in lettura
+      if (req.url.startsWith('/vdm/') && deps.demo) {
+        if (req.method !== 'GET') return send(403, 'application/json', JSON.stringify({ error: 'in demo il proxy VDM non si modifica' }));
+        const v = demoVdm(req.url);
+        return v ? send(200, 'application/json', JSON.stringify(v)) : send(404, 'application/json', JSON.stringify({ error: 'non nella demo' }));
+      }
       if (req.url.startsWith('/vdm/')) {
         const up = http.request({ host: '127.0.0.1', port: (config.vdm && config.vdm.port) || 3335, path: req.url.slice(4), method: req.method, headers: { 'content-type': req.headers['content-type'] || 'application/json' } }, (r) => {
           res.writeHead(r.statusCode, { 'content-type': r.headers['content-type'] || 'application/json', 'cache-control': 'no-cache' });

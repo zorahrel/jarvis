@@ -1,3 +1,4 @@
+import '../test-support/isolate-tmp.mjs';
 // Chi scrive nel diario lo fa dai suoi rami veri, su fixture, mai nel diario vero:
 // `usage-hub check` (runAlerts → notify → scripts/notify-diario.mjs) e quota-guard.py di OpenClaw.
 import { test } from 'node:test';
@@ -9,6 +10,11 @@ import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { runAlerts } from '../src/alerts.mjs';
 import { journal, readDiary } from '../src/journal.mjs';
+import { snapshotReal, realChanges } from '../test-support/real-data.mjs';
+
+// nessuno scrive nel diario vero: nella barra (HOME finta) ogni cambio ai file veri fa cadere il file
+const before = snapshotReal();
+test.after(() => assert.deepEqual(realChanges(before), []));
 
 const tmp = (p) => fs.mkdtempSync(path.join(os.tmpdir(), p));
 const rows = (dir) => fs.readdirSync(dir).flatMap((f) => fs.readFileSync(path.join(dir, f), 'utf8').trim().split('\n').map((l) => JSON.parse(l)));
@@ -61,7 +67,9 @@ test('quota-guard.py vero su fixture: oltre il budget scrive una riga nel diario
       c.stdout.on('data', (b) => { stdout += b; }); c.stderr.on('data', (b) => { stderr += b; }); c.on('close', (status) => resolve({ status, stdout, stderr })); });
     const r = await run({ ...process.env, DIARIO_DIR: dir,
       QUOTA_GUARD_OVERVIEW: `http://127.0.0.1:${srv.address().port}/api/overview`, QUOTA_GUARD_PROJECTS: path.join(work, 'projects'),
-      QUOTA_GUARD_STATE: path.join(work, 'state.json'), QUOTA_GUARD_BUDGETS: path.join(work, 'nessuno.json'), QUOTA_GUARD_TMUX: '/usr/bin/true' });
+      QUOTA_GUARD_STATE: path.join(work, 'state.json'), QUOTA_GUARD_BUDGETS: path.join(work, 'nessuno.json'), QUOTA_GUARD_TMUX: '/usr/bin/true',
+      // lo scrittore del diario del repo, non quello sotto HOME (nella barra HOME è finta)
+      QUOTA_GUARD_DIARIO: path.join(path.dirname(new URL(import.meta.url).pathname), '../../../scripts/task-sync/diario.mjs') });
     assert.equal(r.status, 0, r.stderr);
     assert.equal(r.stdout, '', 'quota-guard non deve stampare: lo stdout va su WhatsApp');
     const got = rows(dir);

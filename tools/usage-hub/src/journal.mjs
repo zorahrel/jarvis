@@ -62,11 +62,26 @@ export function readDiary({ dir = DIARY_DIR, now = Date.now(), days = 7 } = {}) 
   return out;
 }
 
+// Una chiave senza card (un avviso di cron-health silenziato, una voce sparita) diventa parole: niente id esadecimali
+// fra parentesi, niente messaggi inglesi del doctor. «health:mailwatch (ec409111): consegna spesso» → «l'avviso
+// «mailwatch: consegna spesso»».
+export function humanKey(key) {
+  const k = String(key || '');
+  const h = /^health:(.*)$/.exec(k);
+  if (h) {
+    const body = h[1].trim();
+    if (/^doctor\b/i.test(body)) { const chk = /:\s*([\w/.-]+)/.exec(body); return 'l\'avviso del doctor di OpenClaw' + (chk ? ' su ' + chk[1].split('/').pop().replace(/[-_]/g, ' ') : ''); }
+    const t = body.replace(/\s*\((?:[0-9a-f]{6,}|[0-9a-f-]{8,})\)/gi, '').replace(/\s+/g, ' ').replace(/\s+:/g, ':').trim();
+    return '\u00abavviso: ' + t + '\u00bb';
+  }
+  return k.replace(/^(cron|launchd|desktop|gh|wf):/, '').replace(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi, 'senza nome') || 'un\'automazione';
+}
+
 export function journal({ model, queue = [], feedback = [], diary = [], now = Date.now(), days = 7 } = {}) {
   const from = now - days * 86400000;
   const out = [];
   const cards = Object.values((model && model.cards) || {});
-  const titleOf = (key) => ((model && model.cards && model.cards[key]) || {}).title || key;
+  const titleOf = (key) => ((model && model.cards && model.cards[key]) || {}).title || humanKey(key);
 
   // Giri delle automazioni: uno per esito registrato. L'errore c'è solo per l'ultimo giro.
   for (const c of cards) {

@@ -65,7 +65,6 @@ test('testi liberi senza id: «Ti scrive», messaggi delle sessioni, cartelle _s
   const LONG = /\d{9,}|<<<|[0-9a-f]{8}-[0-9a-f]{4}-/i;
   const cases = ['WhatsApp, nel gruppo con id 120363411359994568, lunedì alle 9:00, solo se qualcosa è cambiato',
     'Discord (canale 1547285789002698864), il 2 del mese alle 9:00',
-    'I acknowledge this is an inter-session message routed from Discord channel 1551637216177168465.',
     '<<<BEGIN_OPENCLAW_INTERNAL_CONT…', 'scrive in 120363411359994568@g.us'];
   for (const t of cases) assert.doesNotMatch(PV.sessionText(t), LONG, t);
   assert.equal(AV.noIds(cases[0]), 'WhatsApp, nel gruppo, lunedì alle 9:00, solo se qualcosa è cambiato');
@@ -75,4 +74,44 @@ test('testi liberi senza id: «Ti scrive», messaggi delle sessioni, cartelle _s
   // il pannello di un'automazione non mostra l'id del gruppo in «Ti scrive»
   const html = AV.card({ key: 'cron:x', title: 'Prova', provider: 'openclaw', level: 'va', last: {}, means: cases[0], who: 'Jarvis (canale 1547285789002698864)' }, {}, Date.now());
   assert.match(html, /Ti scrive/); assert.doesNotMatch(html.replace(/<[^>]+>/g, ' '), /\d{12,}/);
+});
+
+test('cronologia delle sessioni: niente testo interno di OpenClaw, orari tra parentesi, nomi mcp__ e percorsi (24/10)', () => {
+  const INTERNAL = /acknowledge|inter-session|routing data|GMT[+-]\d|mcp__|\/Users\/|\d{9,}/i;
+  const cases = ['I acknowledge this is an inter-session message routed from Discord channel 1551637216177168465.',
+    'This message appears to be inter-session routing data, not a request from the user.',
+    '[Sat 2026-10-24 02:56 GMT+2] controlla la quota di Codex',
+    'mcp__openclaw__process', 'mcp__openclaw__exec: date; ls /Users/zorahrel/.openclaw/workspace/memory',
+    'Editing /Users/zorahrel/.claude/jarvis/tools/usage-hub/public/vdm-tabs.js'];
+  for (const t of cases) assert.doesNotMatch(PV.sessionText(t), INTERNAL, t);
+  assert.equal(PV.sessionText(cases[0]), 'Messaggio di servizio fra sessioni');
+  assert.equal(PV.sessionText(cases[1]), 'Messaggio di servizio fra sessioni');
+  assert.equal(PV.sessionText(cases[2]), 'controlla la quota di Codex');
+  assert.equal(PV.sessionText(cases[3]), 'Strumento di openclaw: process');
+  assert.equal(PV.sessionText(cases[4]), 'Strumento di openclaw: exec: date; ls …/workspace/memory');
+  assert.equal(PV.sessionText(cases[5]), 'Editing …/public/vdm-tabs.js');
+});
+
+test('pannello di un\'automazione: numeri di account nei dettagli tecnici e nello schema diventano parole (24/10)', () => {
+  const html = AV.card({ key: 'cron:x', title: 'Prova', provider: 'openclaw', level: 'va', last: {}, means: 'x',
+    tech: { command: 'aws s3 ls --profile account 767397818599\n  poi  copia' } }, {}, Date.now());
+  const txt = html.replace(/<[^>]+>/g, ' ');
+  assert.doesNotMatch(txt, /767397818599/);
+  assert.match(html, /account\n {2}poi {2}copia|account\s*\n/, 'nel <pre> gli a capo restano');
+  const g = AV.graphHtml({ nodes: [
+    { kind: 'trigger', label: 'Ogni giorno' },
+    { kind: 'step', label: 'Legge', io: { in: 'controlla account 767397818599', out: 'conto 123456789012 ok' }, detail: 'utente 987654321', error: 'chat 555666777888 rifiuta' },
+  ] }, Date.now());
+  assert.doesNotMatch(g.replace(/<[^>]+>/g, ' '), /\d{9,}/);
+});
+
+test('diario: le chiavi delle automazioni senza scheda diventano parole, senza hash fra parentesi (24/10)', async () => {
+  const { humanKey, journal } = await import('../src/journal.mjs');
+  assert.equal(humanKey('health:mailwatch (ec409111): consegna spesso'), '«avviso: mailwatch: consegna spesso»');
+  assert.equal(humanKey('health:doctor: plugins/delegate-router'), 'l\'avviso del doctor di OpenClaw su delegate router');
+  assert.equal(humanKey('cron:7e1ab828-1d47-4d5f-bf35-919a0043ea64'), 'senza nome');
+  const j = journal({ model: { cards: {} }, feedback: [{ kind: 'mute', key: 'health:mailwatch (ec409111): consegna spesso', at: Date.now() - 1000 }] });
+  const t = JSON.stringify(j.map((r) => [r.title, r.what])); // ref e link servono al clic, non si leggono
+  assert.doesNotMatch(t, /ec409111|health:/);
+  assert.match(t, /Hai silenziato «avviso: mailwatch: consegna spesso»/);
 });

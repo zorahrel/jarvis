@@ -3,7 +3,7 @@
 # Due `serve --demo` su porte libere (fixture «ok» e «problemi»), feedback e coda in una cartella di prova:
 # il :3360 vivo e il feedback vero non si toccano. Esce 1 al primo controllo rosso.
 #   python3 scripts/prova-automazioni.py
-import json, os, pathlib, shutil, socket, subprocess, sys, tempfile, time, urllib.request
+import atexit, json, os, pathlib, shutil, socket, subprocess, sys, tempfile, time, urllib.request
 from playwright.sync_api import sync_playwright
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
@@ -11,6 +11,7 @@ DOCS = ROOT / 'docs'
 AUDIT_JS = pathlib.Path.home() / '.claude/jarvis/scripts/ui-audit.js'
 AXE_JS = next(pathlib.Path.home().glob('.bun/install/cache/axe-core@4*/axe.min.js'))
 TMP = pathlib.Path(tempfile.mkdtemp(prefix='prova-automazioni-'))
+atexit.register(shutil.rmtree, TMP, True)  # la cartella di lavoro non resta in $TMPDIR
 red = []
 
 
@@ -42,7 +43,7 @@ def serve(fixture):
             return proc, url, d
         except Exception:
             time.sleep(0.3)
-    proc.kill()
+    proc.terminate(); proc.wait(15)
     sys.exit(f'serve --demo {fixture} non risponde')
 
 
@@ -157,8 +158,8 @@ def main():
                   f'ripasso: da {start} a {end} con 3 voti salvati')
             b.close()
     finally:
-        ok_proc.kill()
-        pb_proc.kill()
+        # SIGTERM: la demo toglie la sua cartella (SIGKILL ne lasciava 2 a giro in $TMPDIR)
+        for pr in (ok_proc, pb_proc): pr.terminate(); pr.wait(15)
     (DOCS / 'automations-audit.json').write_text(json.dumps(report, ensure_ascii=False, indent=1))
     if red:
         print(f'ROSSO: {len(red)} controlli')

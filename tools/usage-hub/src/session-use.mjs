@@ -45,7 +45,8 @@ export function sessionUse(agent, trackers, { now = Date.now(), weights = DEFAUL
   const hourPct = share(hw);
   // tre cifre significative, non decimali: una sessione piccola pesa decimillesimi di settimana e a tre decimali era zero
   const round = (v) => (v == null ? null : v > 0 ? Number(v.toPrecision(3)) : 0);
-  return { tokens, hourTokens, pct: round(pct), hourPct: round(hourPct), startedAt: from };
+  // weighted: i token pesati da cui viene la quota, così la barra la ricalcola da sé (un ×30 su tutte non passa)
+  return { tokens, hourTokens, pct: round(pct), hourPct: round(hourPct), startedAt: from, weighted: weighed ? Math.round(w) : null };
 }
 
 // Quota della settimana di un costo pesato, con la stessa divisione dei progetti: token pesati sul totale pesato
@@ -94,7 +95,13 @@ export function checkSessionUse(projects, report, { now = Date.now() } = {}) {
     if (used.length < all.length) fail.push(`${prov}: ${all.length - used.length} sessioni su ${all.length} senza consumo (${all.filter((a) => !a.use).slice(0, 3).map((a) => a.kind + ' ' + (a.title || '').slice(0, 30)).join('; ')})`);
     if (withPct.length < withTok.length) fail.push(`${prov}: ${withTok.length - withPct.length} sessioni con token ma senza quota della settimana`);
     if (withPct.length && acct == null) fail.push(`${prov}: sessioni con quota ma il report non ha la % usata su cui dividere`);
+    // ogni quota ricalcolata dal report coi suoi token pesati: deve tornare (±10%, il report può essere di poco dopo)
+    const off = withPct.filter((a) => a.use.weighted > 0).map((a) => ({ a, exp: shareFromReport(report, prov, a.use.weighted) }))
+      .filter(({ a, exp }) => exp != null && Math.abs(a.use.pct - exp) > Math.max(0.005, exp * 0.1));
+    if (off.length) fail.push(`${prov}: ${off.length} sessioni con una quota che non torna coi loro token (${off.slice(0, 2).map(({ a, exp }) => a.use.pct + '% invece di ' + (Math.round(exp * 1000) / 1000) + '%').join('; ')})`);
     if (acct != null && sum > acct + 1) fail.push(`${prov}: le sessioni sommano ${Math.round(sum)}% della settimana, più del ${acct}% usato dall'abbonamento`);
   }
+  // nessuna sessione viva su nessun provider: la barra non ha provato niente, quindi è rossa
+  if (lines.every((l) => /nessuna viva/.test(l))) fail.push('nessuna sessione viva: la quota per sessione non è provata');
   return { fail, lines };
 }

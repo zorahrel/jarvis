@@ -28,9 +28,10 @@ test('tracker Claude: una riga per messaggio anche se Claude Code la ripete per 
 test('tracker Claude: per un messaggio vale l\'ultima riga, non la prima (output parziale fino alla 2.1.304)', () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'tr-')), now = Date.now(), f = path.join(root, '-w-p', 's.jsonl');
   fs.mkdirSync(path.join(root, '-w-p'));
-  fs.writeFileSync(f, [line(now - MIN, 'msg_1', { input_tokens: 5, output_tokens: 9 }), line(now - MIN + 10, 'msg_1', { input_tokens: 5, output_tokens: 689 })].join('\n') + '\n');
+  fs.writeFileSync(f, [line(now - MIN, 'msg_1', { input_tokens: 5, output_tokens: 9 }), line(now - MIN + 10, 'msg_1', { input_tokens: 7, output_tokens: 689, cache_creation_input_tokens: 3, cache_read_input_tokens: 11 })].join('\n') + '\n');
   const t = createClaudeTracker(); t.update({ root, sinceMs: now - 86400000, now });
-  assert.deepEqual(t.files.get(f).rows.map((r) => [r[0], r[2], r[3]]), [[now - MIN, 5, 689]]);
+  // tutta la usage dell'ultima riga, non solo l'output
+  assert.deepEqual(t.files.get(f).rows.map((r) => [r[0], r[2], r[3], r[4], r[5]]), [[now - MIN, 7, 689, 3, 11]]);
   // anche quando l'ultima riga arriva in una lettura successiva
   fs.appendFileSync(f, line(now, 'msg_1', { input_tokens: 5, output_tokens: 700 }) + '\n');
   t.update({ root, sinceMs: now - 86400000, now });
@@ -98,10 +99,28 @@ test('checkSessionUse: verde sul caso buono, rosso senza consumo, senza quota o 
   assert.equal(checkSessionUse(projects([a('claude', null), a('claude', null)]), pace, { now }).fail.length, 1);
   assert.equal(checkSessionUse(projects([a('codex', { tokens: 9, pct: null })]), pace, { now }).fail.length, 1);
   assert.equal(checkSessionUse(projects([a('codex', { tokens: 9, pct: 300 })]), pace, { now }).fail.length, 1);
-  // una sessione appena partita non è ancora nel tracker: non conta
-  assert.deepEqual(checkSessionUse(projects([{ ...a('claude', null), startedAt: now - MIN }]), pace, { now }).fail, []);
+  // una sessione appena partita non è ancora nel tracker: non conta, e senza altre la barra non ha provato niente
+  assert.deepEqual(checkSessionUse(projects([{ ...a('claude', null), startedAt: now - MIN }]), pace, { now }).fail, ['nessuna sessione viva: la quota per sessione non è provata']);
+  assert.equal(checkSessionUse([], pace, { now }).fail.length, 1); // zero sessioni vive: rosso (prima usciva 0)
+  // ×30 su tutte: la somma resta sotto il 40% ma ogni quota ricalcolata dai suoi token pesati non torna
+  const rep = { account: { weekPct: 40 }, projects: [{ tokens: 10000 }] };
+  const ok = [a('claude', { tokens: 9, pct: 0.4, weighted: 100 }), a('claude', { tokens: 9, pct: 0.8, weighted: 200 })];
+  assert.deepEqual(checkSessionUse(projects(ok), rep, { now }).fail, []);
+  assert.equal(checkSessionUse(projects(ok.map((x) => ({ ...x, use: { ...x.use, pct: x.use.pct * 30 } }))), rep, { now }).fail.length, 1);
   // Claude ×100 su un account attivo al 31%, con altri account al 100% in /api/pace: cade (prima passava)
   assert.equal(checkSessionUse(projects([a('claude', { tokens: 9, pct: 76 })]), { account: { weekPct: 31 } }, { now }).fail.length, 1);
   // un provider senza sessioni vive lo dice
   assert.ok(checkSessionUse(projects(good), pace, { now }).lines.some((l) => /muse: nessuna viva/.test(l)));
+});
+
+test('workflowRunCost: per un messaggio vale l\'ultima riga (output finale, non parziale)', async () => {
+  const { workflowRunCost } = await import('../src/automations/index.mjs');
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'wf-')), sess = path.join(root, 'p', 's1');
+  const dir = path.join(sess, 'subagents', 'workflows', 'wf_abc'); fs.mkdirSync(dir, { recursive: true });
+  fs.mkdirSync(path.join(sess, 'workflows'), { recursive: true }); const run = path.join(sess, 'workflows', 'wf_abc.json'); fs.writeFileSync(run, '{}');
+  const now = Date.now();
+  fs.writeFileSync(path.join(dir, 'agent-1.jsonl'), [line(now, 'm1', { input_tokens: 10, output_tokens: 9 }), line(now, 'm1', { input_tokens: 10, output_tokens: 689 })].join('\n') + '\n');
+  const r = workflowRunCost(run, (w) => w / 1000);
+  assert.equal(r.weighted, 10 + 689 * 5);
+  assert.equal(r.weekPct, Math.round((10 + 689 * 5) / 1000 * 100) / 100);
 });

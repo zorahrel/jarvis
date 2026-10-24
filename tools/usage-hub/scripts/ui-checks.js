@@ -105,4 +105,17 @@
     const hit = document.elementFromPoint(Math.min(innerWidth - 2, r.left + r.width / 2), r.top + r.height / 2);
     return hit && (hit === b || b.contains(hit)) ? [] : ['fascia coperta da ' + (hit ? sel(hit) : 'niente')];
   };
+
+  // Testo interno arrivato in pagina: messaggi di servizio di OpenClaw, orari fra parentesi, nomi mcp__, percorsi
+  // assoluti, cartelle con un id. Legge il testo visibile della tab attiva con i <details> aperti.
+  window.__internal = () => {
+    const t = (document.querySelector('.tab.on') || document.body).innerText;
+    const re = /I acknowledge|inter-session|routing data|\[[A-Z][a-z]{2} \d{4}-\d{2}-\d{2}|GMT[+-]\d|mcp__\w|\/Users\/|\/home\/|local_[0-9a-f]{8}|_sys_[0-9a-f]{6}|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}/g;
+    return [...new Set(t.match(re) || [])].map((m) => { const i = t.indexOf(m); return m + ' in «' + t.slice(Math.max(0, i - 25), i + m.length + 25).replace(/\s+/g, ' ') + '»'; });
+  };
+  // Ogni tabella con più di una riga dice cosa c'è nelle colonne: <thead> con un <th> che ha testo per colonna.
+  window.__tableHeads = () => [...document.querySelectorAll('.tab.on table')].filter((tb) => tb.rows.length > 1 && tb.offsetParent).filter((tb) => {
+    const h = tb.tHead && tb.tHead.rows[0];
+    return !h || [...h.cells].some((c) => c.tagName !== 'TH' || !c.textContent.trim());
+  }).map((tb) => sel(tb) + ' «' + (tb.closest('section,.card') || tb).innerText.split('\n')[0].slice(0, 30) + '»');
 })();

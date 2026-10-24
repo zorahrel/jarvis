@@ -1,3 +1,4 @@
+import '../test-support/isolate-tmp.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { macMachine, pcMachine } from '../src/machines.mjs';
@@ -41,7 +42,7 @@ test('sessionUse: solo il giro attuale, ultima ora a parte, quota solo per Claud
   const late = sessionUse({ provider: 'claude', file: '/a.jsonl', startedAt: now - 1000 }, { claude: { files } }, { now });
   assert.equal(late.tokens, 270 + 2); assert.equal(late.startedAt, now - 600000);
   const cx = sessionUse({ provider: 'codex', file: '/c', startedAt: 0 }, { codex: { files: new Map([['/c', { rows: [[now, 500, 0, 0, 0]] }]]) } }, { now });
-  assert.deepEqual(cx, { tokens: 500, hourTokens: 500, pct: null, hourPct: null, startedAt: now });
+  assert.deepEqual(cx, { tokens: 500, hourTokens: 500, pct: null, hourPct: null, startedAt: now, weighted: 0 });
   assert.equal(sessionUse({ provider: 'claude', startedAt: 0 }, {}), null);
 });
 

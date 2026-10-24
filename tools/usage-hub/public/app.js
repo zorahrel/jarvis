@@ -318,4 +318,5 @@ window.addEventListener('hashchange', () => { const t = location.hash.slice(1); 
 if (EMBED) { const post_ = () => parent.postMessage({ hubHeight: document.documentElement.scrollHeight + 8 }, '*'); new ResizeObserver(post_).observe(document.body); }
 show(location.hash.slice(1) || 'overview');
 setInterval(() => { if (['overview', 'journal', 'projects', 'accounts', 'sessions', 'activity', 'automations'].includes(cur) && !document.activeElement.matches('input,select')) TABS[cur](); }, 60000);
-vdm('/api/sessions').then((s) => { if (s) { $('nsess').hidden = !(s.active || []).length; $('nsess').textContent = (s.active || []).length; } });
+// il numero accanto a Sessioni: le sessioni vive dell'hub (/api/live), come la pagina
+j('/api/live').then((lv) => { const n = ((lv && lv.projects) || []).reduce((t, p) => t + ((p.agents && p.agents.list) || []).length, 0); $('nsess').hidden = !n; $('nsess').textContent = n; });
