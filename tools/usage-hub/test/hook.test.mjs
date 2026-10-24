@@ -46,11 +46,12 @@ test('hook prints one line over budget, stays mute otherwise, and is fast', () =
   const hit = runHook(cache, '/Users/x/.openclaw/workspace/pop-demo');
   assert.equal(hit.out, 'PoP: 7.6% della settimana, budget 3%: lavoro meccanico su Muse Wonder');
   // il migliore di 3: con il Mac carico un avvio a freddo di node sfora per lo scheduler, un hook lento sfora sempre
-  const ms = Math.min(hit.ms, ...[1, 2].map(() => runHook(cache, '/Users/x/.openclaw/workspace/pop-demo').ms));
-  // il costo dell'hook oltre l'avvio di node, misurato nello stesso momento: a carico 60 node da solo ne prende 1500
-  // (giro 10, barra rossa per il carico, non per l'hook); un hook lento sfora comunque
-  const bare = Math.min(...[1, 2, 3].map(() => { const t0 = performance.now(); spawnSync(process.execPath, ['-e', '0']); return performance.now() - t0; }));
-  assert.ok(ms < 300 || ms - bare < 200, `hook took ${Math.round(ms)} ms, node da solo ${Math.round(bare)} ms`);
+  // il costo dell'hook oltre l'avvio di node: cinque coppie (node da solo, subito dopo l'hook) e la differenza minore.
+  // A carico 50-60 node da solo prende 1,5-4,7 s a picchi (giro 10, barra rossa per il carico); un hook lento sfora sempre.
+  const bareMs = () => { const t0 = performance.now(); spawnSync(process.execPath, ['-e', '0']); return performance.now() - t0; };
+  const pairs = [1, 2, 3, 4, 5].map(() => { const b = bareMs(); return { b, h: runHook(cache, '/Users/x/.openclaw/workspace/pop-demo').ms }; });
+  const best = pairs.reduce((m, x) => (x.h - x.b < m.h - m.b ? x : m));
+  assert.ok(Math.min(hit.ms, ...pairs.map((x) => x.h)) < 300 || best.h - best.b < 200, `hook ${Math.round(best.h)} ms contro node da solo ${Math.round(best.b)} ms`);
   assert.equal(runHook(cache, '/Users/x/Projects/claude-usage-hub').out, '');
   writeStatus(buildStatus(report(1.2), budgets), file);
   assert.equal(runHook(cache, '/Users/x/.openclaw/workspace/pop-demo').out, '');
