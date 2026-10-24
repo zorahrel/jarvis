@@ -17,6 +17,9 @@ export function firstLine(task, max = 110) {
   return cut.length > max ? cut.slice(0, max - 1).replace(/\s\S*$/, '') + '…' : cut;
 }
 
+// Il testo del diario è già una frase scritta per Attilio: si accorcia, non si taglia alla prima frase.
+const clip = (s, max) => { const t = String(s || '').replace(/\s+/g, ' ').trim(); return t.length > max ? t.slice(0, max - 1).replace(/\s\S*$/, '') + '…' : t; };
+
 // Numeri di telefono ed email non escono mai dal diario, nemmeno se un compito li cita.
 const mask = (s) => String(s || '').replace(/\+?\d[\d ]{8,}\d/g, '…').replace(/[\w.+-]+@[\w-]+\.[\w.]+/g, '…@…');
 
@@ -118,7 +121,7 @@ export function journal({ model, queue = [], feedback = [], diary = [], now = Da
   }
   for (const d of diary) {
     if (d.at < from || d.at > now) continue;
-    out.push({ at: d.at, kind: 'auto', who: SRC[d.source] || d.source || 'Diario', title: mask(firstLine(d.text, 160)), outcome: d.outcome,
+    out.push({ at: d.at, kind: 'auto', who: SRC[d.source] || d.source || 'Diario', title: mask(clip(d.text, 160)), outcome: d.outcome,
       what: '', ref: d.ref, link: d.link });
   }
   return out.sort((a, b) => b.at - a.at);

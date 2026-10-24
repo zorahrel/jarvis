@@ -246,3 +246,37 @@ test('Consumo per sessione: token e quota della settimana in parole, niente quan
   assert.equal(P.useWords({ tokens: 9412227, pct: null }), '9,4 M token');
   assert.equal(P.useWords(null), '');
 });
+
+test('Quota per sessione anche per Codex e Muse: token pesati come i progetti, poi la divisione', async () => {
+  const { sessionUse } = await import('../src/session-use.mjs');
+  const now = 10_000_000;
+  const shareFor = (p, w) => ({ codex: w / 1e4, muse: w / 1e3 }[p] ?? null);
+  // codex: [ts, delta, input, cached, output] → pesati = (input - cached)·1 + cached·0,1 + output·5
+  const cx = sessionUse({ provider: 'codex', file: '/c', startedAt: 0 }, { codex: { files: new Map([['/c', { rows: [[now, 1000, 1000, 500, 100]] }]]) } }, { now, shareFor });
+  assert.equal(cx.tokens, 1000);
+  assert.equal(cx.pct, Math.round(((500 + 50 + 500) / 1e4) * 1000) / 1000);
+  // muse: [ts, input, output, reasoning, riportati, wonder] → pesati = riportati
+  const mu = sessionUse({ provider: 'muse', file: '/m', startedAt: 0 }, { muse: { files: new Map([['/m', { rows: [[now, 10, 10, 0, 200, false]] }]]) } }, { now, shareFor });
+  assert.equal(mu.pct, 0.2);
+  // senza conteggio riportato Muse non ha una quota stimabile
+  const mu0 = sessionUse({ provider: 'muse', file: '/m', startedAt: 0 }, { muse: { files: new Map([['/m', { rows: [[now, 10, 10, 0, null, false]] }]]) } }, { now, shareFor });
+  assert.equal(mu0.pct, null);
+});
+
+test('Titolo umano: niente chiavi di sessione, i messaggi fra sessioni hanno un nome', () => {
+  assert.equal(P.humanTitle('[Inter-session message] sourceSession=agent:main:discord:channel:1551637216177123'), 'Messaggio da un\'altra sessione da Discord');
+  assert.equal(P.humanTitle('Quadra UAT: causa e fix'), 'Quadra UAT: causa e fix');
+  assert.equal(P.humanTitle('rifai il test sessionKey=agent:main:x:y'), 'rifai il test');
+  assert.ok(P.humanTitle('a '.repeat(80)).length <= 90);
+});
+
+test('Demo: /api/hub-config dice demo, così ogni vista porta la fascia ESEMPIO; fuori dalla demo no', async () => {
+  for (const demo of [true, false]) {
+    const srv = createServer({ quotaSource: { url: 'http://x' }, alerts: { rules: [] } }, { noLive: true, noQueue: true, ...(demo ? { demo: true } : {}) });
+    await new Promise((r) => srv.listen(0, '127.0.0.1', r));
+    const c = await fetch(`http://127.0.0.1:${srv.address().port}/api/hub-config`).then((r) => r.json());
+    srv.close();
+    assert.equal(c.demo, demo);
+  }
+  assert.match(fs.readFileSync(path.join(root, 'public/pages.js'), 'utf8'), /ESEMPIO: questa è la demo/);
+});

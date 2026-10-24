@@ -51,6 +51,14 @@ try {
     const withUse = ((live && live.projects) || []).filter((p) => !p.dead && (p.total || 0) > 0);
     console.log(`progetti vivi con consumo della settimana: ${withUse.length} (${withUse.slice(0, 3).map((p) => p.name + ' ' + p.total + '%').join(', ')})`);
     if (withUse.length < 3) fail.push(`solo ${withUse.length} progetti vivi con consumo nella tabella (minimo 3)`);
+    // e per sessione: per ogni provider con sessioni che hanno token, almeno una deve avere la quota della settimana (use.pct)
+    const sess = ((live && live.projects) || []).flatMap((p) => ((p.agents && p.agents.list) || []));
+    for (const prov of ['claude', 'codex', 'muse']) {
+      const withTok = sess.filter((a) => a.provider === prov && a.use && a.use.tokens > 0);
+      const withPct = withTok.filter((a) => a.use.pct > 0);
+      console.log(`sessioni ${prov}: ${withTok.length} con token, ${withPct.length} con la quota della settimana`);
+      if (withTok.length && !withPct.length) fail.push(`nessuna sessione ${prov} con la quota della settimana (use.pct) su ${withTok.length} con token`);
+    }
   }
 } catch (e) { fail.push(e.message); }
 child.kill();

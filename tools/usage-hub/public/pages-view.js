@@ -44,6 +44,18 @@
     return '<span class="sti ' + s[2] + '" title="' + s[1] + '">' + ic(s[0]) + '<span class="sr">' + s[1] + '</span></span>';
   }
 
+  // Titolo di una sessione per un umano: i messaggi fra sessioni di OpenClaw arrivano come
+  // «[Inter-session message] sourceSession=agent:main:discord:…», che non si mostra così.
+  function humanTitle(t) {
+    var s = String(t || '').trim();
+    var m = /^\[Inter-session message\]\s*(.*)$/i.exec(s);
+    if (m) {
+      var via = /discord/i.test(m[1]) ? ' da Discord' : /whatsapp/i.test(m[1]) ? ' da WhatsApp' : /telegram/i.test(m[1]) ? ' da Telegram' : '';
+      return 'Messaggio da un\'altra sessione' + via;
+    }
+    s = s.replace(/\b(sourceSession|sessionKey)=\S+/g, '').replace(/\bagent:[\w:-]+/g, '').replace(/\s+/g, ' ').trim();
+    return s.length > 90 ? s.slice(0, 89).replace(/\s\S*$/, '') + '…' : s;
+  }
   // Consumo di una sessione: token letti dai suoi log e, dove l'hub la sa, la quota della settimana che pesa.
   function tokWords(n) {
     if (!(n > 0)) return '';
@@ -198,7 +210,7 @@
       top + checks + docBox + con + '<div class="stack">' + lists + skills + '</div>' + dup + old;
   }
 
-  var api = { useWords: useWords, tokWords: tokWords, attesaHtml: attesaHtml, journalHtml: journalHtml, contextHtml: contextHtml, jarvisHref: jarvisHref, jarvisBtn: jarvisBtn, stIcon: stIcon, dayLabel: dayLabel };
+  var api = { humanTitle: humanTitle, useWords: useWords, tokWords: tokWords, attesaHtml: attesaHtml, journalHtml: journalHtml, contextHtml: contextHtml, jarvisHref: jarvisHref, jarvisBtn: jarvisBtn, stIcon: stIcon, dayLabel: dayLabel };
   root.PagesView = api;
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
 })(globalThis);

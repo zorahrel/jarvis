@@ -183,7 +183,7 @@ export function createServer(config, deps = {}) {
     attachOpen(agents, { desktop: loadDesktopSessions(), topics: terminals.filter((t) => t.source === 'topics') });
     try { attachResources(agents, (await macWatch.snapshot()).trees); } catch { /* senza misure le righe restano senza risorse */ }
     // quanto consuma ogni sessione: dai tracker che l'hub aggiorna già per i progetti
-    for (const a of agents) { const u = sessionUse(a, trackers, { weights: config.weights, weekShare }); if (u) a.use = u; }
+    for (const a of agents) { const u = sessionUse(a, trackers, { weights: config.weights, weekShare, shareFor }); if (u) a.use = u; }
     agentCache = { at: Date.now(), v: { agents, lastSeen: { ...weekSeen.v, ...lastSeen }, topics: topicsByProject(terminals, { groups, ocRoot: path.join(os.homedir(), '.openclaw') }) } };
     return agentCache.v;
   };
@@ -193,6 +193,15 @@ export function createServer(config, deps = {}) {
   const auto = () => (autoApi ||= deps.automations || createAutomations({ background: !deps.noLive && !deps.inProcess }));
   if (!deps.noLive && !deps.inProcess) auto();
   // Quota settimanale di un costo pesato, come per i progetti: share dei token pesati della settimana × % dell'account.
+  // Quota della settimana di una sessione, con la stessa divisione dei progetti: token pesati della sessione sul totale
+  // pesato della settimana di quel provider, per la % usata dell'abbonamento. Muse conta i token riportati dal servizio.
+  const shareFor = (provider, weighted) => {
+    const r = cache; if (!r || !(weighted > 0)) return null;
+    if (provider === 'claude') return weekShare(weighted);
+    if (provider === 'codex') { const ps = (r.codex && r.codex.projects) || [], q = r.codex && r.codex.quota; const tot = ps.reduce((a, p) => a + (p.tokens || 0), 0); return tot && q && q.weekPct != null ? (weighted / tot) * q.weekPct : null; }
+    if (provider === 'muse') { const m = r.muse, ps = (m && m.projects) || [], q = m && m.quota; if (!ps.length || ps[0].unit !== 'tokens') return null; const tot = ps.reduce((a, p) => a + (p.tokens || 0), 0); return tot && q && q.weekPct != null ? (weighted / tot) * q.weekPct : null; }
+    return null;
+  };
   const weekShare = (weighted) => { const r = cache; if (!r || !r.projects) return null; const tot = r.projects.reduce((a, p) => a + (p.tokens || 0), 0); return tot && r.account ? (weighted / tot) * r.account.weekPct : null; };
   // «Da cambiare» passa a un agente: una voce in coda con la nota e il modo di chiuderla.
   const changeRequest = (row, card) => enqueue({
@@ -377,7 +386,7 @@ export function createServer(config, deps = {}) {
       // Impostazioni della pagina che stanno nella config locale (fuori dal repo): i link per scrivere a Jarvis.
       if (req.url === '/api/hub-config') {
         const jv = localConfig().jarvis || {};
-        return send(200, 'application/json', JSON.stringify({ jarvis: { whatsapp: jv.whatsapp || null, discord: jv.discord || null } }));
+        return send(200, 'application/json', JSON.stringify({ demo: !!deps.demo, jarvis: { whatsapp: jv.whatsapp || null, discord: jv.discord || null } }));
       }
       // Contesto: cosa leggono gli agenti. Sola lettura, copia di 60 s (il doctor ci mette qualche secondo).
       if (req.url === '/api/contesto') {

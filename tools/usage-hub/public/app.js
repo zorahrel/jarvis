@@ -105,7 +105,7 @@ function agentsHtml(p) {
     const link = g.open ? ` <a href="${esc(g.open.url)}" title="Si apre in ${esc(g.open.via)}">apri</a>` : '';
     // sottoagenti rientrati sotto la sessione che li ha lanciati (depth 1), gli agenti di workflow un gradino in più
     const d = g.depth || 0;
-    return `<div class="agent"${d ? ` style="margin-left:${d * 18}px"` : ''}>${d ? '<span class="mut">↳</span> ' : ''}<span>${provIcon(g.provider)}</span> <b>${esc(g.model)}</b> <span class="mut">${esc(g.kind)} · da ${dur(Date.now() - g.startedAt)} · ${ago(g.lastActivity)}${PagesView.useWords(g.use) ? ' · ' + PagesView.useWords(g.use) : ''}</span>${link}<span class="t">${esc(g.title)}</span></div>`;
+    return `<div class="agent"${d ? ` style="margin-left:${d * 18}px"` : ''}>${d ? '<span class="mut">↳</span> ' : ''}<span>${provIcon(g.provider)}</span> <b>${esc(g.model)}</b> <span class="mut">${esc(g.kind)} · da ${dur(Date.now() - g.startedAt)} · ${ago(g.lastActivity)}${PagesView.useWords(g.use) ? ' · ' + PagesView.useWords(g.use) : ''}</span>${link}<span class="t">${esc(PagesView.humanTitle(g.title))}</span></div>`;
   }).join('');
   const opus = p.agents.opus > 0 && (p.claude >= 10 || p.agents.opusMs >= 2 * 3600000) ? `<div class="warnline">${p.agents.opus} Opus da ${dur(p.agents.opusMs)} su un progetto al ${pct(p.claude)} della settimana Claude: valuta Sonnet</div>` : '';
   const chats = p.topics && p.topics.length ? `<div class="small mut">Topics: ${p.topics.map((c) => `<a href="${esc(c.url)}">${esc(c.title || 'chat')}</a>`).join(' · ')}</div>` : '';
@@ -118,7 +118,8 @@ function projectRows(live, items) {
   const cols = ['claude', 'codex', 'muse'].filter((k) => ps.some((p) => p[k] > 0));
   const row = (p, dim) => { const s = stateOf(p, items), r = reason(p);
     return `<tr class="${dim ? 'dim' : ''}"><td><b>${esc(p.title || p.name)}</b>${p.priority && p.priority !== 'normale' ? ` <span class="pill ${p.priority === 'alta' ? 'warn' : 'mut'}">priorità ${esc(p.priority)}</span>` : ''}<div class="small mut">${esc(p.what || '')}</div>${agentsHtml(p)}</td>` +
-      cols.map((k) => `<td class="num ${p[k] > 0 ? '' : 'mut'}">${pct(p[k])}</td>`).join('') +
+      // su telefono l'intestazione sparisce: ogni numero porta con sé icona e nome del provider
+      cols.map((k) => `<td class="num ${p[k] > 0 ? '' : 'mut'}"><span class="pv">${IC[k]} ${PROV[k]}</span>${pct(p[k])}</td>`).join('') +
       `<td class="state ${s.cls}" title="${esc(r)}">${IC[s.icon]} ${esc(s.text)}</td></tr>`; };
   return `<table class="proj"><thead><tr><th>Progetto${cols.length ? ' · % della settimana' : ''}</th>${cols.map((k) => `<th class="num">${IC[k]}</th>`).join('')}<th>Stato</th></tr></thead><tbody>${alive.map((p) => row(p, false)).join('')}</tbody></table>` +
     (dead.length ? `<details><summary>Nascosti dal menu (${dead.length}): fermi da 7 giorni o cartella sparita</summary><table class="proj"><tbody>${dead.map((p) => row(p, true)).join('')}</tbody></table></details>` : '');

@@ -12,7 +12,7 @@ export function defaultCodexRoot() {
   return path.join(os.homedir(), '.codex', 'sessions');
 }
 
-function weigh(u, w) {
+export function weigh(u, w) {
   const cached = u.cached_input_tokens || 0;
   return Math.max(0, (u.input_tokens || 0) - cached) * w.input + cached * w.cacheRead + (u.output_tokens || 0) * w.output;
 }

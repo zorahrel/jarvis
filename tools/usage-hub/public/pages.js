@@ -6,6 +6,15 @@ function hubConfig() {
   return fetch('/api/hub-config').then(function (r) { return r.json(); }).catch(function () { return {}; }).then(function (c) { hubCfg = c || {}; return hubCfg; });
 }
 
+// In demo una fascia fissa su ogni vista: chi guarda una prova non deve scambiare voci, automazioni e diario per veri.
+hubConfig().then(function (c) {
+  if (!c || !c.demo || document.querySelector('.demo-band')) return;
+  var b = document.createElement('div');
+  b.className = 'demo-band'; b.setAttribute('role', 'note');
+  b.textContent = 'ESEMPIO: questa è la demo dell\'hub, voci e numeri sono di prova';
+  document.body.prepend(b);
+});
+
 // ---- Ti aspetta (in cima alla Panoramica) ----
 async function attesaSection() {
   var res = await Promise.all([j('/api/attesa'), hubConfig()]);

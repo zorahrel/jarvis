@@ -41,7 +41,7 @@ if (cmd === 'serve') {
   // la scheda Automazioni con le fonti vere su un'altra porta senza fare un secondo hub.
   const noLive = rest.includes('--no-live');
   if (noLive) config.compatPort = false;
-  const server = createServer(config, { root: config.root, ...(noLive ? { noLive: true } : {}), ...(demoAuto ? { automations: demoAuto, noQueue: true } : {}) });
+  const server = createServer(config, { root: config.root, ...(noLive ? { noLive: true } : {}), ...(demoAuto ? { automations: demoAuto, noQueue: true, demo: true } : {}) });
   server.listen(config.port, '127.0.0.1', () => console.error(`usage-hub on http://127.0.0.1:${config.port}`));
   // :3337 era il vecchio usage-server, ora dentro il hub: resta in ascolto per gli script che lo leggono ancora
   // (todo-recap, desk_quota, muse-resume). Stesse risposte, stesso processo.

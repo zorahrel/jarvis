@@ -236,7 +236,8 @@ span.spk { background:none; }
 .track { position:relative; height:6px; background:var(--track); border-radius:3px; } .fill { height:100%; border-radius:3px; background:var(--ok); }
 .fill.warn { background:var(--warn); } .fill.bad { background:var(--bad); } .mark { position:absolute; top:-3px; width:2px; height:12px; background:var(--fg); opacity:.6; border-radius:1px; }
 .proj td:first-child { width:46%; } .proj .state { white-space:nowrap; } .proj .state .ic { width:15px; height:15px; }
-.agent { font-size:12.5px; padding:2px 0; } .agent .t { display:block; color:var(--mut); }
+.agent { font-size:12.5px; padding:2px 0; } .agent .t { display:block; color:var(--mut); overflow-wrap:anywhere; }
+.proj .pv { display:none; }
 .warnline { color:var(--warn); font-size:12.5px; margin-top:4px; }
 .dim td:first-child { opacity:.55; }
 .tile img { display:block; }
@@ -272,6 +273,9 @@ table.svc { table-layout:fixed; width:100%; } .svc th:nth-child(2) { width:110px
   table.proj tr { padding:8px 0; border-bottom:1px solid var(--line); }
   table.proj tr:last-child { border-bottom:0; }
   table.proj td { border:0; padding:2px 0; width:auto !important; }
+  table.proj td.num { display:inline-flex; align-items:center; gap:4px; margin-right:14px; }
+  table.proj td.num .pv { display:inline-flex; align-items:center; gap:3px; color:var(--mut); }
+  table.proj td.num .pv .ic { width:13px; height:13px; }
 }
 
 /* ===== Automazioni ===== */
@@ -535,3 +539,6 @@ details.gmore[open] > summary .gchev { transform:rotate(90deg); }
 .gfrom { margin-top:8px; font-size:12px; color:var(--mut); overflow-wrap:anywhere; }
 @media (max-width:560px) { .gk { width:auto; } .gd, .gsrc, .gstory, .gqueue, .gio { padding-left:10px; } .gmeta { margin-left:0; } }
 .cx-tbl { background:var(--surface); border:1px solid var(--line); border-radius:12px; overflow:hidden; }
+
+/* Fascia della demo: in flusso e appiccicata in cima, su ogni vista */
+.demo-band { position:sticky; top:0; z-index:50; background:#b91c1c; color:#fff; font-weight:700; font-size:13px; text-align:center; padding:6px 16px; }
