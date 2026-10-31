@@ -1,0 +1,160 @@
+#!/usr/bin/python3 -I
+"""Registratore di fseventsd, senza root. Una riga jsonl ogni giro (launchd ogni 300 s: `top -l 1` costa ~1 s di CPU, ogni 2 minuti erano 16 min al giorno).
+
+Perché: il 25/10 fseventsd tratteneva ~55 byte per ogni evento di file e non li rilasciava (5 GB in
+1-2 giorni, swap piena). Sano vale ~0. Il numero che conta è b_per_ev = memoria cresciuta / eventi
+passati: lo stato guasto si vede a ~100 MB, cinquanta volte prima dei 5 GB, quando la prova da root
+(fseventsd-prove) può ancora dire chi è il colpevole.
+
+La CPU si legge da `ps -o time` (secondi cumulati): il primo campione di `top -l 1` vale sempre 0.
+
+Allarme (una volta per episodio, si riarma quando torna sano): b_per_ev > 20 su 30 minuti con
+mem > 100 MB, oppure mem > 1000 MB, oppure CPU > 50% su 10 giri. Va in «Ti aspetta» dell'hub,
+perché la prova e il riavvio chiedono la password di Attilio.
+
+  fseventsd-watch              un giro
+  fseventsd-watch --dry-run    un giro senza scrivere né avvisare; --threshold-mb N forza l'allarme
+"""
+import ctypes, json, os, re, subprocess, sys, time, urllib.request
+
+HOME = os.path.expanduser("~")
+LOG = os.path.join(HOME, ".claude/jarvis/logs/fseventsd.jsonl")
+STATE = os.path.join(HOME, ".claude/jarvis/state/fseventsd-watch.json")
+DRY = "--dry-run" in sys.argv
+THR_MB = 1000.0
+if "--threshold-mb" in sys.argv:
+    THR_MB = float(sys.argv[sys.argv.index("--threshold-mb") + 1])
+
+
+def run(a):
+    return subprocess.run(a, capture_output=True, text=True, timeout=20).stdout
+
+
+def mb(s):
+    m = re.match(r"([\d.]+)([BKMGT])", s)
+    return float(m.group(1)) * {"B": 1 / 1048576, "K": 1 / 1024, "M": 1, "G": 1024, "T": 1048576}[m.group(2)] if m else None
+
+
+def cpu_seconds(t):
+    # «1265:51.08» oppure «1-02:03:04»: minuti e secondi, con ore e giorni facoltativi
+    days = 0
+    if "-" in t:
+        d, t = t.split("-", 1)
+        days = int(d)
+    parts = [float(p) for p in t.split(":")]
+    sec = 0.0
+    for p in parts:
+        sec = sec * 60 + p
+    return days * 86400 + sec
+
+
+def sample():
+    pid = run(["pgrep", "-x", "fseventsd"]).split()[0]
+    cpu_s = cpu_seconds(run(["ps", "-o", "time=", "-p", pid]).strip())
+    rows = [l.split() for l in run(["top", "-l", "1", "-pid", pid, "-stats", "pid,mem,cmprs,ports"]).splitlines()
+            if l.startswith(pid + " ")]
+    top = rows[0]
+    cs = ctypes.CDLL("/System/Library/Frameworks/CoreServices.framework/CoreServices")
+    cs.FSEventsGetCurrentEventId.restype = ctypes.c_uint64
+    return dict(ts=int(time.time()), pid=int(pid), mem_mb=round(mb(top[1].rstrip("+-")), 1),
+                cmprs_mb=round(mb(top[2].rstrip("+-")), 1), ports=int(top[3].rstrip("+-")), cpu_s=round(cpu_s, 2),
+                eid=cs.FSEventsGetCurrentEventId(), pages=os.stat("/System/Volumes/Data/.fseventsd").st_nlink,
+                load1=round(os.getloadavg()[0], 1))
+
+
+def load_state():
+    try:
+        return json.load(open(STATE))
+    except (OSError, ValueError):
+        return {"hist": [], "alarmed": False}
+
+
+def notify(title, why):
+    body = json.dumps({"tipo": "decisione", "title": title, "why": why, "link": "#automations",
+                       "from": "fseventsd-watch"}).encode()
+    try:
+        urllib.request.urlopen(urllib.request.Request("http://127.0.0.1:3360/api/attesa", data=body,
+                                                      headers={"content-type": "application/json"}), timeout=10)
+    except Exception:
+        pass  # hub giù: la riga di allarme resta comunque nel registro
+
+
+def busiest(n=8):
+    # Chi gira nei picchi: il 25/10 il carico è arrivato a 147 con fseventsd all'1-5%, e senza
+    # questa lista non si poteva dire chi fosse. ps e non top: a Mac carico top va in timeout.
+    out = run(["ps", "-Ao", "%cpu=,rss=,comm="])
+    rows = []
+    for l in out.splitlines():
+        p = l.split(None, 2)
+        if len(p) == 3:
+            rows.append((float(p[0]), int(p[1]) // 1024, os.path.basename(p[2])[:40]))
+    rows.sort(reverse=True)
+    return [f"{c:.0f}% {m}MB {name}" for c, m, name in rows[:n]]
+
+
+def log_peak(load1):
+    if DRY:
+        return
+    with open(LOG, "a") as f:
+        f.write(json.dumps(dict(ts=int(time.time()), picco=True, load1=round(load1, 1), top=busiest())) + "\n")
+
+
+def main():
+    st = load_state()
+    load1 = os.getloadavg()[0]
+    try:
+        row = sample()
+    except subprocess.TimeoutExpired as e:
+        # A Mac carico (25/10 17:29, carico 50) top -l 1 supera i 20 s: si salta il campione, non si muore con
+        # un traceback che l'hub conta come guasto. Il prossimo giro (5 minuti) misura di nuovo.
+        print(f"campione saltato: {e.cmd[0]} oltre {e.timeout:.0f} s, Mac carico")
+        if load1 > 30:
+            log_peak(load1)
+        return 0
+    if load1 > 30:
+        row["top"] = busiest()
+    hist = [h for h in st.get("hist", []) if h["pid"] == row["pid"]]
+    if hist:
+        prev = hist[-1]
+        dt = row["ts"] - prev["ts"]
+        if dt > 0:
+            row.update(dt=dt, cpu_pct=round(100 * (row["cpu_s"] - prev["cpu_s"]) / dt, 1),
+                       ev_s=round((row["eid"] - prev["eid"]) / dt))
+    # pendenza su ~30 minuti: memoria cresciuta per evento passato
+    old = next((h for h in hist if row["ts"] - h["ts"] >= 1500), None)
+    if old and row["eid"] > old["eid"]:
+        row["b_per_ev"] = round((row["mem_mb"] - old["mem_mb"]) * 1048576 / (row["eid"] - old["eid"]), 1)
+    hist = (hist + [row])[-40:]
+
+    recent_cpu = [h.get("cpu_pct", 0) for h in hist[-10:]]
+    reasons = []
+    if row.get("b_per_ev", 0) > 20 and row["mem_mb"] > 100:
+        reasons.append(f"trattiene {row['b_per_ev']} byte per evento (sano ~0)")
+    if row["mem_mb"] > THR_MB:
+        reasons.append(f"memoria {row['mem_mb']:.0f} MB")
+    if len(recent_cpu) >= 10 and min(recent_cpu) > 50:
+        reasons.append(f"CPU sopra il 50% da {len(recent_cpu)} giri")
+    healthy = row["mem_mb"] < 300 and row.get("b_per_ev", 0) < 2
+    if reasons:
+        row["allarme"] = "; ".join(reasons)
+    print(json.dumps(row))
+    if DRY:
+        return 0
+    os.makedirs(os.path.dirname(LOG), exist_ok=True)
+    with open(LOG, "a") as f:
+        f.write(json.dumps(row) + "\n")
+    if reasons and not st.get("alarmed"):
+        notify("fseventsd trattiene di nuovo memoria",
+               row["allarme"] + ". Serve la prova da amministratore prima del riavvio: "
+               "osascript con ~/.claude/jarvis/scripts/devreap/fseventsd-prove (vedi nota reference_fseventsd_sordo).")
+        st["alarmed"] = True
+    elif healthy:
+        st["alarmed"] = False
+    st["hist"] = hist
+    os.makedirs(os.path.dirname(STATE), exist_ok=True)
+    json.dump(st, open(STATE, "w"))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

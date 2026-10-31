@@ -1,0 +1,18 @@
+#!/bin/zsh
+# affine-mcp-server, mounted as a gateway child (never stdio in ~/.claude.json).
+#
+# Auth order matters:
+#  1. the browser session cookie from Dia — lasts months, works with AFFiNE closed
+#  2. the desktop app's access token — lasts 15 minutes and only refreshes while
+#     the app is syncing the cloud workspace, which is also when it holds the
+#     realtime channel the server needs. Fallback only.
+set -e
+export AFFINE_BASE_URL="https://app.affine.pro"
+
+if cookie="$("$HOME/bin/affine-cookie" 2>/dev/null)"; then
+  export AFFINE_COOKIE="$cookie"
+else
+  export AFFINE_API_TOKEN="$("$HOME/bin/affine-token")"
+fi
+
+exec /opt/homebrew/bin/affine-mcp "$@"

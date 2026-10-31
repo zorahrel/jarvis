@@ -1,0 +1,1622 @@
+#!/usr/bin/env python3
+"""openclaw-safe-update: aggiorna OpenClaw di notte, riavvia il gateway solo a OpenClaw fermo, e
+torna indietro se la versione nuova non passa i controlli.
+
+Perche' esiste. L'auto-update interno di OpenClaw falliva ogni notte a `managed-service-preflight`
+(4 volte fino al 30/09: l'helper girava dentro l'albero di processi del gateway). Due volte in due
+giorni (29/09 12:55, 30/09 09:44) un'operazione sui plugin a OpenClaw acceso ha lasciato tutti i
+canali giu' per 3-8 minuti. E ogni update riscrive dist/ e cancella la patch openclaw-mcp-lazy.
+
+La regola che tiene insieme tutto: nessun riavvio del gateway mentre OpenClaw lavora. Allo stop il
+gateway concede al lavoro in corso 300 s (log: "shutdown budget ... drain=315000ms", da
+ExitTimeOut=330 s del plist di launchd), poi lo interrompe; dalla 2026.10.7 i turni in coda, i
+risultati dei figli e i risvegli sopravvivono al riavvio. Unica eccezione: un gateway che non
+risponde, dove non c'e' lavoro da salvare.
+
+Un giro (launchd com.jarvis.openclaw-safe-update, 04:20):
+  0. pulizia di ~/.openclaw/tmp/openclaw-plugin-build-* (avanzi di build dei plugin che OpenClaw non
+     cancella mai): solo cartelle vere, piu' vecchie di 6 ore, non nominate da nessun plugin
+     installato e senza file aperti (lsof). Gira anche senza update e anche da non armato.
+  1. `openclaw update status --json`: niente di nuovo -> esce 0 in silenzio (se patch MCP o plugin
+     fissati non sono a posto, li sistema a OpenClaw fermo; l'app del Mac indietro la riallinea come
+     all'8b). Una versione che e' gia' tornata
+     indietro non si riprova da sola: serve --force-version.
+  2. aspetta che nessuna PERSONA abbia scritto negli ultimi 120 s (unico segnale di «occupato»:
+     sottoagenti, retry, copie di consegna, cron, profili heap e run sui canali non contano) fino a
+     --idle-wait minuti; se non si ferma esce 0 e riprova la notte dopo.
+  3. fotografa versione, sha256 dei file dist patchati, openclaw.json, plugin, FAIL di
+     agents-doctor e problemi gia' presenti; salva i database SQLite e openclaw.json.
+  4. `openclaw update --yes --json --tag <v>`: OpenClaw valida la versione nuova su una copia dello
+     stato (~11-15 min) col gateway vecchio acceso, poi ferma, sostituisce, riavvia e verifica, e
+     se la verifica fallisce torna indietro da solo. Senza --no-restart apposta: salterebbe quella
+     verifica e lascerebbe il gateway vecchio a girare su un dist/ gia' sostituito.
+     Durante la validazione lo script guarda ogni 20 s: se OpenClaw si mette a lavorare, interrompe
+     l'update con SIGINT PRIMA dell'attivazione (run `failed/interrupted`, gateway non toccato) e
+     riprova la notte dopo. Dalla fase `activating` in poi non interrompe piu'. Dopo il SIGINT:
+     termina i figli dell'update rimasti vivi, chiude nello storico un run rimasto `running`
+     (`openclaw update repair`, mai con riavvio) e cancella gli stage che l'update ha lasciato.
+  5-7. plugin fissati (whatsapp, tokenjuice: OpenClaw tiene i pin esatti) alla versione del core,
+     patch MCP e patch annunci (openclaw-announce-fix: se non entra lo annota e basta, la versione
+     vecchia ha lo stesso difetto), poi un solo kickstart -k, solo a OpenClaw fermo. Se non si ferma in 20 min: niente
+     riavvio, la versione nuova resta (gia' verificata da OpenClaw) e plugin e patch li sistema il
+     giro dopo.
+  8. health gate: gateway sulla versione giusta, canali su, WhatsApp healthy, un heartbeat vero
+     andato a buon fine, patch MCP attiva, nessun FAIL nuovo in agents-doctor.
+ 8b. health gate verde (o notte senza update) e app del Mac indietro sulla CLI: quit dell'app e open -ga,
+     solo a Mac fermo e OpenClaw fermo; un'app chiusa resta chiusa (Sparkle installa l'update in attesa
+     alla chiusura; il gateway non dipende dall'app). Se alla chiusura Sparkle non installa e i suoi
+     aiutanti girano da un binario sparito, li chiude prima di riaprire, cosi' Sparkle riparte pulito.
+  9. se qualcosa dopo il 4 va storto: rollback con `openclaw update --tag <vecchia>`, anche lui solo
+     a OpenClaw fermo; se non si ferma in 20 min resta in sospeso e lo riprende il giro dopo.
+ 10. una riga su WhatsApp ad Attilio, solo se e' cambiato o fallito qualcosa (destinatario letto
+     dal cron del brief mattutino, mai scritto qui: il repo e' pubblico).
+
+Armato: finche' un giro con --force-version non e' andato a buon fine, il giro notturno fa solo il
+--dry-run. Il primo aggiornamento vero lo guarda Attilio.
+
+Uso:
+  openclaw-safe-update                          il giro notturno
+  openclaw-safe-update --dry-run                passi 1-3 senza toccare niente, poi il piano
+  openclaw-safe-update --force-version 2026.9.7 giro supervisionato verso quella versione
+  --idle-wait MIN                               attesa massima di OpenClaw fermo (45)
+
+Rinvio una tantum: scrivere un'ora ISO con fuso in state/openclaw-safe-update.not-before (es.
+2026-10-25T05:30:00+01:00) fa aspettare il giro di quella notte (max 6 ore avanti), poi il file sparisce.
+Una finestra del profilo heap in corso non blocca piu' l'update (26/10): perderne una costa poco.
+
+Exit: 0 niente da fare, fatto, o rimandato a OpenClaw fermo · 1 fallito ma tornato indietro ·
+2 fallito e rollback non riuscito o in sospeso · 3 un altro giro in corso · 4 rifiutato (dentro
+il gateway, disco, versione).
+"""
+import argparse
+import datetime
+import fcntl
+import glob
+import hashlib
+import json
+import os
+import plistlib
+import re
+import shutil
+import signal
+import sqlite3
+import stat
+import subprocess
+import sys
+import tempfile
+import time
+from pathlib import Path
+
+HOME = Path.home()
+JARVIS = HOME / ".claude/jarvis"
+STATE = JARVIS / "state/openclaw-safe-update.json"
+LOCK = JARVIS / "state/openclaw-safe-update.lock"
+LOG = JARVIS / "logs/openclaw-safe-update.log"
+BACKUPS = HOME / ".agents/backups/openclaw-safe-update"
+OC_HOME = HOME / ".openclaw"
+CONFIG = Path(os.environ.get("OPENCLAW_CONFIG_PATH") or OC_HOME / "openclaw.json")
+MCP_LAZY = os.environ.get("OSU_MCP_LAZY") or str(
+    Path(__file__).resolve().parent.parent / "openclaw-mcp-lazy/openclaw-mcp-lazy.py")
+# Seconda patch su dist/: fine dei sottoagenti in chat privata. Se non entra, l'update resta:
+# la versione vecchia ha lo stesso difetto, quindi tornare indietro non lo ripara.
+ANNOUNCE_FIX = os.environ.get("OSU_ANNOUNCE_FIX") or str(
+    Path(__file__).resolve().parent.parent / "openclaw-announce-fix/openclaw-announce-fix.py")
+ANNOUNCE_DOCTOR = "openclaw-announce-fix"  # la riga di agents-doctor che la controlla
+# Terza patch su dist/: finali WhatsApp rifiutate dopo un hot reload (backport openclaw#160009).
+# Su 2026.10.2+ e' un no-op; serve se un rollback rimette la 9.x. Stessa regola di ANNOUNCE_FIX.
+DURABLE_VIEW = os.environ.get("OSU_DURABLE_VIEW") or str(
+    Path(__file__).resolve().parent.parent / "openclaw-durable-view/openclaw-durable-view.py")
+# Quarta patch su dist/: tetti dello stream-json dei sottoagenti (20000 righe / 8 MB chiudevano in
+# errore lavori gia' finiti). Stessa regola di ANNOUNCE_FIX.
+CLI_OUTPUT_LIMIT = os.environ.get("OSU_CLI_OUTPUT_LIMIT") or str(
+    Path(__file__).resolve().parent.parent / "openclaw-cli-output-limit/openclaw-cli-output-limit.py")
+# Quinta patch su dist/: un tag tra bot (Jarvis <-> Visione) non esige risposta, il NO_REPLY non e'
+# piu' un errore. Stessa regola di ANNOUNCE_FIX.
+BOT_MENTION = os.environ.get("OSU_BOT_MENTION") or str(
+    Path(__file__).resolve().parent.parent / "openclaw-bot-mention-silent/openclaw-bot-mention-silent.py")
+# Sesta patch su dist/: il NO_REPLY nei turni interni di consegna (runId announce:) non e' un errore.
+ANNOUNCE_SILENT = os.environ.get("OSU_ANNOUNCE_SILENT") or str(
+    Path(__file__).resolve().parent.parent / "openclaw-announce-silent/openclaw-announce-silent.py")
+# Settima patch, sul plugin WhatsApp: alla ripartenza ripesca i messaggi arrivati a gateway giu' fino a
+# 10 min, non 60 s (un riavvio dura 94-144 s). Va dopo l'install dei plugin, che la cancella.
+WA_CATCHUP = os.environ.get("OSU_WA_CATCHUP") or str(
+    Path(__file__).resolve().parent.parent / "openclaw-wa-catchup/openclaw-wa-catchup.py")
+# Ottava patch su dist/: il battito non aspetta i sottoagenti (restava «running» per ore, 15/10).
+HB_SUBAGENTS = os.environ.get("OSU_HB_SUBAGENTS") or str(
+    Path(__file__).resolve().parent.parent / "openclaw-heartbeat-subagents/openclaw-heartbeat-subagents.py")
+# Nona patch su dist/: il risveglio a fine exec non muore per «sessione non pronta» (regressione 10.5, 36% dei risvegli).
+SESSION_SETTINGS = os.environ.get("OSU_SESSION_SETTINGS") or str(
+    Path(__file__).resolve().parent.parent / "openclaw-session-settings-fix/openclaw-session-settings-fix.py")
+# Decima patch su dist/: una chat col modello fissato a mano tiene la catena di ripiego, e il ripiego non
+# manda avvisi in chat (24/10: Opus 529 -> errore grezzo in inglese ad Attilio).
+PINNED_FALLBACK = os.environ.get("OSU_PINNED_FALLBACK") or str(
+    Path(__file__).resolve().parent.parent / "openclaw-pinned-fallback/openclaw-pinned-fallback.py")
+# Undicesima patch su dist/: la risposta di un turno di un sottoagente persistente non aspetta i nipoti dei
+# turni prima e non scade a 30 min senza tentativi (24/10 19:47, run 5b137a57).
+# SOSPESA dal 25/10 sera: la verifica Opus ha trovato che la patch non chiude il caso (manca il gate in
+# subagent-announce, che conta ancora i filoni del turno 1), e il giro delle 04:20 l'avrebbe applicata con un
+# riavvio. /usr/bin/true risponde «niente da fare» a check e apply. Si riaccende SOLO mettendo
+# DESCENDANT_EXPIRY_SUSPENDED = False quando la card c29125f7 passa la verifica: togliere la riga manda in
+# NameError tutto safe-update, ogni notte (lo provano i casi 33 del banco).
+DESCENDANT_EXPIRY_SUSPENDED = True
+DESCENDANT_EXPIRY = os.environ.get("OSU_DESCENDANT_EXPIRY") or ("/usr/bin/true" if DESCENDANT_EXPIRY_SUSPENDED else str(
+    Path(__file__).resolve().parent.parent / "openclaw-descendant-expiry-fix/openclaw-descendant-expiry-fix.py"))
+# Dodicesima patch su dist/: un run di cron non revoca piu' l'epoca d'integrita' degli exec in volo (backport di
+# openclaw#170548 sulla 10.7, issue #177656; 18 exec persi il 26/10 con «integrity admission»).
+CRON_RECEIPT_DDL = os.environ.get("OSU_CRON_RECEIPT_DDL") or str(
+    Path(__file__).resolve().parent.parent / "openclaw-cron-receipt-ddl/openclaw-cron-receipt-ddl.py")
+# Tredicesima patch su dist/: chat.history non fallisce piu' sulle sessioni dove un cron ha scritto (backport
+# di openclaw#181311 sulla 10.7, issue #180920; 397 errori il 26/10, pannello senza chat di Jarvis su Discord).
+CRON_HISTORY_NAMES = os.environ.get("OSU_CRON_HISTORY_NAMES") or str(
+    Path(__file__).resolve().parent.parent / "openclaw-cron-history-names/openclaw-cron-history-names.py")
+# Dopo un giro che ha riavviato il gateway: OpenClaw non riprende i sottoagenti interrotti, li
+# chiede di rilanciare ai canali che li avevano lanciati (misurato 15/10: 7 su 7 fermi).
+OC_RESTART = os.environ.get("OSU_OC_RESTART") or str(
+    Path(__file__).resolve().parent.parent / "oc-restart/oc-restart")
+# L'app OpenClaw del Mac (approvazioni, controllo del Mac) si aggiorna con Sparkle, che installa solo quando
+# l'app si chiude: vedi align_app. Il gateway non dipende da lei, quindi la sua riga di agents-doctor non
+# fa mai tornare indietro un update (dopo un update della CLI l'app e' indietro per costruzione).
+APP = Path(os.environ.get("OSU_APP") or "/Applications/OpenClaw.app")
+APP_ID = "ai.openclaw.mac"
+APP_DOCTOR = "OpenClaw: app del Mac"
+APP_WAIT_S = float(os.environ.get("OSU_APP_WAIT_S", 60))
+APP_IDLE_MIN = float(os.environ.get("OSU_APP_IDLE_MIN", 5))  # dopo un heartbeat bastano i 2 min di QUIET_S
+OSASCRIPT = os.environ.get("OSU_OSASCRIPT") or "/usr/bin/osascript"
+OPEN = os.environ.get("OSU_OPEN") or "/usr/bin/open"
+MAC_LIBERO = os.environ.get("OSU_MAC_LIBERO") or str(HOME / "bin/mac-libero")
+
+LABEL = "ai.openclaw.gateway"
+BRIEF_CRON = "c34dcc15-c2c1-4c5c-8ffa-51b9054827f1"  # brief-mattutino: il suo delivery e' Attilio
+HEARTBEAT = "heartbeat-main"
+KNOWN_DELIVERY_BUG = "No active WhatsApp Web listener"
+PLUGIN = "whatsapp"
+MCP_DOCTOR = "openclaw-mcp-lazy"  # la riga di agents-doctor che controlla la patch
+PRE_ACTIVATION = {"requested", "staging", "validating", "repairing"}  # il gateway vecchio serve ancora
+QUIET_S = 120                # nessuna persona ha scritto da 2 minuti = si puo' procedere
+KEEP_BACKUPS = 3
+FAILED_RESULTS = {"rolled-back", "rollback-failed", "rollback-pending"}
+# Solo la suite li abbassa: in produzione nessuno li passa.
+POLL_S = float(os.environ.get("OSU_POLL_S", 30))
+WATCH_S = min(POLL_S, 20)    # sguardo durante la validazione dell'update
+SETTLE_S = float(os.environ.get("OSU_SETTLE_S", 300))  # tempo concesso ai canali per tornare su
+KICK_S = float(os.environ.get("OSU_KICK_S", 180))      # tempo concesso al gateway dopo un kickstart
+POST_IDLE_MIN = float(os.environ.get("OSU_POST_IDLE_MIN", 20))
+ROLLBACK_IDLE_MIN = float(os.environ.get("OSU_ROLLBACK_IDLE_MIN", 20))
+# Un battito sano dura 25 s - 16 min (28/10: quello delle 11:53 ha messo 957 s): gli 8 min di
+# --wait non bastavano, e `cron runs` elenca solo i run finiti, cosi' un run ancora in corso sembrava
+# «nessun run nuovo» e mandava in rollback una 10.8 sana. Il giro segue il suo runId fino in fondo.
+HB_BUDGET_S = float(os.environ.get("OSU_HB_BUDGET_S", 1200))
+HB_RUN_RE = r"manual:[0-9A-Za-z-]{1,64}:\d+:1"
+# snapshot di validazione ~2 GB + pacchetto + backup SQLite, col disco al 99% (9 GB liberi il 30/09)
+MIN_FREE_GB = float(os.environ.get("OSU_MIN_FREE_GB", 8))
+# Mac sotto sforzo (24/10, episodio 3: la validazione delle 04:20 e' partita su un Mac gia' carico e l'ha affondato):
+# lo stato del freno del hub (usage-hub, mac-state.json) se fresco, se no il carico per core. Si aspetta, poi si rimanda.
+MAC_STATE = Path(os.environ.get("OSU_MAC_STATE") or HOME / ".cache/claude-usage-hub/mac-state.json")
+MAC_WAIT_MIN = float(os.environ.get("OSU_MAC_WAIT_MIN", 45))
+# OpenClaw lascia in tmp una copia di build (~110 MB) a ogni install/update di plugin e non la
+# cancella mai: il 30/09 erano 376, 41 GB, e hanno bloccato l'update per disco pieno.
+BUILD_TMP = OC_HOME / "tmp"
+BUILD_GLOB = "openclaw-plugin-build-*"
+BUILD_MIN_AGE_S = 6 * 3600
+LSOF_BATCH = 20              # ~50k file in 13 cartelle = 2 s di lsof: 20 per volta stanno sotto il timeout
+
+VER_RE = r"\d{4}\.\d+\.\d+(?:-\d+)?"
+
+
+# ---------------------------------------------------------------- utilita'
+
+def log(msg):
+    # niente numeri di telefono nei log, neanche dentro un errore riportato da OpenClaw
+    line = f"{datetime.datetime.now():%Y-%m-%d %H:%M:%S} {re.sub(r'[+]?[0-9]{9,}', '<num>', str(msg))}"
+    print(line, flush=True)
+    try:
+        LOG.parent.mkdir(parents=True, exist_ok=True)
+        with open(LOG, "a") as f:
+            f.write(line + "\n")
+    except OSError:
+        pass
+
+
+def run(cmd, timeout=120, env=None):
+    try:
+        p = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, stdin=subprocess.DEVNULL, env=env)
+        return p.returncode, p.stdout, p.stderr
+    except subprocess.TimeoutExpired as e:
+        out = e.stdout.decode(errors="replace") if isinstance(e.stdout, bytes) else (e.stdout or "")
+        return 124, out, f"timeout dopo {timeout} s"
+    except OSError as e:
+        return 127, "", str(e)
+
+
+def oc(args, timeout=120):
+    return run(["openclaw", *args], timeout)
+
+
+def parse_json(text):
+    text = (text or "").strip()
+    starts = [0] + [m.start() + 1 for m in re.finditer(r"\n[\[{]", text)]
+    for i in starts:
+        try:
+            return json.loads(text[i:])
+        except ValueError:
+            continue
+    return None
+
+
+def oc_json(args, timeout=120):
+    rc, out, _ = oc(args, timeout)
+    d = parse_json(out)
+    return d if isinstance(d, (dict, list)) else None
+
+
+def tail(text, n=160):
+    lines = [x for x in (text or "").strip().splitlines() if x.strip()]
+    return (lines[-1] if lines else "")[:n]
+
+
+def vtuple(v):
+    return tuple(int(x) for x in re.findall(r"\d+", v or ""))
+
+
+def short(v):
+    return re.sub(r"^\d{4}\.", "", v or "?")
+
+
+def base(v):
+    return re.sub(r"-\d+$", "", v or "")
+
+
+def sha(path):
+    return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+
+
+def load_state():
+    try:
+        return json.loads(STATE.read_text())
+    except (OSError, ValueError):
+        return {}
+
+
+def save_state(state):
+    STATE.parent.mkdir(parents=True, exist_ok=True)
+    STATE.write_text(json.dumps(state, indent=1, ensure_ascii=False) + "\n")
+
+
+# ---------------------------------------------------------------- OpenClaw: stato
+
+def installed_version():
+    _, out, _ = oc(["--version"], 60)
+    m = re.search(VER_RE, out)
+    return m.group(0) if m else None
+
+
+def gateway_pid():
+    _, out, _ = run(["launchctl", "print", f"gui/{os.getuid()}/{LABEL}"], 30)
+    m = re.search(r"^\s*pid = (\d+)", out, re.M)
+    return int(m.group(1)) if m else None
+
+
+def gateway_up():
+    return bool(((oc_json(["gateway", "status", "--json"], 90) or {}).get("rpc") or {}).get("ok"))
+
+
+def ancestors():
+    pids, pid = set(), os.getpid()
+    while pid > 1 and pid not in pids:
+        pids.add(pid)
+        _, out, _ = run(["ps", "-o", "ppid=", "-p", str(pid)], 10)
+        pid = int(out.strip() or 0)
+    return pids
+
+
+def plugin_list():
+    d = oc_json(["plugins", "list", "--json"], 180) or {}
+    return {p.get("id"): p for p in d.get("plugins") or []}
+
+
+def pinned(spec):
+    m = re.search(rf"(?<=.)@({VER_RE})$", spec or "")
+    return m.group(1) if m else None
+
+
+def plugin_ok(pv, core):
+    # un core di correzione (2026.9.7-2) usa i plugin della sua coorte (2026.9.7): docs updating.md
+    return pv in (core, base(core))
+
+
+def misaligned(plugins, core):
+    """{id: pacchetto} dei plugin che vanno riallineati a `core` a mano: whatsapp e ogni plugin
+    globale con un pin esatto (OpenClaw allinea da solo quelli non fissati, tiene i pin esatti)."""
+    todo = {}
+    for pid, p in sorted(plugins.items()):
+        spec = (p.get("trust") or {}).get("installSpec") or ""
+        if (pid == PLUGIN or (p.get("origin") == "global" and pinned(spec))) and not plugin_ok(p.get("version"), core):
+            todo[pid] = re.sub(r"(?<=.)@[^@/]*$", "", spec) or f"@openclaw/{pid}"
+    return todo
+
+
+def mcp_lazy(cmd):
+    rc, out, err = run([MCP_LAZY, cmd], 120)
+    return rc, tail(out or err)
+
+
+def announce_fix(cmd):
+    rc, out, err = run([ANNOUNCE_FIX, cmd], 120)
+    return rc, tail(out or err)
+
+
+def durable_view(cmd):
+    rc, out, err = run([DURABLE_VIEW, cmd], 120)
+    return rc, tail(out or err)
+
+
+def cli_output_limit(cmd):
+    rc, out, err = run([CLI_OUTPUT_LIMIT, cmd], 120)
+    return rc, tail(out or err)
+
+
+def bot_mention(cmd):
+    rc, out, err = run([BOT_MENTION, cmd], 120)
+    return rc, tail(out or err)
+
+
+def announce_silent(cmd):
+    rc, out, err = run([ANNOUNCE_SILENT, cmd], 120)
+    return rc, tail(out or err)
+
+
+def wa_catchup(cmd):
+    rc, out, err = run([WA_CATCHUP, cmd], 120)
+    return rc, tail(out or err)
+
+
+def hb_subagents(cmd):
+    rc, out, err = run([HB_SUBAGENTS, cmd], 120)
+    return rc, tail(out or err)
+
+
+def session_settings(cmd):
+    rc, out, err = run([SESSION_SETTINGS, cmd], 120)
+    return rc, tail(out or err)
+
+
+def pinned_fallback(cmd):
+    rc, out, err = run([PINNED_FALLBACK, cmd], 120)
+    return rc, tail(out or err)
+
+
+def cron_receipt_ddl(cmd):
+    rc, out, err = run([CRON_RECEIPT_DDL, cmd], 120)
+    return rc, tail(out or err)
+
+
+def cron_history_names(cmd):
+    rc, out, err = run([CRON_HISTORY_NAMES, cmd], 120)
+    return rc, tail(out or err)
+
+
+def descendant_expiry(cmd):
+    rc, out, err = run([DESCENDANT_EXPIRY, cmd], 120)
+    return rc, tail(out or err)
+
+
+def is_person_message(msg):
+    """True se il messaggio utente lo ha scritto una persona su un canale. La provenienza vince su
+    tutto: un messaggio interno (internal_system, inter_session) puo' portare lo stesso una
+    idempotencyKey `channel-user:` (visto il 26/10), una persona no. Senza provenienza (evento
+    compresso, o canale che non la scrive) decide la chiave: `channel-user:` la mette il gateway
+    solo su cio' che arriva da un canale."""
+    if msg.get("role") != "user":
+        return False
+    kind = (msg.get("provenance") or {}).get("kind")
+    if kind:
+        return kind == "external_user"
+    return str(msg.get("idempotencyKey") or "").startswith("channel-user:")
+
+
+def person_wrote_recently():
+    """Ritorna (chi, eta' in s) dell'ultimo messaggio di una persona negli ultimi QUIET_S secondi, nei
+    DB di tutti gli agenti; None se nessuno. Raises sqlite3.Error se un DB non si legge: chi chiama
+    lo tratta come «non si sa» e quindi occupato.
+    E' l'unico segnale che interrompe un giro (26/10). Sottoagenti, retry, copie di consegna,
+    cron e profili heap non sono persone: dal 16/10 sei notti su otto sono fallite per loro, e con
+    la 2026.10.7 il drain di 300 s del gateway e la ripresa dei turni in coda li reggono."""
+    since_ms = (time.time() - QUIET_S) * 1000
+    best = None
+    for db in sorted(glob.glob(str(OC_HOME / "agents/*/agent/openclaw-agent.sqlite"))):
+        con = sqlite3.connect(f"file:{db}?mode=ro", uri=True, timeout=5)
+        try:
+            rows = con.execute("SELECT created_at, event_json, navigation_json FROM transcript_events "
+                               "WHERE created_at > ?", (since_ms,)).fetchall()
+        finally:
+            con.close()
+        for created_ms, event_json, nav_json in rows:
+            try:
+                if event_json is not None:
+                    msg = json.loads(event_json).get("message") or {}
+                else:  # evento compresso: il messaggio sta nel riassunto di navigazione
+                    nav = json.loads(nav_json)
+                    msg = (nav.get("navigation") or nav.get("model") or {}).get("message") or {}
+            except (ValueError, AttributeError, TypeError):
+                continue
+            if is_person_message(msg):
+                age = max(0.0, time.time() - created_ms / 1000)
+                if best is None or age < best[1]:
+                    best = (db.split("/agents/")[1].split("/")[0], age)
+    return best
+
+
+def not_before_wait():
+    """Rinvio una tantum: se state/openclaw-safe-update.not-before contiene un'ora ISO con fuso
+    (es. 2026-10-25T05:30:00+01:00) e non e' ancora passata, il giro aspetta qui, poi cancella il file.
+    Serve a rimettere in fila i lavori di una notte senza spostare l'orario fisso di launchd (04:20)."""
+    f = JARVIS / "state/openclaw-safe-update.not-before"
+    try:
+        until = datetime.datetime.fromisoformat(f.read_text().strip()).timestamp()
+    except (OSError, ValueError):
+        return
+    if until > time.time() + 6 * 3600:
+        log(f"rinvio ignorato: {f.name} e' piu' di 6 ore avanti")
+        return
+    if until > time.time():
+        log(f"rinviato su richiesta fino alle {datetime.datetime.fromtimestamp(until):%H:%M} ({f.name})")
+        while time.time() < until:
+            time.sleep(min(30, max(1, until - time.time())))
+    try:
+        f.unlink()
+    except OSError:
+        pass
+
+
+def busy_reasons(down_ok=False):
+    """Lista vuota = si puo' procedere. Altrimenti perche' no.
+    Si ferma solo se una PERSONA ha scritto negli ultimi QUIET_S secondi (26/10): tutto il resto lo
+    reggono il drain di 300 s del gateway e la ripresa dei turni in coda della 2026.10.7.
+    down_ok: un gateway che non risponde conta come fermo. Vale solo dopo un update: non c'e' lavoro
+    da interrompere, e aspettare non lo riporta su."""
+    h = oc_json(["health", "--json"], 90)
+    if not isinstance(h, dict):
+        if down_ok and not gateway_up():
+            log("il gateway non risponde: nessun lavoro da interrompere")
+            return []
+        return ["health non risponde"]
+    try:
+        last = person_wrote_recently()
+    except sqlite3.Error as e:
+        return [f"database degli agenti non leggibile ({e}): non so se una persona sta scrivendo"]
+    if last:
+        return [f"una persona ha scritto {int(last[1])} s fa (agente {last[0]})"]
+    return []
+
+
+def mac_strained():
+    """(sotto sforzo?, perche'): mac-state.json del hub se fresco (< 90 s), se no carico per core > 1,5."""
+    try:
+        st = json.loads(MAC_STATE.read_text())
+        if time.time() * 1000 - float(st["at"]) < 90_000:
+            return bool(st.get("strained")), f"stato del hub, {st.get('loadPerCore')} per core"
+    except (OSError, ValueError, KeyError, TypeError):
+        pass
+    per_core = os.getloadavg()[0] / (os.cpu_count() or 1)
+    return per_core > 1.5, f"carico {per_core:.2f} per core"
+
+
+def wait_mac_calm(minutes):
+    """None quando il Mac respira; il motivo se dopo `minutes` e' ancora sotto sforzo."""
+    deadline = time.time() + minutes * 60
+    while True:
+        busy, why = mac_strained()
+        if not busy:
+            return None
+        if time.time() >= deadline:
+            return why
+        time.sleep(POLL_S)
+
+
+def wait_idle(minutes, down_ok=False):
+    end, polls = time.time() + minutes * 60, 0
+    while True:
+        why = busy_reasons(down_ok)
+        if not why or time.time() >= end:
+            return why
+        if polls % 10 == 0:
+            log("OpenClaw occupato: " + ", ".join(why))
+        polls += 1
+        time.sleep(POLL_S)
+
+
+def update_phase():
+    return ((oc_json(["update", "status", "--json"], 60) or {}).get("activeRun") or {}).get("phase")
+
+
+def live_problems(expected):
+    """Cosa non va adesso nel gateway in esecuzione (versione, canali, plugin)."""
+    gs = oc_json(["gateway", "status", "--json"], 90) or {}
+    rpc = gs.get("rpc") or {}
+    if not rpc.get("ok"):
+        return ["il gateway non risponde"]
+    p = []
+    ver = (rpc.get("server") or {}).get("version")
+    if expected and ver != expected:
+        p.append(f"il gateway gira {ver}, attesa {expected}")
+    h = oc_json(["health", "--json"], 90) or {}
+    if not h.get("ok"):
+        p.append("health non ok")
+    plug = h.get("plugins") or {}
+    for e in plug.get("errors") or []:
+        p.append(f"plugin in errore: {str(e.get('id') if isinstance(e, dict) else e)[:60]}")
+    if PLUGIN not in (plug.get("loaded") or []):
+        p.append("plugin whatsapp non caricato")
+    chans = (oc_json(["channels", "status", "--json"], 90) or {}).get("channels") or {}
+    for name, c in chans.items():
+        if not c.get("configured"):
+            continue
+        if not c.get("running"):
+            p.append(f"{name} fermo")
+        elif c.get("connected") is False:
+            p.append(f"{name} non connesso")
+    wa = chans.get("whatsapp")
+    if not wa:
+        p.append("whatsapp assente dai canali")
+    elif wa.get("healthState") != "healthy" or not wa.get("linked"):
+        p.append(f"whatsapp {wa.get('healthState') or 'non healthy'}")
+    return p
+
+
+def doctor_fails():
+    _, out, _ = run(["agents-doctor", "--fast"], 180)
+    return sorted(x for x in out.splitlines() if x.startswith("FAIL"))
+
+
+# ---------------------------------------------------------------- OpenClaw: azioni
+
+def kickstart():
+    """Riavvio del gateway via launchd (mai bootout). None = tornato su."""
+    old = gateway_pid()
+    rc, _, err = run(["launchctl", "kickstart", "-k", f"gui/{os.getuid()}/{LABEL}"], 60)
+    if rc:
+        return f"kickstart: {tail(err)}"
+    end = time.time() + KICK_S
+    while time.time() < end:
+        time.sleep(min(POLL_S, 5))
+        pid = gateway_pid()
+        if pid and pid != old and gateway_up():
+            log(f"gateway riavviato (pid {old} -> {pid})")
+            return None
+    return f"il gateway non e' tornato su entro {KICK_S:g} s dal kickstart"
+
+
+def behind(app, cli):
+    """True se la versione dell'app e' piu' vecchia di quella della CLI (il suffisso -N non conta), False se uguale o avanti."""
+    return vtuple(base(app)) < vtuple(base(cli))
+
+
+def app_version():
+    try:
+        with open(APP / "Contents/Info.plist", "rb") as f:
+            return plistlib.load(f).get("CFBundleShortVersionString")
+    except (OSError, ValueError, plistlib.InvalidFileException):
+        return None  # anche a meta' della sostituzione del bundle da parte di Sparkle
+
+
+def app_running():
+    exe = str(APP / "Contents/MacOS/OpenClaw")
+    _, out, _ = run(["ps", "-axo", "command="], 30)
+    return any(c == exe or c.startswith(exe + " ") for c in (line.strip() for line in out.splitlines()))
+
+
+def app_plan(cli):
+    """La voce del piano di --dry-run per l'app del Mac: cosa farebbe align_app, senza toccare niente."""
+    app = app_version()
+    if not app:
+        return "app del Mac non installata: niente"
+    if not behind(app, cli):
+        return f"app del Mac {app} " + ("come" if base(app) == base(cli) else "piu' nuova della") + f" CLI {cli}: niente"
+    if not app_running():
+        return f"app del Mac {app} ≠ CLI {cli}, ma chiusa: niente (Sparkle la aggiorna quando si apre)"
+    return (f"app del Mac {app} ≠ CLI {cli}: quit e open -ga, solo a Mac fermo e OpenClaw fermo; se Sparkle non"
+            " installa, prima chiude i suoi aiutanti rimasti col binario sparito")
+
+
+def sparkle_leftovers():
+    """Gli aiutanti di Sparkle di questa app rimasti da un update che non si installera' piu': l'Updater gira da un
+    binario che non c'e' piu' (25/10: vivo dal 6/10, la sua cartella in ~/Library/Caches/ai.openclaw.mac finita nel
+    Cestino), e l'Autoupdate dell'app si chiude con lui. Solo quelli di APP: l'Updater di ChatGPT e' identico.
+    {pid: (avvio, comando)}, vuoto se nessun Updater e' orfano del suo binario."""
+    updater = re.compile(r"(/.*?/" + re.escape(APP_ID) + r"/org\.sparkle-project\.Sparkle/.*?/Updater\.app/Contents"
+                         r"/MacOS/Updater) " + re.escape(str(APP)) + r"(?: |$)")
+    installer = re.compile(re.escape(str(APP / "Contents/Frameworks/Sparkle.framework")) + r"/.*/Autoupdate "
+                           + re.escape(APP_ID) + r"(?: |$)")
+    stale, installers = {}, {}
+    for pid, (_, ident) in process_table().items():
+        m = updater.match(ident[1])
+        if m and not os.path.exists(m.group(1)):
+            stale[pid] = ident
+        elif installer.match(ident[1]):
+            installers[pid] = ident
+    return {**stale, **installers} if stale else {}
+
+
+def align_app(cli):
+    """L'app del Mac alla versione della CLI. Resta alla sua finche' qualcuno non la chiude, perche' Sparkle installa
+    solo alla chiusura (25/10: app 2026.9.5 con CLI 2026.10.5, WebContent a 528 MB, l'Autoupdate in attesa dal 6/10).
+    Gira dopo un update riuscito e nelle notti senza update. Quit e open -ga solo a Mac fermo e a OpenClaw fermo (l'app
+    da' approvazioni e controllo del Mac ai turni); un'app chiusa da Attilio resta chiusa. Ritorna la riga per il log,
+    None se l'app e' gia' allineata o non c'e'."""
+    app = app_version()
+    if not app or not behind(app, cli):
+        return None  # allineata, o piu' nuova della CLI (un'app avanti non si riavvia: non c'e' niente da installare)
+    if not app_running():
+        return f"app OpenClaw {app} indietro sulla CLI {cli}, ma chiusa: Sparkle la aggiorna quando si apre"
+    busy = wait_idle(APP_IDLE_MIN)
+    if busy:
+        return f"app OpenClaw {app} indietro sulla CLI {cli}: OpenClaw al lavoro ({', '.join(busy)}), non la riavvio"
+    if run([MAC_LIBERO], 10)[0] != 0:
+        return f"app OpenClaw {app} indietro sulla CLI {cli}: Mac in uso, non la riavvio"
+    rc, _, err = run([OSASCRIPT, "-e", f'tell application id "{APP_ID}" to quit'], 30)
+    # exit e stderr di osascript nel log: un -1743 (TCC nega gli Apple Event a launchd) sembrerebbe un'app lenta
+    why = f" (osascript exit {rc}: {tail(err) or 'nessun messaggio'})" if rc else ""
+    end = time.time() + APP_WAIT_S
+    while app_running() and time.time() < end:
+        time.sleep(1)
+    if app_running():
+        return f"app OpenClaw {app}: non si chiude entro {APP_WAIT_S:g} s, resta com'era{why}"
+    # Sparkle sostituisce il bundle dopo la chiusura: si riapre quando la versione cambia, o allo scadere
+    end = time.time() + APP_WAIT_S
+    while app_version() in (app, None) and time.time() < end:
+        time.sleep(2)
+    now, cleaned = app_version(), ""
+    if now == app:
+        # un installer vivo da un update perso tiene occupato il posto: alla riapertura Sparkle non ne parte uno nuovo
+        left = sparkle_leftovers()
+        if left:
+            term_then_kill(left, "aiutante di Sparkle rimasto da un update perso")
+            cleaned = (f"; chiusi gli aiutanti di Sparkle rimasti {', '.join(map(str, sorted(left)))} (binario sparito):"
+                       " Sparkle riscarica e installa alla prossima chiusura")
+    rc = run([OPEN, "-ga", str(APP)], 30)[0]
+    if now == app:
+        return f"app OpenClaw riavviata ma ancora {app}: Sparkle non ha installato niente (open exit {rc}){cleaned}{why}"
+    return f"app OpenClaw {app} -> {now}, riaperta in background (open exit {rc}){why}"
+
+
+def pick_plugin_version(pkg, core):
+    """(versione, nota): quella del core se pubblicata, se no la piu' alta compatibile."""
+    vs = parse_json(run(["npm", "view", pkg, "versions", "--json"], 90)[1]) or []
+    vs = [vs] if isinstance(vs, str) else vs
+    for want in dict.fromkeys((core, base(core))):
+        if want in vs:
+            return want, None
+    for v in sorted((v for v in vs if re.fullmatch(VER_RE, v) and vtuple(v) <= vtuple(core)), key=vtuple, reverse=True):
+        need = parse_json(run(["npm", "view", f"{pkg}@{v}", "openclaw.compat.pluginApi", "--json"], 90)[1])
+        m = re.search(VER_RE, str(need or ""))
+        if not m or vtuple(m.group(0)) <= vtuple(core):
+            return v, f"{pkg}@{core} non pubblicato, uso {v}"
+    return None, f"nessuna versione di {pkg} compatibile con {core}"
+
+
+def ensure_auto_off(notes):
+    # un update puo' riscrivere la config: l'auto-update interno deve restare spento
+    _, out, _ = oc(["config", "get", "update.auto.enabled"], 60)
+    if out.strip() == "true":
+        rc, _, err = oc(["config", "set", "update.auto.enabled", "false"], 60)
+        notes.append("auto-update interno rispento" if rc == 0 else f"auto-update: config set fallito ({tail(err)})")
+
+
+def converge(core, idle_minutes):
+    """Plugin fissati e patch MCP a posto per `core`, con un solo riavvio e solo a OpenClaw fermo.
+    Ritorna (problemi, note, rimandato). rimandato = serviva un riavvio ma OpenClaw non si e' mai
+    fermato: niente riavvio, plugin e patch restano come sono e li sistema il giro dopo."""
+    notes = []
+    ensure_auto_off(notes)
+    plugins = plugin_list()
+    if PLUGIN not in plugins:
+        return ["plugin whatsapp non trovato"], notes, False
+    installs = {}
+    for pid, pkg in misaligned(plugins, core).items():
+        v, note = pick_plugin_version(pkg, core)
+        if note:
+            notes.append(note)
+        if not v:
+            return [note], notes, False
+        installs[pid] = f"{pkg}@{v}"
+    patch = None
+    if mcp_lazy("check")[0]:
+        if mcp_lazy("upstream")[0] == 0:
+            # fix ufficiale nel codice: niente patch su dist, basta l'opt-in (si ricarica a caldo)
+            rc, _, err = oc(["config", "set", "tools.toolSearch", "true"], 60)
+            notes.append("fix MCP upstream: tools.toolSearch acceso" if rc == 0 else f"tools.toolSearch: {tail(err)}")
+        else:
+            patch = "apply"
+    announce = announce_fix("check")[0] != 0
+    durable = durable_view("check")[0] != 0
+    outlimit = cli_output_limit("check")[0] != 0
+    botmention = bot_mention("check")[0] != 0
+    annsilent = announce_silent("check")[0] != 0
+    # un plugin reinstallato perde la patch: dopo l'install va riapplicata comunque
+    wacatchup = bool(installs) or wa_catchup("check")[0] != 0
+    hbsub = hb_subagents("check")[0] != 0
+    sessset = session_settings("check")[0] != 0
+    pinned = pinned_fallback("check")[0] != 0
+    descexp = descendant_expiry("check")[0] != 0
+    cronddl = cron_receipt_ddl("check")[0] != 0
+    cronhist = cron_history_names("check")[0] != 0
+    if not (installs or patch or announce or durable or outlimit or botmention or annsilent or wacatchup or hbsub or sessset or pinned or descexp or cronddl or cronhist):
+        return [], notes, False
+    busy = wait_idle(idle_minutes, down_ok=True)
+    if busy:
+        why = f"OpenClaw mai fermo in {idle_minutes:g} min ({', '.join(busy)})"
+        log(f"niente riavvio: {why}; plugin e patch MCP li sistema il giro dopo")
+        return [], notes + [f"plugin/patch MCP rimandati: {why}"], True
+    problems = []
+    for spec in installs.values():
+        log(f"plugin: openclaw plugins install {spec} --force --pin")
+        rc, out, err = oc(["plugins", "install", spec, "--force", "--pin"], 300)
+        # l'install a caldo puo' lasciare i canali fermi anche quando esce 1 (30/09 09:44):
+        # il kickstart qui sotto parte comunque, subito
+        if rc:
+            problems.append(f"plugins install {spec}: exit {rc} {tail(err or out)}")
+    if patch:
+        rc, msg = mcp_lazy("apply")
+        if rc:
+            problems.append(f"patch MCP: {msg}")
+    if announce:
+        rc, msg = announce_fix("apply")
+        notes.append(f"patch annunci non applicata: {msg}" if rc else "patch annunci applicata")
+    if durable:
+        rc, msg = durable_view("apply")
+        notes.append(f"patch finali WhatsApp non applicata: {msg}" if rc else "patch finali WhatsApp applicata")
+    if outlimit:
+        rc, msg = cli_output_limit("apply")
+        notes.append(f"patch tetti sottoagenti non applicata: {msg}" if rc else "patch tetti sottoagenti applicata")
+    if botmention:
+        rc, msg = bot_mention("apply")
+        notes.append(f"patch tag tra bot non applicata: {msg}" if rc else "patch tag tra bot applicata")
+    if annsilent:
+        rc, msg = announce_silent("apply")
+        notes.append(f"patch silenzio consegne non applicata: {msg}" if rc else "patch silenzio consegne applicata")
+    if hbsub:
+        rc, msg = hb_subagents("apply")
+        notes.append(f"patch battito non applicata: {msg}" if rc else "patch battito applicata")
+    if sessset:
+        rc, msg = session_settings("apply")
+        notes.append(f"patch sessione non pronta non applicata: {msg}" if rc else "patch sessione non pronta applicata")
+    if pinned:
+        rc, msg = pinned_fallback("apply")
+        notes.append(f"patch ripiego silenzioso non applicata: {msg}" if rc else "patch ripiego silenzioso applicata")
+    if descexp:
+        rc, msg = descendant_expiry("apply")
+        notes.append(f"patch consegne scadute non applicata: {msg}" if rc else "patch consegne scadute applicata")
+    if cronddl:
+        rc, msg = cron_receipt_ddl("apply")
+        notes.append(f"patch exec integrity admission non applicata: {msg}" if rc else "patch exec integrity admission applicata")
+    if cronhist:
+        rc, msg = cron_history_names("apply")
+        notes.append(f"patch storia con cron non applicata: {msg}" if rc else "patch storia con cron applicata")
+    if wacatchup:
+        rc, msg = wa_catchup("apply")
+        notes.append(f"patch coda WhatsApp non applicata: {msg}" if rc else "patch coda WhatsApp applicata")
+    err = kickstart()
+    if err:
+        problems.append(err)
+    after = plugin_list()
+    for pid, spec in installs.items():
+        got, want = (after.get(pid) or {}).get("version"), spec.rsplit("@", 1)[1]
+        if got != want:
+            problems.append(f"plugin {pid} {got}, atteso {want}")
+    if installs and not problems:
+        notes.append("plugin -> " + ", ".join(f"{k} {v.rsplit('@', 1)[1]}" for k, v in installs.items()))
+    return problems, notes, False
+
+
+def heartbeat_job():
+    d = oc_json(["cron", "list", "--all", "--json"], 90) or {}
+    return next((j for j in d.get("jobs") or [] if j.get("name") == HEARTBEAT), None)
+
+
+def heartbeat_last():
+    """Com'e' finito l'ultimo heartbeat prima dell'update: [stato, errore], o None se non si sa."""
+    st = (heartbeat_job() or {}).get("state") or {}
+    return [st["lastRunStatus"], str(st.get("lastError") or "")] if st.get("lastRunStatus") else None
+
+
+def heartbeat(before=None):
+    """Un heartbeat vero: modello, tool MCP (con la patch), sessioni. None = andato.
+    before: heartbeat_last() della fotografia; un esito uguale a quello di prima non e' dell'update."""
+    job = heartbeat_job()
+    if not job:
+        return f"cron {HEARTBEAT} non trovato"
+    rc, out, err = oc(["cron", "run", job["id"]], 120)
+    d = parse_json(out) or {}
+    if d.get("reason") == "already-running":
+        # 15/10: battito appeso da prima (Muse a quota zero, bug #144400): non dice niente sulla
+        # versione nuova. Bocciarla qui ha mandato in rollback una 10.3 sana.
+        log("heartbeat: gia' in corso da prima del riavvio (#144400): non conta, giro vero non verificato")
+        return None
+    run_id = d.get("runId") if re.fullmatch(HB_RUN_RE, d.get("runId") or "") else None
+    if not run_id:
+        m = re.search(HB_RUN_RE, f"{out or ''}\n{err or ''}")
+        run_id = m.group(0) if m else None
+    if not run_id:
+        return f"heartbeat: nessun run avviato (exit {rc} {tail(err or out)})"
+    e = {}
+    end = time.time() + HB_BUDGET_S
+    while time.time() < end:
+        e = ((oc_json(["cron", "runs", job["id"], "--run-id", run_id, "--limit", "1", "--json"], 90) or {})
+             .get("entries") or [{}])[0]
+        if e.get("status") in ("ok", "error", "skipped"):
+            break
+        time.sleep(min(POLL_S, 30))
+    if e.get("status") not in ("ok", "error", "skipped"):
+        return f"heartbeat: run {run_id} non finito in {HB_BUDGET_S / 60:.0f} min"
+    error = str(e.get("error") or "")
+    if e.get("status") != "ok" and KNOWN_DELIVERY_BUG in error:
+        # bug openclaw#153453 (~1 heartbeat su 4 il 30/09, anche su 2026.9.5): il turno e' girato,
+        # e' fallita solo la consegna. Non dice niente sulla versione nuova: bocciarla qui la
+        # riporterebbe indietro per un difetto che ha anche la vecchia.
+        log("heartbeat: turno eseguito, consegna fallita per il bug noto #153453: non conta")
+        return None
+    if e.get("status") != "ok" and [e.get("status"), error] == before:
+        # 08/10: «skipped: alerts-disabled» da prima dell'update (heartbeatVisibility tutta spenta
+        # dal 03/10, l'heartbeat non parte nemmeno). Bocciare la 9.8 per questo era un falso allarme.
+        log(f"heartbeat: {e.get('status')} come prima dell'update ({error[:80]}): non conta, "
+            "ma il giro vero non e' verificato")
+        return None
+    if e.get("status") != "ok":
+        return f"heartbeat: {e.get('status')} {error[:120]}"
+    return None
+
+
+def health_gate(expected, rec, deferred=False):
+    """Problemi NUOVI rispetto alla fotografia di prima: uno gia' rotto non e' colpa dell'update.
+    deferred: la patch MCP e' rimandata al giro dopo, quindi la sua assenza e' attesa."""
+    before = set(rec.get("problems") or [])
+    end = time.time() + SETTLE_S
+    while True:
+        problems = [x for x in live_problems(expected) if x not in before]
+        if not problems or time.time() >= end:
+            break
+        time.sleep(min(POLL_S, 10))
+    if problems:
+        return problems
+    if not deferred:
+        rc, msg = mcp_lazy("check")
+        if rc:
+            problems.append(f"patch MCP: {msg}")
+    hb = heartbeat(rec.get("heartbeat"))
+    if hb:
+        problems.append(hb)
+    new = sorted(set(doctor_fails()) - set(rec.get("doctor") or []))
+    if deferred:
+        new = [x for x in new if MCP_DOCTOR not in x]
+    new = [x for x in new if ANNOUNCE_DOCTOR not in x]  # mai un rollback per lei: vedi ANNOUNCE_FIX
+    new = [x for x in new if APP_DOCTOR not in x]  # ne' per l'app del Mac: vedi APP
+    if new:
+        problems.append("agents-doctor: " + "; ".join(new)[:240])
+    return problems
+
+
+def process_table():
+    """{pid: (ppid, (avvio, comando))}: l'avvio distingue un pid riusato da quello visto prima."""
+    _, out, _ = run(["ps", "-A", "-o", "pid=,ppid=,lstart=,command="], 30)
+    table = {}
+    for ln in out.splitlines():
+        f = ln.split(None, 7)  # pid, ppid, lstart (5 campi), comando
+        if len(f) == 8 and f[0].isdigit() and f[1].isdigit():
+            table[int(f[0])] = (int(f[1]), (" ".join(f[2:7]), f[7]))
+    return table
+
+
+def descendants(pid):
+    table, found, todo = process_table(), {}, [pid]
+    while todo:
+        parent = todo.pop()
+        for child, (ppid, ident) in table.items():
+            if ppid == parent and child not in found:
+                found[child] = ident
+                todo.append(child)
+    return found
+
+
+def kill_orphans(children):
+    """Termina i figli dell'update interrotto che gli sono sopravvissuti (il 01/10 un
+    update-candidate-state.worker.js era ancora vivo dopo il SIGINT). Solo i pid visti come suoi
+    figli, con lo stesso avvio: il run che li possedeva e' morto."""
+    end = time.time() + min(POLL_S, 10)  # tempo per uscire da soli
+    while True:
+        table = process_table()
+        alive = {p: i for p, i in children.items() if (table.get(p) or (0, None))[1] == i}
+        if not alive or time.time() >= end:
+            break
+        time.sleep(min(POLL_S, 1))
+    term_then_kill(alive, "figlio dell'update interrotto ancora vivo")
+
+
+def term_then_kill(alive, what):
+    """TERM, 5 s per uscire, poi KILL; {pid: (avvio, comando)}, cosi' un pid riusato nel frattempo non si tocca."""
+    for sig in (signal.SIGTERM, signal.SIGKILL):
+        for p, ident in alive.items():
+            log(f"{what}, {sig.name}: pid {p} {ident[1][:120]}")
+            try:
+                os.kill(p, sig)
+            except OSError:
+                pass
+        end = time.time() + 5
+        while alive and time.time() < end:
+            time.sleep(0.2)
+            table = process_table()
+            alive = {p: i for p, i in alive.items() if (table.get(p) or (0, None))[1] == i}
+        if not alive:
+            return
+
+
+def reconcile_ledger():
+    """Chiude nello storico di OpenClaw un run rimasto `running` col driver morto: un SIGINT arrivato
+    prima che l'update installi il suo gestore (01/10 00:18, 32 s dopo l'avvio) lo lascia li', e un
+    run attivo blocca il prossimo update e le scritture di config finche' qualcuno non lo chiude.
+    Si usa `openclaw update repair` (docs cli/update/repair-and-recovery.md), solo su un run prima
+    dell'attivazione: col gateway sano e il driver morto chiude la riga come `failed/abandoned`
+    senza Doctor ne' riavvii; un driver vivo lo rifiuta. In ogni altro caso repair ripiega sulla
+    finalizzazione completa, che ferma il gateway per il Doctor: OPENCLAW_SERVICE_REPAIR_POLICY=
+    external la fa fallire invece di fermarlo (doctor-maintenance salta lo stop del servizio).
+    Ritorna True se nessun run resta attivo."""
+    st = oc_json(["update", "status", "--json"], 60) or {}
+    a = st.get("activeRun")
+    if not a:
+        return True
+    rid = str(a.get("runId") or "?")[:8]
+    if a.get("phase") not in PRE_ACTIVATION:
+        log(f"run {rid} ancora attivo in fase {a.get('phase')}: non lo tocco")
+        return False
+    env = dict(os.environ, OPENCLAW_SERVICE_REPAIR_POLICY="external")
+    rc, out, err = run(["openclaw", "update", "repair", "--yes", "--json"], 300, env)
+    d = parse_json(out)
+    d = d if isinstance(d, dict) else {}
+    if rc == 0 and not (oc_json(["update", "status", "--json"], 60) or {}).get("activeRun"):
+        log(f"storico update: run {rid} chiuso con update repair: {tail(d.get('message') or out)}")
+        return True
+    log(f"storico update: run {rid} resta attivo, update repair exit {rc}: {tail(err or out)}")
+    return False
+
+
+def clean_update_stages(root, since):
+    """Le cartelle .openclaw.update-stage-* che l'update interrotto lascia accanto al pacchetto
+    (~730 MB l'una, due il 01/10: OpenClaw non le riprende mai). Solo quelle nate durante questo
+    update, e solo dopo che nessun run e' piu' attivo e i suoi figli sono morti."""
+    if not root:
+        return
+    for p in sorted(Path(root).parent.glob(".openclaw.update-stage-*")):
+        try:
+            st = os.lstat(p)
+            if not stat.S_ISDIR(st.st_mode) or st.st_mtime < since:
+                continue
+            size = tree_bytes(p)
+            shutil.rmtree(p)
+            log(f"cancellata {p.name} lasciata dall'update interrotto ({size / 1e6:.0f} MB)")
+        except OSError as e:
+            log(f"{p.name}: non cancellata ({e.strerror or e})")
+
+
+CAPTURES = Path(str(OC_HOME) + ".update-captures")
+CAPTURE_FRESH_S = 3600       # una copia piu' giovane di un'ora puo' essere di un update in corso
+ORIGINALS_MIN_BYTES = 50e6   # sotto questa soglia i vecchi originali non valgono un riavvio del gateway
+
+
+def clean_update_captures(dry):
+    """Cancella le copie di ripristino che ogni tentativo di update lascia in ~/.openclaw.update-captures
+    (~500 MB l'una, 13 per 6,2 GB il 25/10). `openclaw update cleanup` NON le tocca (ritira solo i vecchi
+    originali di migrazione) e la documentazione dice che quelle copie non scadono mai da sole.
+    Restano: la copia dell'ultimo update riuscito, quella dell'ultimo tentativo (e' lo stato prima di
+    un guasto fresco), le copie senza riga nello storico, quelle di un run non finito e quelle giovani.
+    Senza un update riuscito nello storico non si cancella nulla."""
+    if not CAPTURES.is_dir():
+        return
+    try:
+        con = sqlite3.connect(f"file:{OC_HOME / 'state/openclaw.sqlite'}?mode=ro", uri=True, timeout=5)
+        try:
+            runs = con.execute("SELECT run_id, status, reason, created_at_ms FROM update_runs").fetchall()
+        finally:
+            con.close()
+    except sqlite3.Error as e:
+        log(f"copie di ripristino: storico update illeggibile ({e}), non cancello niente")
+        return
+    ok = [r[3] for r in runs if r[1] == "succeeded"]
+    if not ok:
+        return
+    present = {d.name for d in CAPTURES.iterdir()}
+    newest = max((r for r in runs if r[0] in present), key=lambda r: r[3], default=None)
+    keep = {r[0] for r in runs if r[1] == "running" or r[3] == max(ok)} | ({newest[0]} if newest else set())
+    known = {r[0] for r in runs}
+    freed = n = 0
+    for d in sorted(CAPTURES.iterdir()):
+        try:
+            if not d.is_dir() or d.is_symlink() or d.name in keep or d.name not in known:
+                continue
+            if time.time() - os.lstat(d).st_mtime < CAPTURE_FRESH_S:
+                continue
+            size = tree_bytes(d)
+            if not dry:
+                shutil.rmtree(d)
+            freed += size
+            n += 1
+        except OSError as e:
+            log(f"copia di ripristino {d.name[:8]}: non cancellata ({e.strerror or e})")
+    if n:
+        log(f"copie di ripristino: {n} " + ("da cancellare" if dry else "cancellate") + f" ({freed / 1e9:.1f} GB); "
+            f"resta quella dell'ultimo update riuscito")
+
+
+def retire_originals(dry):
+    """Ritira i vecchi originali di migrazione col comando nativo `openclaw update cleanup`. Vuole il
+    gateway fermo (tiene il possesso dello stato: «blocked» a gateway acceso, provato il 26/10), quindi
+    stop/start di servizio, solo se la anteprima dice che vale e nessuna persona sta scrivendo."""
+    rc, out, err = run(["openclaw", "update", "cleanup", "--dry-run", "--json"], 120)
+    d = parse_json(out)
+    cand = ((d or {}).get("totals") or {}).get("candidateBytes") if isinstance(d, dict) else None
+    if not cand:
+        return
+    log(f"originali di migrazione ritirabili: {cand / 1e6:.0f} MB" + (" (dry-run: non li tocco)" if dry else ""))
+    if dry or cand < ORIGINALS_MIN_BYTES:
+        return
+    busy = busy_reasons()
+    if busy:
+        log("originali di migrazione: gateway non lo fermo adesso (" + ", ".join(busy) + "), riprovo la notte prossima")
+        return
+    run(["openclaw", "gateway", "stop", "--force"], 120)  # --force: da launchd non c'e' un terminale interattivo
+    end = time.time() + 30
+    while time.time() < end and gateway_up():
+        time.sleep(1)
+    try:
+        rc, out, err = run(["openclaw", "update", "cleanup", "--yes", "--json"], 600)
+        d = parse_json(out)
+        t = (d or {}).get("totals") or {} if isinstance(d, dict) else {}
+        log(f"originali di migrazione: exit {rc}, ritirati {(t.get('removedBytes') or 0) / 1e6:.0f} MB"
+            + (f" ({tail(err)})" if rc else ""))
+    finally:
+        run(["openclaw", "gateway", "start"], 120)
+        end = time.time() + KICK_S
+        while time.time() < end and not gateway_up():
+            time.sleep(min(POLL_S, 5))
+        if not gateway_up():
+            log("gateway non tornato su dopo il cleanup: " + (kickstart() or "riavviato con kickstart"))
+
+
+def after_interrupt(children, started):
+    """Dopo il SIGINT: niente figli orfani, niente run appeso nello storico, niente stage. Gli stage si
+    cancellano comunque: il SIGINT arriva solo prima dell'attivazione e i figli sono gia' morti."""
+    kill_orphans(children)
+    reconcile_ledger()  # l'esito non decide piu': con repair che resta in sospeso (24/10) gli stage restavano li'
+    root = ((oc_json(["update", "status", "--json"], 60) or {}).get("update") or {}).get("root")
+    clean_update_stages(root, started - 5)
+
+
+NO_INTERRUPT = False
+
+
+# Il rollback e' un downgrade voluto: dalla 2026.10.8 OpenClaw lo rifiuta («runtime-verification-failed:
+# Set OPENCLAW_ALLOW_OLDER_BINARY_DESTRUCTIVE_ACTIONS=1 only for an intentional downgrade or recovery
+# action») e il 28/10 ha lasciato la 10.8 installata. Va passata solo al processo del rollback, mai
+# nell'ambiente del servizio (che comunque la scarta).
+ALLOW_OLDER = "OPENCLAW_ALLOW_OLDER_BINARY_DESTRUCTIVE_ACTIONS"
+
+
+def run_update(target, down_ok=False, downgrade=False):
+    """`openclaw update` verso target. Ritorna (exit, record del run, stderr, interrotto).
+    interrotto = perche' OpenClaw si e' svegliato durante la validazione e l'update e' stato fermato
+    con SIGINT prima dell'attivazione (docs cli/update/how-updates-run.md: run `failed/interrupted`,
+    gateway vecchio intatto). La fase si rilegge per ultima, subito prima del segnale: dopo
+    `activating` il gateway e' gia' fermo e interrompere lascerebbe un'installazione a meta'."""
+    log(f"openclaw update --yes --json --tag {target}")
+    cmd = ["openclaw", "update", "--yes", "--json", "--tag", target, "--timeout", "1800"]
+    started = time.time()
+    with tempfile.TemporaryFile("w+") as out, tempfile.TemporaryFile("w+") as errf:
+        env = {**os.environ, ALLOW_OLDER: "1"} if downgrade else None
+        p = subprocess.Popen(cmd, stdout=out, stderr=errf, stdin=subprocess.DEVNULL, text=True, env=env)
+        busy, end, children = [], time.time() + 3 * 3600, {}
+        while p.poll() is None:
+            if time.time() > end:
+                p.kill()
+                break
+            time.sleep(WATCH_S)
+            if busy or p.poll() is not None:
+                continue
+            why = [] if NO_INTERRUPT else busy_reasons(down_ok)
+            if why and update_phase() in PRE_ACTIVATION:
+                busy = why
+                log("OpenClaw si e' messo a lavorare durante la validazione (" + ", ".join(why)
+                    + "): interrompo l'update prima dell'attivazione")
+                # i figli dell'update partono detached (update-execution.runtime: setsid): chi sono
+                # si vede solo adesso, finche' sono ancora figli suoi
+                children = descendants(p.pid)
+                p.send_signal(signal.SIGINT)
+        rc = p.wait()
+        if busy:
+            after_interrupt(children, started)
+        out.seek(0)
+        errf.seek(0)
+        stdout, stderr = out.read(), errf.read()
+    res = parse_json(stdout) or {}
+    if rc == 75:
+        # consegnato a un helper gestito: l'esito vero arriva nello storico
+        end = time.time() + 3600
+        while time.time() < end and (oc_json(["update", "status", "--json"], 60) or {}).get("activeRun"):
+            time.sleep(POLL_S)
+    rec = res.get("run") if isinstance(res.get("run"), dict) else None
+    if rec is None or rc == 75:
+        rec = (oc_json(["update", "status", "--json"], 60) or {}).get("lastRun") or {}
+    log(f"update: exit {rc}, stato {rec.get('status')} {rec.get('reason') or ''}".rstrip())
+    return rc, rec, stderr, busy
+
+
+def run_reason(rec, err=""):
+    parts = [rec.get("reason")] if rec.get("reason") else []
+    for s in rec.get("steps") or []:
+        for f in s.get("failureFacts") or []:
+            parts.append((f.get("message") or "").splitlines()[0] if f.get("message") else "")
+    if len(parts) < 2 and tail(err):
+        parts.append(tail(err))
+    return ": ".join(dict.fromkeys(x for x in parts if x))[:200] or "motivo non riportato"
+
+
+def record(cur, root):
+    dist = Path(root or "") / "dist"
+    files = sorted(glob.glob(str(dist / "mcp-http.loopback-runtime-*.mjs")) + glob.glob(str(dist / "mcp-http.schema-*.mjs")))
+    plugins = plugin_list()
+    return {
+        "ts": datetime.datetime.now().strftime("%Y%m%d-%H%M%S"),
+        "version": cur,
+        "root": root,
+        "config_sha256": sha(CONFIG) if CONFIG.exists() else None,
+        "dist_sha256": {Path(f).name: sha(f) for f in files},
+        "plugins": {k: {"version": p.get("version"), "spec": (p.get("trust") or {}).get("installSpec")}
+                    for k, p in plugins.items() if p.get("origin") == "global"},
+        "doctor": doctor_fails(),
+        "problems": live_problems(cur),
+        "heartbeat": heartbeat_last(),
+    }
+
+
+def backup(rec):
+    """Database SQLite (quelli che una migrazione cambia) + openclaw.json. None = fatto."""
+    d = BACKUPS / rec["ts"]
+    d.mkdir(parents=True, exist_ok=True)
+    os.chmod(BACKUPS, 0o700)
+    agents = sorted(Path(p).parent.parent.name for p in glob.glob(str(OC_HOME / "agents/*/agent/openclaw-agent.sqlite")))
+    for args in [["--global"]] + [["--agent", a] for a in agents]:
+        rc, out, err = oc(["backup", "sqlite", "create", *args, "--repository", str(d), "--json"], 900)
+        if rc:
+            return f"backup sqlite {' '.join(args)}: {tail(err or out)}"
+    if CONFIG.exists():
+        shutil.copy2(CONFIG, d / "openclaw.json")
+        os.chmod(d / "openclaw.json", 0o600)
+    (d / "record.json").write_text(json.dumps(rec, indent=1, ensure_ascii=False))
+    for old in sorted(x for x in BACKUPS.iterdir() if x.is_dir())[:-KEEP_BACKUPS]:
+        run(["trash", str(old)], 120)
+    log(f"backup: {d} ({', '.join(['global'] + agents)} + openclaw.json)")
+    return None
+
+
+def notify(text):
+    job = oc_json(["cron", "get", BRIEF_CRON], 60) or {}
+    d = job.get("delivery") or {}
+    if not (d.get("channel") and d.get("to")):
+        log(f"notifica NON inviata (destinatario non leggibile dal cron {BRIEF_CRON[:8]}): {text}")
+        return
+    rc, out, err = oc(["message", "send", "--channel", d["channel"], "--target", d["to"], "-m", text, "--json"], 120)
+    log(f"notifica {'inviata' if rc == 0 else 'NON inviata (' + tail(err or out) + ')'}: {text}")
+
+
+# ---------------------------------------------------------------- pulizia di tmp
+
+def tree_bytes(path):
+    # come du: blocchi occupati, senza mai seguire i link (os.walk non li segue di default)
+    total = 0
+    for root, dirs, files in os.walk(path):
+        for n in dirs + files:
+            try:
+                total += os.lstat(os.path.join(root, n)).st_blocks * 512
+            except OSError:
+                pass
+    return total
+
+
+def build_refs():
+    """Testo in cui un plugin installato nominerebbe la sua cartella sorgente: plugins list,
+    openclaw.json, npm/projects/*/package.json. None = plugin non leggibili: non si cancella niente."""
+    rc, out, _ = oc(["plugins", "list", "--json"], 180)
+    if rc or not isinstance(parse_json(out), dict):
+        return None
+    texts = [out]
+    for f in [CONFIG, *glob.glob(str(OC_HOME / "npm/projects/*/package.json"))]:
+        try:
+            texts.append(Path(f).read_text(errors="replace"))
+        except OSError:
+            pass
+    return "\n".join(texts)
+
+
+def open_under(dirs):
+    """(aperte, ignote): le cartelle sotto cui un processo ha un file aperto (o la cwd), e quelle
+    di un lotto su cui lsof non ha dato una risposta leggibile. Le une e le altre si tengono."""
+    used, unknown = set(), set()
+    for i in range(0, len(dirs), LSOF_BATCH):
+        batch = dirs[i:i + LSOF_BATCH]
+        args = [x for d in batch for x in ("+D", str(d))]  # +D non segue i link simbolici
+        rc, out, err = run(["lsof", "-w", "-F", "n", *args], 60)
+        # lsof 4.91 esce 1 sia con file trovati, sia senza, sia per errore (es. un +D sparito nel
+        # frattempo: stampa l'usage e rifiuta tutto il lotto). Con -w l'unico segno d'errore e'
+        # stderr: se non e' vuoto, o l'rc e' altro (timeout 124, lsof assente 127), il lotto e' ignoto.
+        if rc not in (0, 1) or err.strip():
+            unknown.update(batch)
+            continue
+        names = [ln[1:] for ln in out.splitlines() if ln.startswith("n")]
+        for d in batch:
+            roots = {str(d), os.path.realpath(d)}
+            if any(n == r or n.startswith(r + "/") for n in names for r in roots):
+                used.add(d)
+    return used, unknown
+
+
+def clean_build_tmp(dry):
+    """Cancella le cartelle openclaw-plugin-build-* di ~/.openclaw/tmp piu' vecchie di 6 ore, solo
+    se nessun plugin le nomina e nessun processo ci ha file aperti. Mai un link, mai altro in tmp."""
+    now, kept, old = time.time(), {}, []
+    for p in sorted(BUILD_TMP.glob(BUILD_GLOB)):
+        try:
+            st = os.lstat(p)
+        except OSError:
+            continue
+        if not stat.S_ISDIR(st.st_mode):  # un link simbolico non e' una cartella: non si segue
+            kept.setdefault("non cartelle", []).append(p)
+        elif now - st.st_mtime < BUILD_MIN_AGE_S:
+            kept.setdefault("recenti", []).append(p)
+        else:
+            old.append(p)
+    if not (old or kept):
+        return
+    gone = []
+    if old:
+        refs = build_refs()
+        if refs is None:
+            log(f"pulizia tmp: plugins list non risponde, non cancello le {len(old)} cartelle di build vecchie")
+            return
+        for p in old:
+            if p.name in refs:
+                kept.setdefault("nominate da un plugin", []).append(p)
+        old = [p for p in old if p.name not in refs]
+        used, unknown = open_under(old)
+        kept.setdefault("con file aperti", []).extend(p for p in old if p in used)
+        kept.setdefault("con lsof in errore", []).extend(p for p in old if p in unknown)
+        gone = [p for p in old if p not in used and p not in unknown]
+    freed, errors = 0, []
+    for p in gone:
+        size = tree_bytes(p)
+        if dry:
+            freed += size
+            continue
+        try:
+            if stat.S_ISLNK(os.lstat(p).st_mode):  # sostituita da un link dopo il controllo
+                continue
+            shutil.rmtree(p)  # i link dentro li toglie, non li segue
+            freed += size
+        except OSError as e:
+            errors.append(f"{p.name}: {e.strerror or e}")
+    done = len(gone) - len(errors)
+    why = ", ".join(f"{len(v)} {k}" for k, v in kept.items() if v)
+    log(f"pulizia tmp{' [dry-run]' if dry else ''}: {'cancellerei' if dry else 'cancellate'} {done} cartelle "
+        f"{BUILD_GLOB}, {freed / 1e9:.1f} GB {'da liberare' if dry else 'liberati'}"
+        + (f"; tenute {why}" if why else "") + (f"; errori {'; '.join(errors)[:200]}" if errors else ""))
+
+
+# ---------------------------------------------------------------- il giro
+
+def rollback(old, rec):
+    """Torna a `old` con `openclaw update --tag` (compatibilita' di schema, riavvio e verifica di
+    OpenClaw), solo a OpenClaw fermo. Mai `npm i -g`: salterebbe il rifiuto di uno schema o di una
+    config piu' nuovi, che le docs dicono di non aggirare (install/updating/rollback-and-recovery.md).
+    Ritorna (problemi, in sospeso): in sospeso = OpenClaw mai fermo, nessun riavvio fatto."""
+    log(f"rollback a {old}")
+    busy = wait_idle(ROLLBACK_IDLE_MIN, down_ok=True)
+    if busy:
+        return [f"OpenClaw mai fermo in {ROLLBACK_IDLE_MIN:g} min ({', '.join(busy)})"], True
+    rc, run_rec, err, busy = run_update(old, down_ok=True, downgrade=True)
+    now = installed_version()
+    if busy and now != old:
+        return [f"OpenClaw si e' messo a lavorare durante la validazione ({', '.join(busy)})"], True
+    if now != old:
+        return [f"OpenClaw non torna a {old} ({run_reason(run_rec, err)}): installata {now}"], False
+    problems, notes, deferred = converge(old, ROLLBACK_IDLE_MIN)
+    problems = problems or health_gate(old, rec, deferred)
+    root = (oc_json(["update", "status", "--json"], 60) or {}).get("update", {}).get("root") or rec.get("root")
+    same = {Path(f).name: sha(f) for f in glob.glob(str(Path(root or "") / "dist/mcp-http.*.mjs"))
+            if Path(f).name in rec.get("dist_sha256", {})} == rec.get("dist_sha256")
+    log(f"rollback: dist patchato {'identico' if same else 'diverso'} da prima dell'update")
+    return problems, False
+
+
+def finish_rollback(state, rec, why):
+    last = state["last"]
+    old, new = last["from"], last["to"]
+    problems, pending = rollback(old, rec)
+    last.update(why=why, after=problems,
+                result="rollback-pending" if pending else "rollback-failed" if problems else "rolled-back")
+    save_state(state)
+    if pending:
+        notify(f"OpenClaw {short(new)} non passa i controlli ({why}); rollback a {short(old)} rimandato, "
+               f"{problems[0]}: riprovo al prossimo giro o a mano con openclaw-safe-update"[:300])
+        return 2
+    if problems:
+        # prima cosa si legge, poi i motivi: il 28/10 il taglio a 300 caratteri si e' mangiato la causa
+        # e l'avviso non diceva che i cron potevano essere fermi
+        now = short(installed_version())
+        log(f"ROSSO: rollback a {old} NON riuscito, resta {now}")
+        notify(f"ROSSO OpenClaw: update a {short(new)} fallito e rollback a {short(old)} NON riuscito, gira {now}. "
+               f"Controlla subito i cron (openclaw cron list). Update: {why[:80]}. "
+               f"Rollback: {'; '.join(problems)[:110]}")
+        return 2
+    notify(f"aggiornamento OpenClaw fallito, tornato a {short(old)}: {why}"[:300])
+    return 1
+
+
+def quiet_night(cur, root, dry, idle):
+    """Notte senza update: patch e plugin a posto (maintain), poi l'app del Mac se e' rimasta indietro. Prima l'app
+    si riallineava solo dopo un update riuscito, e nelle notti senza versione nuova restava indietro (verifica 25/10)."""
+    rc = maintain(cur, root, dry, idle)
+    note = ("dry-run: " + app_plan(cur)) if dry else align_app(cur)
+    if note:
+        log(note)
+    return rc
+
+
+def maintain(cur, root, dry, idle):
+    """Nessuna versione nuova: patch MCP e plugin fissati devono comunque essere a posto."""
+    plugins = plugin_list()
+    todo = [f"plugin {k} {plugins[k].get('version')} (core {cur})" for k in misaligned(plugins, cur)]
+    rc, msg = mcp_lazy("check")
+    if rc:
+        todo.append(f"patch MCP: {msg}")
+    rc, msg = announce_fix("check")
+    if rc:
+        todo.append(f"patch annunci: {msg}")
+    rc, msg = durable_view("check")
+    if rc:
+        todo.append(f"patch finali WhatsApp: {msg}")
+    rc, msg = cli_output_limit("check")
+    if rc:
+        todo.append(f"patch tetti sottoagenti: {msg}")
+    rc, msg = bot_mention("check")
+    if rc:
+        todo.append(f"patch tag tra bot: {msg}")
+    rc, msg = announce_silent("check")
+    if rc:
+        todo.append(f"patch silenzio consegne: {msg}")
+    rc, msg = wa_catchup("check")
+    if rc:
+        todo.append(f"patch coda WhatsApp: {msg}")
+    rc, msg = hb_subagents("check")
+    if rc:
+        todo.append(f"patch battito: {msg}")
+    rc, msg = session_settings("check")
+    if rc:
+        todo.append(f"patch sessione non pronta: {msg}")
+    rc, msg = pinned_fallback("check")
+    if rc:
+        todo.append(f"patch ripiego silenzioso: {msg}")
+    rc, msg = descendant_expiry("check")
+    if rc:
+        todo.append(f"patch consegne scadute: {msg}")
+    rc, msg = cron_receipt_ddl("check")
+    if rc:
+        todo.append(f"patch exec integrity admission: {msg}")
+    rc, msg = cron_history_names("check")
+    if rc:
+        todo.append(f"patch storia con cron: {msg}")
+    if not todo:
+        return 0
+    log("da sistemare: " + "; ".join(todo))
+    if dry:
+        log("dry-run: non tocco niente")
+        return 0
+    rec = record(cur, root)
+    problems, notes, deferred = converge(cur, idle)
+    if deferred:
+        log("riprovo la notte prossima")
+        return 0
+    problems = (problems or health_gate(cur, rec)) + [n for n in notes if n.startswith("patch annunci non")]
+    if problems:
+        notify(f"OpenClaw {short(cur)}: non riesco a sistemare {'; '.join(todo)}: {'; '.join(problems)}"[:300])
+        return 1
+    notify(f"OpenClaw {short(cur)}: sistemato {'; '.join(todo)}, tutto verde"[:300])
+    return 0
+
+
+def main():
+    ap = argparse.ArgumentParser(description="Aggiorna OpenClaw a OpenClaw fermo, con rollback.")
+    ap.add_argument("--dry-run", action="store_true", help="passi 1-3 senza toccare niente, poi il piano")
+    ap.add_argument("--force-version", help="giro supervisionato verso questa versione (arma il notturno)")
+    ap.add_argument("--idle-wait", type=float, default=45, help="minuti di attesa di OpenClaw fermo")
+    ap.add_argument("--no-interrupt", action="store_true",
+                    help="non fermare l'update se OpenClaw lavora: il drain nativo aspetta i turni in corso, "
+                         "i messaggi arrivati a gateway giu' li ripescano openclaw-wa-catchup e oc-restart")
+    a = ap.parse_args()
+    global NO_INTERRUPT
+    NO_INTERRUPT = a.no_interrupt
+
+    LOCK.parent.mkdir(parents=True, exist_ok=True)
+    lock = open(LOCK, "w")
+    try:
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        log("un altro giro e' in corso: esco")
+        return 3
+    if not a.dry_run:
+        not_before_wait()
+    global PID_BEFORE
+    PID_BEFORE = gateway_pid()  # per resume_interrupted: il giro ha riavviato il gateway?
+
+    gw = gateway_pid()
+    if (gw and gw in ancestors()) or os.environ.get("OPENCLAW_GATEWAY_SERVICE_PID"):
+        # e' esattamente il managed-service-preflight che ha fatto fallire l'auto-update:
+        # dall'albero del gateway `openclaw update` non puo' fermare il gateway che lo contiene
+        log(f"rifiuto: giro dentro il gateway di OpenClaw (pid {gw}); va lanciato da launchd o da un terminale")
+        return 4
+
+    # ogni notte, anche senza update, e prima del controllo del disco: gli avanzi di build da soli
+    # bastavano a bloccare l'update. Solo --dry-run si limita a dire cosa cancellerebbe.
+    clean_build_tmp(a.dry_run)
+    clean_update_captures(a.dry_run)
+    retire_originals(a.dry_run)
+
+    state = load_state()
+    armed = bool(state.get("armed"))
+    dry = a.dry_run or not (armed or a.force_version)
+    st = oc_json(["update", "status", "--json", "--timeout", "15"], 90)
+    cur = installed_version()
+    if not isinstance(st, dict) or not cur:
+        log("OpenClaw non risponde a update status/--version: niente da fare stanotte")
+        return 1
+    root = (st.get("update") or {}).get("root")
+    latest = (st.get("availability") or {}).get("latestVersion")
+    last = state.get("last") or {}
+    if st.get("activeRun"):
+        ar = st["activeRun"]
+        log(f"storico update: run {str(ar.get('runId'))[:8]} ancora {ar.get('status')} in fase {ar.get('phase')}"
+            + (" (dry-run: non lo tocco)" if dry else ""))
+        if not dry:
+            reconcile_ledger()
+
+    if last.get("result") == "rollback-pending" and cur == last.get("to"):
+        log(f"rollback a {last.get('from')} in sospeso dal giro {last.get('started')}: {last.get('why')}")
+        if a.dry_run:
+            log("dry-run: non tocco niente")
+            return 0
+        try:
+            rec = json.loads((BACKUPS / last["started"] / "record.json").read_text())
+        except (OSError, ValueError, KeyError):
+            rec = {}
+        return finish_rollback(state, rec, last.get("why"))
+
+    target = a.force_version or latest
+    if a.force_version and not re.fullmatch(VER_RE, target):
+        log(f"--force-version {target}: non e' una versione")
+        return 4
+    if not target or vtuple(target) <= vtuple(cur):
+        if a.force_version and vtuple(target) < vtuple(cur):
+            log(f"--force-version {target} e' piu' vecchia di {cur}: per tornare indietro openclaw update --tag")
+            return 4
+        log(f"OpenClaw {cur}: nessuna versione nuova (ultima {latest})")
+        return quiet_night(cur, root, dry, a.idle_wait)
+    if not a.force_version and last.get("to") == target and (
+            last.get("result") in FAILED_RESULTS or last.get("run_status") == "rolled-back"):
+        # riprovarla ogni notte vorrebbe dire un'interruzione dei canali ogni notte
+        log(f"salto {target}: il giro {last.get('started')} e' tornato indietro ({last.get('why')}); "
+            f"per riprovarla --force-version {target}")
+        return quiet_night(cur, root, dry, a.idle_wait)
+
+    why_dry = " [dry-run]" if a.dry_run else " [non armato: il primo giro vero e' quello supervisionato]" if dry else ""
+    log(f"OpenClaw {cur} -> {target}{why_dry}")
+    busy = busy_reasons() if dry else [] if NO_INTERRUPT else wait_idle(a.idle_wait)
+    if busy:
+        log("OpenClaw non e' fermo: " + ", ".join(busy) + ("" if dry else "; riprovo la notte prossima"))
+        if not dry:
+            return 0
+    rec = record(cur, root)
+    log(f"fotografia: {cur}, openclaw.json {str(rec['config_sha256'])[:12]}, "
+        + ", ".join(f"{k} {v[:12]}" for k, v in rec["dist_sha256"].items())
+        + " | plugin " + ", ".join(f"{k} {v['version']}" for k, v in sorted(rec["plugins"].items()))
+        + f" | agents-doctor FAIL {len(rec['doctor'])} | problemi gia' presenti {rec['problems'] or 'nessuno'}")
+    if dry:
+        pins = sorted(k for k, v in rec["plugins"].items() if k == PLUGIN or pinned(v.get("spec")))
+        for step in (f"backup SQLite (global + agenti) e openclaw.json in {BACKUPS}/<ts>",
+                     f"openclaw update --yes --json --tag {target} (validazione, riavvio e verifica di OpenClaw);"
+                     " se OpenClaw si mette a lavorare durante la validazione, SIGINT prima dell'attivazione",
+                     f"plugin fissati {', '.join(pins)} -> {target} (plugins install --force --pin)",
+                     "patch MCP: saltata se il fix upstream e' nel codice nuovo, se no openclaw-mcp-lazy.py apply",
+                     "patch annunci: openclaw-announce-fix.py apply (se non entra lo annota, niente rollback)",
+                     "un kickstart -k solo a OpenClaw fermo (se no rimandato), health gate (canali, WhatsApp,"
+                     " heartbeat, patch, agents-doctor)",
+                     f"dopo il verde, {app_plan(target)}",
+                     f"se qualcosa fallisce: rollback a {cur} a OpenClaw fermo e health gate; una riga su WhatsApp ad Attilio"):
+            log("piano: " + step)
+        return 0
+
+    strained = wait_mac_calm(MAC_WAIT_MIN)
+    if strained:
+        log(f"Mac sotto sforzo, rimando ({strained}, da {MAC_WAIT_MIN:.0f} min): {cur} resta, riprovo la notte prossima")
+        return 0
+    free = shutil.disk_usage(HOME).free / 1e9
+    if free < MIN_FREE_GB:
+        msg = f"aggiornamento OpenClaw {short(cur)}→{short(target)} non tentato: {free:.1f} GB liberi sul Mac"
+        log(msg)
+        notify(msg)
+        return 4
+    err = backup(rec)
+    if err:
+        msg = f"aggiornamento OpenClaw {short(cur)}→{short(target)} non tentato: {err}"
+        log(msg)
+        notify(msg[:300])
+        return 1
+
+    state["last"] = {"started": rec["ts"], "from": cur, "to": target}
+    save_state(state)
+    rc, run_rec, err, busy = run_update(target)
+    clean_update_captures(False)  # ogni tentativo, riuscito o no, lascia la sua copia
+    now = installed_version()
+    if busy and now == cur:
+        state["last"].update(result="interrupted", why=", ".join(busy))
+        save_state(state)
+        log(f"update interrotto prima dell'attivazione: {cur} resta, riprovo la notte prossima")
+        return 0
+    if rc == 0 and now == target:
+        problems, notes, deferred = converge(target, POST_IDLE_MIN)
+        problems = problems or health_gate(target, rec, deferred)
+        if not problems:
+            state["last"].update(result="ok", notes=notes)
+            if a.force_version and not armed:
+                state.update(armed=True, armed_at=datetime.datetime.now().isoformat(timespec="seconds"))
+                log("armato: da domani il giro notturno aggiorna da solo")
+            save_state(state)
+            log(f"aggiornato {cur} -> {target}, tutto verde {notes or ''}".rstrip())
+            app_note = align_app(target)  # dopo il verde: l'app non c'entra con la salute del gateway
+            if app_note:
+                log(app_note)
+            later ="; plugin e patch MCP al prossimo giro (OpenClaw mai fermo)" if deferred else ""
+            later += "".join(f"; {n}" for n in notes if n.startswith("patch annunci non"))
+            notify(f"OpenClaw aggiornato {short(cur)}→{short(target)}, tutto verde{later}"[:300])
+            return 0
+        why = "; ".join(problems)
+    elif now == cur:
+        # OpenClaw non ha attivato la versione nuova, o e' tornato indietro da solo
+        why = run_reason(run_rec, err)
+        log(f"update non attivato ({run_rec.get('status')}): {why}")
+        problems, _, deferred = converge(cur, POST_IDLE_MIN)
+        problems = problems or health_gate(cur, rec, deferred)
+        state["last"].update(result="failed", why=why, after=problems, run_status=run_rec.get("status"))
+        save_state(state)
+        if problems:
+            notify(f"aggiornamento OpenClaw fallito ({why}) e {short(cur)} non e' sana: {'; '.join(problems)}"[:300])
+            return 2
+        notify(f"aggiornamento OpenClaw fallito, tornato a {short(cur)}: {why}"[:300])
+        return 1
+    else:
+        why = run_reason(run_rec, err) if rc else f"installata {now}, attesa {target}"
+    log(f"fallito dopo l'update: {why}")
+    return finish_rollback(state, rec, why)
+
+
+PID_BEFORE = None
+
+
+def resume_interrupted(started):
+    """Se il gateway e' stato riavviato durante il giro, fa riprendere i sottoagenti persi."""
+    if "--dry-run" in sys.argv or PID_BEFORE is None or gateway_pid() in (None, PID_BEFORE):
+        return
+    mins = (time.time() - started) / 60 + 5
+    rc, out, err = run([OC_RESTART, "--resume-since", f"{mins:.0f}"], 120)
+    log(f"ripresa sottoagenti: {tail(out or err)}" if rc == 0 else f"ripresa sottoagenti fallita: {tail(err or out)}")
+
+
+if __name__ == "__main__":
+    _started = time.time()
+    _rc = main()
+    resume_interrupted(_started)
+    sys.exit(_rc)

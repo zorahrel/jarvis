@@ -1,0 +1,22 @@
+#!/bin/sh
+# Esegue un comando in una gabbia di macOS: dentro si possono mandare segnali
+# solo ai processi della stessa gabbia (il comando e i suoi discendenti).
+# Serve per prove e agenti: un pkill/killall sbagliato qui dentro non tocca i
+# processi veri del Mac (incidenti del 25/10, due volte «crasha tutto»).
+# Gabbia dentro gabbia con lo stesso lancio non si fa: se siamo già dentro
+# (SENZA_SEGNALI) o se sandbox-exec manca, esegue e basta.
+#
+# Eccezioni del profilo (misurate il 25/10, verificatore):
+# - ps, top, crontab, at... sono setuid root e dentro un sandbox-exec non partono
+#   (execvp: Operation not permitted): partono senza sandbox. Non mandano segnali.
+#   sudo e su restano fuori apposta: `sudo kill` uscirebbe dalla gabbia.
+# - sandbox-exec parte senza sandbox: gli strumenti che si portano la loro
+#   seatbelt (codex -s, swift package, ...) fanno il loro sandbox_apply e
+#   funzionano. Il loro figlio è in un sandbox diverso, quindi i segnali verso di
+#   lui li può mandare solo il padre (target children). Limite: chi lancia di
+#   proposito `sandbox-exec -p '(allow default)' kill ...` esce dalla gabbia;
+#   la gabbia ferma gli incidenti, non la malizia.
+[ "$#" -gt 0 ] || { echo "uso: senza-segnali <comando> [argomenti…]" >&2; exit 64; }
+if [ -n "$SENZA_SEGNALI" ] || [ ! -x /usr/bin/sandbox-exec ]; then exec "$@"; fi
+SENZA_SEGNALI=1; export SENZA_SEGNALI
+exec /usr/bin/sandbox-exec -p '(version 1)(allow default)(deny signal)(allow signal (target same-sandbox) (target children))(allow process-exec* (with no-sandbox) (literal "/bin/ps") (literal "/usr/bin/top") (literal "/usr/bin/crontab") (literal "/usr/bin/at") (literal "/usr/bin/atq") (literal "/usr/bin/atrm") (literal "/usr/bin/batch") (literal "/usr/bin/quota") (literal "/usr/sbin/traceroute") (literal "/usr/sbin/traceroute6") (literal "/usr/bin/sandbox-exec"))' "$@"

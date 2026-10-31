@@ -1,0 +1,98 @@
+#!/bin/bash
+# gateway-restart-tonight [--dry-run]
+# 25/10: mcp-hot-gateway ora parcheggia da solo i figli montati al volo e fermi da 15 min, e risponde 404
+# a una sessione sconosciuta così i client si riconnettono da soli. Il codice nuovo entra solo al riavvio,
+# e il gateway (com.jarvis.gateway) è uno solo per tutte le sessioni: si riavvia di notte, a Mac fermo e
+# senza chiamate in corso. Riuscito e verificato, scrive l'esito e si toglie da launchd; se entro le
+# 05:30 non trova il momento, riprova la notte dopo, e alla terza notte saltata di fila apre la card
+# gateway-restart-tonight-ko. --dry-run dice cosa farebbe adesso e non tocca niente.
+set -u
+# GRT_STUBS solo per gateway-restart-tonight-test.sh: launchctl, date e curl finti davanti, così il test
+# percorre anche il giro del riavvio senza toccare il gateway vivo.
+export PATH=${GRT_STUBS:+$GRT_STUBS:}/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin
+LABEL=com.jarvis.gateway-restart-tonight
+PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"
+LOG="$HOME/.claude/jarvis/logs/gateway-restart-tonight.log"
+ERR="$HOME/.claude/jarvis/logs/gateway.err.log"
+URL=http://127.0.0.1:23371/mcp
+MCPGW="$HOME/.claude/jarvis/tools/usage-hub/src/mcpgw.mjs"
+CFG="$HOME/.claude/jarvis/mcp-servers/gateway/gateway-config.json"
+SKIPS="$HOME/.claude/jarvis/state/gateway-restart-tonight.skips"
+DRY=0; [ "${1:-}" = "--dry-run" ] && DRY=1
+say() { if [ $DRY = 1 ]; then echo "$*"; else echo "$(date '+%F %T') $*" >> "$LOG"; fi; }
+
+# Chiamate in corso sommate su tutti i figli (vuoto = il gateway non risponde): riavviare con una
+# chiamata a metà taglierebbe il lavoro di un agente.
+in_flight() {
+  node --input-type=module -e "const m = await import('$MCPGW');
+    const j = JSON.parse(await m.callGateway('gateway_list', {}, { timeoutMs: 15000 }));
+    console.log(j.children.reduce((s, c) => s + (c.stats?.inFlight || 0), 0));" 2>/dev/null
+}
+gw_pid() { launchctl list | awk '$3 == "com.jarvis.gateway" {print $1}'; }
+skips() { cat "$SKIPS" 2>/dev/null || echo 0; }
+# Una notte saltata esce 0 in silenzio e si ripete uguale ogni notte (Mac sveglio dopo le 05, mai
+# libero, gateway muto): le si conta, e alla terza di fila la card dice che il codice nuovo non è entrato.
+skip() {
+  local n=$(( $(skips) + 1 ))
+  mkdir -p "$(dirname "$SKIPS")"; echo "$n" > "$SKIPS"
+  say "$1: riprovo la notte dopo (notti saltate di fila: $n)"
+  if [ "$n" -ge 3 ]; then
+    ~/.claude/jarvis/scripts/board-card --key gateway-restart-tonight-ko \
+      --title "Gateway MCP: il riavvio notturno salta da $n notti" \
+      --desc "Ultimo motivo: $1. Il gateway gira ancora col codice di prima (parcheggio per figlio, montaggi in fila, figli morti rimontati). Log: ~/.claude/jarvis/logs/gateway-restart-tonight.log" >/dev/null 2>&1
+  fi
+  exit 0
+}
+
+h=$(date +%H)
+if [ $DRY = 1 ]; then
+  ~/bin/mac-libero 300 2>/dev/null && free=sì || free=no
+  echo "ora $h (finestra 01-05) · Mac libero da 5 min: $free · chiamate in corso: $(in_flight || echo '?') · gateway pid $(gw_pid) · notti saltate di fila: $(skips)"
+  exit 0
+fi
+case "$h" in 01|02|03|04|05) ;; *) skip "fuori dalla finestra notturna (ore $h)" ;; esac
+
+end=$(( $(date +%s) + 110 * 60 ))
+while :; do
+  if ~/bin/mac-libero 300 2>/dev/null; then
+    n=$(in_flight)
+    [ "$n" = "0" ] && break
+    say "chiamate in corso: ${n:-gateway muto}, riprovo fra 5 min"
+  else
+    say "Mac in uso, riprovo fra 5 min"
+  fi
+  [ "$(date +%s)" -lt "$end" ] || skip "nessun momento libero entro 110 min"
+  sleep 300
+done
+
+# Il gateway vecchio riscrive la config a ogni gateway_mount tenendo solo i campi che conosce, quindi
+# idleParkMinutes di chrome-devtools (60: pagina e login stanno nel processo e un agente che aspetta un
+# po' non li deve perdere, ma un Chromium headless acceso per sempre no, regola di casa) può essere
+# sparito da quando è stato scritto: lo si rimette appena prima del riavvio.
+node -e 'const fs = require("fs"), f = process.argv[1], j = JSON.parse(fs.readFileSync(f, "utf8"));
+  const c = j.children.find((c) => c.name === "chrome-devtools");
+  if (c && c.idleParkMinutes === undefined) { c.idleParkMinutes = 60; fs.writeFileSync(f, JSON.stringify(j, null, 2) + "\n"); }' "$CFG"
+
+old=$(gw_pid); mark=$(wc -l < "$ERR" | tr -d ' ')
+launchctl kickstart -k "gui/$(id -u)/com.jarvis.gateway"
+for _ in $(seq 1 30); do sleep 2; tail -n +$((mark + 1)) "$ERR" | /usr/bin/grep -q "ready (http)" && break; done
+new=$(gw_pid)
+park=$(tail -n +$((mark + 1)) "$ERR" | /usr/bin/grep -c "idle park: on-demand children park after 15 min")
+keep=$(tail -n +$((mark + 1)) "$ERR" | /usr/bin/grep -c "chrome-devtools=60 min")
+code=$(curl -s -m 10 -o /dev/null -w '%{http_code}' -X POST -H 'content-type: application/json' \
+  -H 'accept: application/json, text/event-stream' -H 'mcp-session-id: prima-del-riavvio' \
+  --data '{"jsonrpc":"2.0","id":1,"method":"tools/list"}' "$URL")
+echo 0 > "$SKIPS"
+line="gateway $old → $new, parcheggio a 15 min nel log: $park, chrome-devtools a riposo dopo 60 min: $keep, sessione sconosciuta → $code"
+if [ -n "$new" ] && [ "$new" != "$old" ] && [ "$park" -ge 1 ] && [ "$keep" -ge 1 ] && [ "$code" = 404 ]; then
+  say "OK: $line"
+else
+  say "KO: $line"
+  ~/.claude/jarvis/scripts/board-card --key gateway-restart-tonight-ko \
+    --title "Gateway MCP: il riavvio notturno non ha preso il codice nuovo" \
+    --desc "$line. Log: ~/.claude/jarvis/logs/gateway-restart-tonight.log e gateway.err.log" >/dev/null 2>&1
+fi
+# Un colpo solo, riuscito o no: rifarlo ogni notte non cura niente.
+mkdir -p "$HOME/Library/LaunchAgents/disabled"; mv "$PLIST" "$HOME/Library/LaunchAgents/disabled/" 2>/dev/null
+launchctl bootout "gui/$(id -u)/$LABEL" 2>/dev/null
+exit 0

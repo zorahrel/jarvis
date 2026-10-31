@@ -1,0 +1,1134 @@
+#!/usr/bin/python3 -I
+"""claude-account: cambia l'account della app Claude desktop senza rifare il login.
+
+Come la app tiene il login (letto nel suo codice e nel suo main.log, 26/10):
+la credenziale vera è il cookie `sessionKey` di claude.ai nel file `Cookies`, cifrato
+dalla app con la chiave «Claude Safe Storage». Il token delle sessioni Code
+(`oauth:tokenCacheV2` in config.json) la app lo rigenera da quel cookie a ogni
+cambio d'identità. Cambiare account = a app chiusa rimettere le righe cifrate dei
+cookie di claude.ai e le voci oauth:* di quell'account, poi riaprire.
+
+Qui non si decifra mai niente: si copiano blob già cifrati. Il salvataggio sta solo
+nel Keychain (servizio `claude-app-login`, un elemento per account); nella cartella
+dell'account c'è solo meta.json, senza segreti. Il blob passa a `security` come
+argomento: `-w` letto da stdin tronca a 128 caratteri e `security -i` a 4096, e il
+contenuto è lo stesso testo cifrato che chiunque sul Mac legge già in `Cookies`.
+
+Mai «Esci» dal menu della app: chiude la sessione anche lato Anthropic e il
+salvataggio di quell'account smette di valere.
+
+La CLI non passa da qui: le sessioni da terminale le smista Switchboard per account,
+e due gestori sullo stesso refresh token si ammazzano i token a vicenda.
+"""
+
+import argparse
+import base64
+import contextlib
+import glob
+import json
+import os
+import plistlib
+import re
+import shutil
+import signal
+import sqlite3
+import subprocess
+import sys
+import tempfile
+import time
+import urllib.request
+import zlib
+from datetime import datetime
+from pathlib import Path
+
+HOME = Path.home()
+APP_DIR = Path(os.environ.get("CLAUDE_ACCOUNT_APP_DIR", HOME / "Library/Application Support/Claude"))
+DATA_DIR = Path(os.environ.get("CLAUDE_ACCOUNT_DATA_DIR", HOME / ".claude/jarvis/data/claude-account"))
+LOG_FILE = Path(os.environ.get("CLAUDE_ACCOUNT_LOG", HOME / ".claude/jarvis/logs/claude-account.log"))
+APP_LOG = Path(os.environ.get("CLAUDE_ACCOUNT_APP_LOG", HOME / "Library/Logs/Claude/main.log"))
+KC_SERVICE = os.environ.get("CLAUDE_ACCOUNT_KC_SERVICE", "claude-app-login")
+# selftest: niente quit/launch della app vera, niente ps, niente cestino vero
+NO_APP = os.environ.get("CLAUDE_ACCOUNT_NO_APP") == "1"
+BUNDLE_ID = "com.anthropic.claudefordesktop"
+CONFIG_KEYS = ("oauth:tokenCacheV2", "oauth:tokenCache", "lastKnownAccountUuid")
+SWITCHBOARD = "http://127.0.0.1:3335/api/profiles"
+# microsecondi dal 1601: l'orologio dei cookie di Chromium
+CHROME_EPOCH_OFFSET = 11644473600
+
+
+class Fail(Exception):
+    def __init__(self, msg, code=1):
+        super().__init__(msg)
+        self.code = code
+
+
+def log(msg):
+    # solo etichette, uuid accorciati ed esiti: mai valori di cookie o token
+    LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
+    with LOG_FILE.open("a") as f:
+        f.write(f"{datetime.now().strftime('%Y-%m-%d %H:%M:%S')} {msg}\n")
+
+
+def say(msg):
+    print(msg, flush=True)
+    log(msg)
+
+
+def short(uuid):
+    return (uuid or "?")[:8]
+
+
+# ---------- cookie e config della app ----------
+
+def is_auth_host(host):
+    h = host.lstrip(".")
+    return h in ("claude.ai", "claude.com") or h.endswith(".claude.ai") or h.endswith(".claude.com")
+
+
+def cookie_db():
+    return APP_DIR / "Cookies"
+
+
+def read_auth_cookies(db=None):
+    db = db or cookie_db()
+    if not db.exists():
+        raise Fail(f"manca {db}: la app non ha mai fatto un accesso qui")
+    con = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
+    con.row_factory = sqlite3.Row
+    try:
+        rows = con.execute("select * from cookies").fetchall()
+    finally:
+        con.close()
+    out = []
+    for r in rows:
+        if not is_auth_host(r["host_key"]):
+            continue
+        d = {k: r[k] for k in r.keys()}
+        d["encrypted_value"] = base64.b64encode(d["encrypted_value"]).decode()
+        out.append(d)
+    return sorted(out, key=lambda d: (d["host_key"], d["name"], d["path"]))
+
+
+def session_cookie(rows):
+    for r in rows:
+        if r["name"] == "sessionKey" and r["host_key"].lstrip(".") == "claude.ai":
+            return r
+    return None
+
+
+def chrome_to_epoch(us):
+    return us / 1e6 - CHROME_EPOCH_OFFSET if us else 0
+
+
+def read_config():
+    p = APP_DIR / "config.json"
+    return json.loads(p.read_text()) if p.exists() else {}
+
+
+def stage_config(cfg):
+    """config.json scritto accanto all'originale, non ancora al suo posto."""
+    fd, tmp = tempfile.mkstemp(dir=str(APP_DIR), prefix=".config.json.")
+    try:
+        with os.fdopen(fd, "w") as f:
+            if NO_APP and os.environ.get("CLAUDE_ACCOUNT_SELFTEST_DISK_FULL"):
+                raise OSError(28, "No space left on device")  # selftest: disco pieno a metà scrittura
+            json.dump(cfg, f, indent=2)
+        os.chmod(tmp, 0o600)
+    except BaseException:
+        Path(tmp).unlink(missing_ok=True)  # ha dentro le voci oauth: non resta in giro
+        raise
+    return tmp
+
+
+def write_config(cfg):
+    os.replace(stage_config(cfg), APP_DIR / "config.json")
+
+
+def take_snapshot(uuid_hint=None):
+    rows = read_auth_cookies()
+    sk = session_cookie(rows)
+    if not sk:
+        raise Fail("la app non ha un accesso attivo (manca il cookie sessionKey): niente da salvare", 3)
+    cfg = read_config()
+    conf = {k: cfg[k] for k in CONFIG_KEYS if k in cfg}
+    # appena dopo un login il log della app sa l'account prima di config.json
+    if uuid_hint:
+        conf["lastKnownAccountUuid"] = uuid_hint
+    return {
+        "v": 1,
+        "uuid": conf.get("lastKnownAccountUuid"),
+        "expires": chrome_to_epoch(sk["expires_utc"]),
+        "cookies": rows,
+        "config": conf,
+    }
+
+
+def same_login(a, b):
+    return a["cookies"] == b["cookies"] and a["config"] == b["config"]
+
+
+def write_auth_cookies(rows):
+    """Sostituisce le righe di claude.ai in una transazione sola: o tutte o nessuna."""
+    con = sqlite3.connect(str(cookie_db()))
+    try:
+        cols = [r[1] for r in con.execute("pragma table_info(cookies)")]
+        for row in rows:
+            if set(row) != set(cols):
+                raise Fail("lo schema dei cookie della app è cambiato rispetto al salvataggio: non scrivo niente")
+        with con:
+            ids = [r[0] for r in con.execute("select rowid, host_key from cookies") if is_auth_host(r[1])]
+            con.executemany("delete from cookies where rowid = ?", [(i,) for i in ids])
+            q = f"insert into cookies ({','.join(cols)}) values ({','.join('?' * len(cols))})"
+            for row in rows:
+                con.execute(q, [base64.b64decode(row[c]) if c == "encrypted_value" else row[c] for c in cols])
+    finally:
+        con.close()
+
+
+def apply_snapshot(snap, fresh_bridge_for=None):
+    """Scrive le righe di claude.ai e le voci oauth:* del salvataggio. App chiusa.
+
+    config.json si prepara prima e va al suo posto solo a cookie scritti e riletti: a disco
+    pieno non resta una app con i cookie di un account e la config di un altro.
+    """
+    cfg = read_config()
+    for k in CONFIG_KEYS:
+        if k in snap["config"]:
+            cfg[k] = snap["config"][k]
+        else:
+            cfg.pop(k, None)
+    tmp = stage_config(cfg)
+    try:
+        before = read_auth_cookies()
+        write_auth_cookies(snap["cookies"])
+        # riletto uguale o niente: un cookie scritto storto apre la app sulla schermata di accesso
+        if read_auth_cookies() != snap["cookies"]:
+            write_auth_cookies(before)
+            raise Fail("i cookie riletti non coincidono con il salvataggio: rimessi quelli di prima")
+        os.replace(tmp, APP_DIR / "config.json")
+    finally:
+        Path(tmp).unlink(missing_ok=True)
+    if fresh_bridge_for:
+        drop_bridge_entry(fresh_bridge_for)
+
+
+def drop_bridge_entry(uuid):
+    """Controllo remoto: la voce dell'account d'arrivo è ferma da quando lo si è lasciato.
+
+    bridge-state.json è diviso per "org:account"; una sessione remota vecchia dà
+    «Cannot read properties of undefined (reading 'session_url')» (claude-acc). Si toglie
+    solo quella voce, la app la rifà; le altre restano.
+    """
+    p = APP_DIR / "bridge-state.json"
+    if not p.exists():
+        return
+    try:
+        state = json.loads(p.read_text())
+    except Exception:
+        return
+    keep = {k: v for k, v in state.items() if not k.endswith(":" + uuid)}
+    if keep != state:
+        fd, tmp = tempfile.mkstemp(dir=str(p.parent), prefix=".bridge-state.")
+        try:
+            with os.fdopen(fd, "w") as f:
+                json.dump(keep, f)
+            os.chmod(tmp, 0o600)
+            os.replace(tmp, p)
+        finally:
+            Path(tmp).unlink(missing_ok=True)
+
+
+def clear_login():
+    """Toglie l'accesso dalla app senza uscire: la sessione resta valida lato Anthropic."""
+    cfg = read_config()
+    for k in CONFIG_KEYS:
+        cfg.pop(k, None)
+    tmp = stage_config(cfg)
+    try:
+        write_auth_cookies([])
+        os.replace(tmp, APP_DIR / "config.json")
+    finally:
+        Path(tmp).unlink(missing_ok=True)
+
+
+# ---------- Keychain ----------
+
+def kc_put(label, snap):
+    blob = base64.b64encode(zlib.compress(json.dumps(snap).encode())).decode()
+    r = subprocess.run(
+        ["security", "add-generic-password", "-U", "-s", KC_SERVICE, "-a", label,
+         "-l", f"Claude app: accesso {label}",
+         "-j", "claude-account: cookie di claude.ai cifrati dalla app, mai in chiaro", "-w", blob],
+        capture_output=True, text=True)
+    if r.returncode != 0:
+        raise Fail(f"Keychain: scrittura di {label} fallita (exit {r.returncode})")
+
+
+def kc_get(label):
+    r = subprocess.run(["security", "find-generic-password", "-s", KC_SERVICE, "-a", label, "-w"],
+                       capture_output=True, text=True)
+    if r.returncode != 0:
+        return None
+    try:
+        snap = json.loads(zlib.decompress(base64.b64decode(r.stdout.strip())))
+    except Exception:
+        raise Fail(f"Keychain: il salvataggio di {label} è illeggibile, non lo uso", 5)
+    if snap.get("v") != 1 or not session_cookie(snap.get("cookies", [])):
+        raise Fail(f"Keychain: il salvataggio di {label} non ha il cookie di accesso, non lo uso", 5)
+    return snap
+
+
+def kc_delete(label):
+    subprocess.run(["security", "delete-generic-password", "-s", KC_SERVICE, "-a", label], capture_output=True)
+
+
+# ---------- account noti (solo meta, niente segreti) ----------
+
+def all_meta():
+    out = []
+    for p in sorted(DATA_DIR.glob("*/meta.json")):
+        try:
+            out.append(json.loads(p.read_text()))
+        except Exception:
+            pass
+    return out
+
+
+def write_meta(meta):
+    d = DATA_DIR / meta["label"]
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "meta.json").write_text(json.dumps(meta, indent=2) + "\n")
+
+
+def meta_by_uuid(uuid):
+    for m in all_meta():
+        if uuid and m.get("accountUuid") == uuid:
+            return m
+    return None
+
+
+def resolve(name):
+    """Etichetta, email intera, parte prima della @, o dominio (guedado → l'email @guedado)."""
+    name = name.lower()
+    metas = all_meta()
+    for test in (lambda m: m["label"] == name,
+                 lambda m: (m.get("email") or "").lower() == name,
+                 lambda m: (m.get("email") or "").lower().split("@")[0] == name,
+                 lambda m: (m.get("email") or "@").lower().split("@")[1].split(".")[0] == name):
+        hits = [m for m in metas if test(m)]
+        if len(hits) == 1:
+            return hits[0]
+    known = ", ".join(m["label"] for m in metas) or "nessuno"
+    raise Fail(f"«{name}» non è un account salvato (salvati: {known}). "
+               f"Per aggiungerlo: claude-account aggiungi {name}", 2)
+
+
+def live_identity(uuid):
+    """Email e org dall'ambiente di una sessione Code viva dello stesso account (ps -E)."""
+    if NO_APP:
+        return {"email": os.environ["CLAUDE_ACCOUNT_SELFTEST_EMAIL"]} if os.environ.get("CLAUDE_ACCOUNT_SELFTEST_EMAIL") else {}
+    if not uuid:
+        return {}
+    r = subprocess.run(["ps", "-E", "-ww", "-x", "-o", "command="], capture_output=True, text=True)
+    for line in r.stdout.splitlines():
+        if "Application Support/Claude/claude-code/" not in line or f"CLAUDE_CODE_ACCOUNT_UUID={uuid}" not in line:
+            continue
+        env = dict(t.split("=", 1) for t in line.split() if t.startswith("CLAUDE_CODE_") and "=" in t)
+        return {"email": env.get("CLAUDE_CODE_USER_EMAIL"), "org": env.get("CLAUDE_CODE_ORGANIZATION_UUID")}
+    return {}
+
+
+def org_from_app_log(uuid):
+    if not uuid or not APP_LOG.exists():
+        return None
+    org = None
+    pat = re.compile(r"identity reevaluate: .*→ ([0-9a-f-]{36}):" + re.escape(uuid))
+    with APP_LOG.open(errors="replace") as f:
+        for line in f:
+            m = pat.search(line)
+            if m:
+                org = m.group(1)
+    return org
+
+
+# ---------- la app viva ----------
+
+def app_running():
+    if NO_APP:
+        return False
+    return subprocess.run(["pgrep", "-xq", "Claude"]).returncode == 0
+
+
+def busy_sessions(minutes=10):
+    """Sessioni Code con attività negli ultimi N minuti, tolta quella che lancia il comando."""
+    me = os.environ.get("CLAUDE_CODE_HOST_SESSION_ID")
+    now = time.time() * 1000
+    seen = {}
+    for f in glob.glob(str(APP_DIR / "claude-code-sessions/*/*/local_*.json")):
+        try:
+            d = json.loads(Path(f).read_text())
+        except Exception:
+            continue
+        sid = d.get("sessionId")
+        if d.get("isArchived") or sid == me:
+            continue
+        if now - (d.get("lastActivityAt") or 0) < minutes * 60000:
+            seen[sid] = d.get("title") or sid
+    return sorted(seen.values())
+
+
+def mac_free():
+    tool = HOME / "bin/mac-libero"
+    return not tool.exists() or subprocess.run([str(tool)], capture_output=True).returncode == 0
+
+
+VETO = "vetoed by before-quit interceptor"
+VETO_MSG = ("rimandato: la app ha sessioni attive e ne vieta l'uscita, il cambio aspetta che siano ferme. "
+            "Ripeti più tardi: --force non aggira il veto, e la app con sessioni vive non la chiudo")
+
+
+def ask_quit():
+    try:
+        subprocess.run(["osascript", "-e", f'tell application id "{BUNDLE_ID}" to quit'],
+                       capture_output=True, timeout=60)
+    except subprocess.TimeoutExpired:
+        pass  # app che non risponde agli Apple Event: ci pensa il segnale dopo
+
+
+def force_quit():
+    subprocess.run(["pkill", "-TERM", "-x", "Claude"], capture_output=True)
+
+
+def quit_vetoed(offset):
+    """La app ha rifiutato l'uscita per sessioni attive: lo scrive nel suo log, dopo la richiesta."""
+    return VETO in app_log_since(offset)
+
+
+def quit_app():
+    if not app_running():
+        return
+    offset = app_log_size()  # prima della richiesta: i veti di prima non contano
+    ask_quit()
+    for _ in range(45):
+        if not app_running():
+            return
+        if quit_vetoed(offset):
+            raise Fail(VETO_MSG, 10)  # sessioni vive: il segnale le taglierebbe, non lo mando
+        time.sleep(1)
+    if quit_vetoed(offset):
+        raise Fail(VETO_MSG, 10)
+    force_quit()
+    for _ in range(20):
+        if not app_running():
+            return
+        time.sleep(1)
+    raise Fail("la app non si chiude: non tocco il login", 6)
+
+
+def launch_app():
+    if NO_APP:
+        return
+    # -g: si apre dietro la finestra in uso, senza rubare il fuoco
+    subprocess.run(["open", "-g", "-b", BUNDLE_ID], capture_output=True)
+
+
+@contextlib.contextmanager
+def no_interrupts():
+    """Da quando la app si chiude a quando l'esito è detto, i segnali non fermano il comando.
+
+    Alle 04:20 OpenClaw si aggiorna e riparte, e un cron ucciso a metà lascerebbe la app
+    chiusa o su un account non verificato, senza il ritorno su quello di prima.
+    """
+    sigs = (signal.SIGTERM, signal.SIGINT, signal.SIGHUP)
+    old = {sig: signal.signal(sig, signal.SIG_IGN) for sig in sigs}
+    try:
+        yield
+    finally:
+        for sig, handler in old.items():
+            signal.signal(sig, handler)
+
+
+def swap_offline(write, relaunch=True):
+    """Chiude la app, scrive, e la riapre comunque, anche se la scrittura fallisce.
+
+    L'offset del log si prende ad app chiusa, così nessuna riga della app vecchia vale come prova.
+    """
+    with no_interrupts():
+        quit_app()
+        try:
+            offset = app_log_size()
+            result = write()
+        finally:
+            if relaunch:
+                launch_app()
+    return offset, result
+
+
+def app_log_size():
+    return APP_LOG.stat().st_size if APP_LOG.exists() else 0
+
+
+def app_log_since(offset):
+    if not APP_LOG.exists():
+        return ""
+    with APP_LOG.open(errors="replace") as f:
+        f.seek(offset if APP_LOG.stat().st_size >= offset else 0)  # ruotato: si rilegge da capo
+        return f.read()
+
+
+LOGGED_OUT = re.compile(r"Login-state transition \(loggedOut: false → true|Navigated to /logout")
+
+
+def token_state(text, uuid, org, ident_at):
+    """Esito del token Code per l'account e l'org con cui la app è salita: None finché non è chiesto.
+
+    Solo l'org della riga d'identità conta (hi ha anche un team senza posto Code, che dà 403).
+    I rifiuti contano dalla riga d'identità in poi e vincono su tutto: prima ci sono quelli del
+    passaggio fra due account (21:53 del 26/10, «account changed mid-flow» sull'org d'arrivo).
+    Il token in cache di acct:<arrivo> vale anche se arriva prima: è la cache di quell'account.
+    """
+    if not re.search(r"lookup orgId=" + re.escape(org) + r" cacheKey=acct:" + re.escape(uuid), text):
+        return None
+    if any("fresh exchange failed" in line and f"orgId={org}" in line for line in text[ident_at:].splitlines()):
+        return "rifiutato"
+    state = None
+    for line in text.splitlines():
+        if f"orgId={org}" not in line:
+            continue
+        if "using cached token" in line:
+            state = "in cache"
+        elif "performing fresh /authorize" in line and state is None:
+            state = "rigenerato dal cookie"
+    return state
+
+
+def wait_identity(uuid, offset, timeout=150, settle=25):
+    """Aspetta che la app salga sull'account giusto e ci resti.
+
+    Il solo «Initialization succeeded» non basta: la app lo scrive anche un attimo prima di
+    uscire (main.log 26/10, 21:49:36 e 21:49:42), e all'avvio usa il token in cache prima di
+    sapere chi è. Prova = riga d'identità, poi `settle` secondi senza uscita, cookie d'accesso
+    ancora nel file, token Code chiesto per quell'account e non rifiutato.
+    """
+    if NO_APP:
+        return {"ok": read_config().get("lastKnownAccountUuid") == uuid, "token": "non provato (selftest)"}
+    ident = re.compile(r"LocalSessionManager\] Initialization succeeded — accountId=" + re.escape(uuid)
+                       + r", orgId=([0-9a-f-]{36})")
+    deadline = time.time() + timeout
+    while True:
+        time.sleep(3)
+        text = app_log_since(offset)
+        m = ident.search(text)
+        if m:
+            break
+        if LOGGED_OUT.search(text):
+            return {"ok": False, "why": "la app è salita senza accesso"}
+        if time.time() >= deadline:
+            return {"ok": False, "why": "nessuna riga d'identità nel log entro %d s" % timeout}
+    org = m.group(1)
+    # dopo la riga d'identità: resta dentro per `settle` secondi, e il token Code arriva entro 60.
+    # L'uscita si cerca in tutto il testo: l'offset è preso ad app chiusa, e un avvio riuscito
+    # non scrive mai «false → true» (può arrivare nel log prima della riga d'identità)
+    start = time.time()
+    while True:
+        time.sleep(5)
+        text = app_log_since(offset)
+        if LOGGED_OUT.search(text):
+            return {"ok": False, "why": "la app è uscita dall'accesso subito dopo essere salita"}
+        tok = token_state(text, uuid, org, m.start())
+        if tok == "rifiutato":
+            return {"ok": False, "why": "il token delle sessioni Code è stato rifiutato"}
+        elapsed = time.time() - start
+        if elapsed >= settle and tok:
+            break
+        if elapsed >= 60:
+            return {"ok": False, "why": "il token delle sessioni Code non è stato chiesto entro 60 s"}
+    try:
+        present = session_cookie(read_auth_cookies()) is not None
+    except Fail:
+        present = False
+    if not present:
+        return {"ok": False, "why": "il cookie d'accesso è sparito: Anthropic ha chiuso quella sessione"}
+    return {"ok": True, "token": tok}
+
+
+# ---------- sessioni: la lista segue l'account ----------
+
+def merge_sessions(uuid, org):
+    """Porta nella lista dell'account d'arrivo le sessioni degli altri account (vince la più recente).
+
+    La app mostra solo claude-code-sessions/<account>/<org>/; i transcript stanno in
+    ~/.claude/projects e valgono per tutti. Solo dagli account salvati, non dai vecchi
+    account mai più usati. Non cancella mai niente.
+    """
+    if not uuid or not org:
+        return 0
+    base = APP_DIR / "claude-code-sessions"
+    target = base / uuid / org
+    target.mkdir(parents=True, exist_ok=True)
+    managed = {m.get("accountUuid") for m in all_meta()}
+    copied = 0
+    for f in sorted(base.glob("*/*/local_*.json")):
+        if f.parent == target or f.parent.parent.name not in managed:
+            continue
+        try:
+            src = json.loads(f.read_text())
+            dst_path = target / f.name
+            if dst_path.exists():
+                dst = json.loads(dst_path.read_text())
+                if (dst.get("lastActivityAt") or 0) >= (src.get("lastActivityAt") or 0):
+                    continue
+        except Exception:
+            continue
+        shutil.copy2(f, target / f.name)
+        copied += 1
+    return copied
+
+
+# ---------- comandi ----------
+
+def save(label=None, quiet=False, uuid_hint=None):
+    snap = take_snapshot(uuid_hint)
+    uuid = snap["uuid"]
+    meta = meta_by_uuid(uuid) or {}
+    ident = live_identity(uuid)
+    email = ident.get("email") or meta.get("email")
+    explicit = bool(label)
+    label = (label or meta.get("label") or (email.split("@")[0] if email else "")).lower()
+    if not label:
+        raise Fail(f"account nuovo ({short(uuid)}) e nessuna sessione Code aperta che ne dica l'email: "
+                   f"dagli un nome, claude-account save <nome>", 2)
+    other = next((m for m in all_meta() if m["label"] == label), None)
+    if other and other.get("accountUuid") not in (None, uuid):
+        if explicit:
+            raise Fail(f"«{label}» è già un altro account ({other.get('email') or short(other.get('accountUuid'))}): "
+                       f"non lo sovrascrivo", 2)
+        label = f"account-{short(uuid)}"
+    try:
+        old = kc_get(label)
+    except Fail:
+        old = None  # un salvataggio rovinato si riscrive
+    changed = not old or not same_login(old, snap)
+    if changed:
+        kc_put(label, snap)
+    write_meta({
+        "label": label,
+        "email": email,
+        "accountUuid": uuid,
+        "orgUuid": ident.get("org") or meta.get("orgUuid") or org_from_app_log(uuid),
+        "savedAt": datetime.now().isoformat(timespec="seconds") if changed else meta.get("savedAt"),
+        "sessionKeyExpires": datetime.fromtimestamp(snap["expires"]).isoformat(timespec="seconds"),
+        "keychain": {"service": KC_SERVICE, "account": label},
+    })
+    msg = f"salvato {label} ({email or short(uuid)}), accesso valido fino al {datetime.fromtimestamp(snap['expires']):%d/%m}"
+    if not changed:
+        msg = f"{label} già salvato e identico, accesso valido fino al {datetime.fromtimestamp(snap['expires']):%d/%m}"
+    (log if quiet else say)(msg)
+    return label
+
+
+def wait_for_quiet(args):
+    """Prima di chiudere la app: sessioni ferme e, in modo cron, Mac libero."""
+    if args.force or not app_running():
+        return
+    deadline = time.time() + args.wait * 60
+    while True:
+        busy = busy_sessions()
+        free = mac_free() if args.cron else True
+        if not busy and free:
+            return
+        if time.time() >= deadline:
+            why = []
+            if busy:
+                why.append(f"{len(busy)} sessioni Code attive negli ultimi 10 min ({'; '.join(busy[:4])})")
+            if not free:
+                why.append("Attilio sta usando il Mac")
+            raise Fail("rimandato: " + ", ".join(why) + ". Ripeti più tardi o con --force (le taglia)", 10)
+        time.sleep(60)
+
+
+def use(args):
+    target = resolve(args.name)
+    snap = kc_get(target["label"])
+    if not snap:
+        raise Fail(f"{target['label']} non ha un salvataggio nel Keychain: claude-account aggiungi {target['label']}", 2)
+    if snap["expires"] < time.time() + 3600:
+        raise Fail(f"l'accesso salvato di {target['label']} è scaduto il {datetime.fromtimestamp(snap['expires']):%d/%m}: "
+                   f"serve un login, claude-account aggiungi {target['label']}", 3)
+    cur_uuid = read_config().get("lastKnownAccountUuid")
+    try:
+        signed_in = session_cookie(read_auth_cookies()) is not None
+    except Fail:
+        signed_in = False
+    same = cur_uuid == target["accountUuid"]
+    # lastKnownAccountUuid resta anche dopo un'uscita: senza cookie non è «già su»
+    if same and signed_in and not args.again:
+        say(f"la app è già su {target['label']}")
+        return 0
+    if args.dry_run:
+        say(f"farei: salva l'account attuale ({short(cur_uuid)}), chiudi la app, metti {target['label']}, riapri")
+        return 0
+    wait_for_quiet(args)
+    with no_interrupts():
+        return switch(target, cur_uuid, same)
+
+
+def switch(target, cur_uuid, same):
+    was_running = app_running()
+    # l'account che si lascia si salva adesso: è la copia più fresca che ci sarà
+    prev_label = save_leaving(cur_uuid)
+    prev_snap = kc_get(prev_label) if prev_label and prev_label != target["label"] else None
+    # riletto dopo il salvataggio: con --again sullo stesso account dev'essere la copia appena fatta
+    snap = kc_get(target["label"])
+
+    def write():
+        apply_snapshot(snap, None if same else target["accountUuid"])
+        return merge_sessions(target["accountUuid"], target.get("orgUuid"))
+
+    offset, moved = swap_offline(write, relaunch=was_running)
+    if not was_running and not NO_APP:
+        say(f"app chiusa, non la apro io: alla prossima apertura sarà su {target['label']} (non verificato)")
+        return 11
+    res = wait_identity(target["accountUuid"], offset)
+    if res["ok"]:
+        say(f"app su {target['label']} ({target.get('email') or short(target['accountUuid'])}): "
+            f"identità nel log ok, token Code {res['token']}, {moved} sessioni portate nella lista")
+        return 0
+    say(f"❌ {target['label']} non regge: {res['why']}")
+    if prev_snap:
+        offset, _ = swap_offline(lambda: apply_snapshot(prev_snap, prev_snap["uuid"]))
+        back = wait_identity(prev_snap["uuid"], offset)
+        say(f"rimessa su {prev_label}: {'ok' if back['ok'] else 'NON regge, serve un login a mano'}")
+    raise Fail(f"serve un login di {target['label']} una volta sola: claude-account aggiungi {target['label']}", 4)
+
+
+def save_leaving(uuid):
+    """Salva l'account che si lascia; uno mai visto e senza email prende un nome di ripiego."""
+    try:
+        return save(quiet=True)
+    except Fail as e:
+        if e.code == 2 and uuid:
+            try:
+                return save(f"account-{short(uuid)}", quiet=True)
+            except Fail as e2:
+                e = e2
+        log(f"account attuale non salvato: {e}")
+        return None
+
+
+def add(args):
+    """Apre la app sulla schermata d'accesso senza uscire dall'account attuale, poi salva il nuovo."""
+    label = args.name.lower()
+    prev_uuid = read_config().get("lastKnownAccountUuid")
+    prev_label = save_leaving(prev_uuid)
+    if args.dry_run:
+        say(f"farei: salva {prev_label}, chiudi la app, togli l'accesso senza uscire, riapri sul login di {label}")
+        return 0
+    wait_for_quiet(args)
+    offset, _ = swap_offline(clear_login)
+    say(f"app aperta sulla schermata d'accesso: entra con {label}. Aspetto fino a {args.wait_login} min")
+    try:
+        new = wait_login(offset, prev_uuid, deadline)
+    except KeyboardInterrupt:
+        new = None
+    if new:
+        time.sleep(20)  # la app finisce di scrivere cookie, org e token
+        save(label, uuid_hint=new)
+        if prev_label and not args.stay:
+            say(f"torno su {prev_label}")
+            use(argparse.Namespace(name=prev_label, force=True, again=False, wait=0, cron=False, dry_run=False))
+        return 0
+    if prev_label:
+        say(f"nessun accesso nuovo entro {args.wait_login} min: torno su {prev_label}")
+        use(argparse.Namespace(name=prev_label, force=True, again=True, wait=0, cron=False, dry_run=False))
+    raise Fail(f"nessun accesso nuovo entro {args.wait_login} min", 7)
+
+
+def wait_login(offset, prev_uuid, deadline):
+    login = re.compile(r"Login-state transition \(loggedOut: true → false, uuid: \S+ → ([0-9a-f-]{36})\)")
+    while time.time() < deadline:
+        time.sleep(5)
+        new = None
+        hits = login.findall(app_log_since(offset))
+        new = (hits[-1] if hits else None) or read_config().get("lastKnownAccountUuid")
+        if new and new != prev_uuid:
+            try:
+                if session_cookie(read_auth_cookies()):
+                    return new
+            except Fail:
+                pass
+    return None
+
+
+def switchboard_line():
+    try:
+        with urllib.request.urlopen(SWITCHBOARD, timeout=3) as r:
+            profiles = json.load(r).get("profiles", [])
+    except Exception:
+        return "terminale: Switchboard non risponde"
+    parts = []
+    for p in profiles:
+        h = (p.get("rateLimits") or {}).get("rateHeaders") or {}
+        u = h.get("anthropic-ratelimit-unified-7d-utilization")
+        pct = f" {round(float(u) * 100)}%" if u not in (None, "") else ""
+        parts.append(("▶ " if p.get("isActive") else "") + f"{p.get('label')}{pct}")
+    return "terminale (Switchboard, settimana): " + " · ".join(parts)
+
+
+def current(_args):
+    cfg = read_config()
+    uuid = cfg.get("lastKnownAccountUuid")
+    meta = meta_by_uuid(uuid)
+    try:
+        sk = session_cookie(read_auth_cookies())
+    except Fail:
+        sk = None
+    if not sk:
+        print("app: nessun accesso attivo")
+    else:
+        who = (meta or {}).get("email") or live_identity(uuid).get("email") or f"account {short(uuid)}"
+        exp = datetime.fromtimestamp(chrome_to_epoch(sk["expires_utc"]))
+        tag = f"({meta['label']})" if meta else "(non salvato: claude-account save <nome>)"
+        print(f"app: {who} {tag}, accesso valido fino al {exp:%d/%m}")
+    for m in all_meta():
+        try:
+            state = "nel Keychain" if kc_get(m["label"]) else "MANCA nel Keychain"
+        except Fail:
+            state = "illeggibile nel Keychain"
+        exp = m.get("sessionKeyExpires", "")[:10]
+        print(f"  salvato {m['label']}: {m.get('email') or short(m.get('accountUuid'))}, {state}, scade {exp}")
+    print(switchboard_line())
+    return 0
+
+
+# ---------- esecuzione fuori dalla app ----------
+
+def inside_app():
+    """Vero se la app è fra i processi padre: chiudendola si chiuderebbe anche questo comando."""
+    if NO_APP:
+        return False
+    pid = os.getppid()
+    for _ in range(40):
+        if pid <= 1:
+            return False
+        r = subprocess.run(["ps", "-o", "ppid=,comm=", "-p", str(pid)], capture_output=True, text=True)
+        parts = r.stdout.strip().split(None, 1)
+        if len(parts) < 2:
+            return False
+        if parts[1].endswith("/Claude.app/Contents/MacOS/Claude"):
+            return True
+        pid = int(parts[0])
+    return False
+
+
+def detach(argv):
+    """Lanciato da una sessione della app, il cambio la chiuderebbe sotto di sé: si rilancia via launchd."""
+    label = "com.jarvis.claude-account-run"
+    run_dir = DATA_DIR / "run"
+    run_dir.mkdir(parents=True, exist_ok=True)
+    plist = run_dir / f"{label}.plist"
+    out = run_dir / "ultimo-cambio.log"
+    # CLAUDE_CODE_HOST_SESSION_ID: la sessione che lancia non conta fra quelle da aspettare
+    keep = ("HOME", "USER", "LOGNAME", "PATH", "LANG", "CLAUDE_CODE_HOST_SESSION_ID")
+    env = {k: v for k, v in os.environ.items() if k in keep}
+    env["CLAUDE_ACCOUNT_DETACHED"] = "1"
+    # bootout alla fine: senza, launchd terrebbe il job caricato
+    script = (f"sleep 3; {sh_quote(sys.executable)} -I {sh_quote(str(Path(__file__).resolve()))} "
+              f"{' '.join(map(sh_quote, argv))}; "
+              f"launchctl bootout gui/{os.getuid()}/{label}")
+    plist.write_bytes(plistlib.dumps({
+        "Label": label, "ProgramArguments": ["/bin/sh", "-c", script],
+        "RunAtLoad": True, "EnvironmentVariables": env,
+        "StandardOutPath": str(out), "StandardErrorPath": str(out),
+    }))
+    subprocess.run(["launchctl", "bootout", f"gui/{os.getuid()}/{label}"], capture_output=True)
+    out.write_text("")
+    r = subprocess.run(["launchctl", "bootstrap", f"gui/{os.getuid()}", str(plist)], capture_output=True, text=True)
+    if r.returncode != 0:
+        raise Fail(f"launchd non ha preso il cambio: {r.stderr.strip()}")
+    print(f"parte fuori dalla app fra 3 s (questa sessione verrà chiusa dal riavvio). Esito in {out}")
+    return 0
+
+
+def sh_quote(s):
+    return "'" + s.replace("'", "'\"'\"'") + "'"
+
+
+# ---------- selftest ----------
+
+def selftest_quit():
+    """Uscita della app con una app finta: niente Apple Event né pkill veri, log di prova.
+
+    Il modulo si carica a parte, così i suoi globali (APP_LOG, app_running, ask_quit, force_quit,
+    time) si cambiano senza toccare il processo del selftest.
+    """
+    import importlib.machinery
+    import importlib.util
+    import types
+    name = "claude_account_quit_test"
+    loader = importlib.machinery.SourceFileLoader(name, str(Path(__file__).resolve()))  # file senza .py
+    spec = importlib.util.spec_from_file_location(name, loader.path, loader=loader)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    tmp = Path(tempfile.mkdtemp(prefix="claude-account-quit."))
+    log = tmp / "main.log"
+    mod.APP_LOG = log
+    veto_line = "2026-10-27 03:40:04 [info] beforeQuit: vetoed by before-quit interceptor\n"
+
+    def append(text):
+        with log.open("a") as f:
+            f.write(text)
+
+    def case(prelog="", ask=lambda st: None, on_sleep=lambda n: None, force_kills=False):
+        log.write_text(prelog)
+        st = {"alive": True, "force": 0, "sleeps": 0}
+
+        def fake_sleep(_s):
+            st["sleeps"] += 1
+            on_sleep(st["sleeps"])
+
+        def fake_force():
+            st["force"] += 1
+            if force_kills:
+                st["alive"] = False
+
+        mod.app_running = lambda: st["alive"]
+        mod.ask_quit = lambda: ask(st)
+        mod.force_quit = fake_force
+        mod.time = types.SimpleNamespace(sleep=fake_sleep, time=time.time)
+        try:
+            mod.quit_app()
+            return 0, "", st["force"]
+        except mod.Fail as e:
+            return e.code, str(e), st["force"]
+
+    results = []
+    try:
+        # veto alla richiesta: exit 10, nessun segnale mandato alla app
+        code, msg, force = case(ask=lambda st: append(veto_line))
+        results.append(("uscita vetata dalla app: exit 10 con «sessioni attive», nessun segnale",
+                        code == 10 and "sessioni attive" in msg and force == 0))
+        # veto vecchio, prima della richiesta: non conta, la app va comunque chiusa col segnale
+        code, msg, force = case(prelog=veto_line * 3, force_kills=True)
+        results.append(("veti di prima nel log non bloccano: segnale e app chiusa, exit 0",
+                        code == 0 and force == 1))
+        # nessun veto e app che non risponde: il comportamento di prima, exit 6 dopo il segnale
+        code, msg, force = case(force_kills=False)
+        results.append(("app che non risponde senza veto: segnale mandato, exit 6 come prima",
+                        code == 6 and "non si chiude" in msg and force == 1))
+        # veto che arriva mentre si aspetta: exit 10 senza segnale
+        code, msg, force = case(on_sleep=lambda n: append(veto_line) if n == 2 else None)
+        results.append(("veto scritto durante l'attesa: exit 10, nessun segnale",
+                        code == 10 and force == 0))
+        # uscita pulita dopo la richiesta: nessun segnale
+        code, msg, force = case(ask=lambda st: st.update(alive=False))
+        results.append(("app che esce alla richiesta: exit 0, nessun segnale",
+                        code == 0 and force == 0))
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    return results
+
+
+def selftest():
+    """Su una app finta in una cartella temporanea e un servizio Keychain di prova."""
+    me = Path(__file__).resolve()
+    tmp = Path(tempfile.mkdtemp(prefix="claude-account-selftest."))
+    app, data = tmp / "app", tmp / "data"
+    app.mkdir()
+    svc = f"claude-app-login-selftest-{os.getpid()}"
+    env = dict(os.environ, CLAUDE_ACCOUNT_APP_DIR=str(app), CLAUDE_ACCOUNT_DATA_DIR=str(data),
+               CLAUDE_ACCOUNT_KC_SERVICE=svc, CLAUDE_ACCOUNT_NO_APP="1",
+               CLAUDE_ACCOUNT_LOG=str(tmp / "log"), CLAUDE_ACCOUNT_APP_LOG=str(tmp / "main.log"))
+    env.pop("__CFBundleIdentifier", None)
+    schema = ("CREATE TABLE cookies(creation_utc INTEGER NOT NULL,host_key TEXT NOT NULL,top_frame_site_key TEXT NOT NULL,"
+              "name TEXT NOT NULL,value TEXT NOT NULL,encrypted_value BLOB NOT NULL,path TEXT NOT NULL,expires_utc INTEGER NOT NULL,"
+              "is_secure INTEGER NOT NULL,is_httponly INTEGER NOT NULL,last_access_utc INTEGER NOT NULL,has_expires INTEGER NOT NULL,"
+              "is_persistent INTEGER NOT NULL,priority INTEGER NOT NULL,samesite INTEGER NOT NULL,source_scheme INTEGER NOT NULL,"
+              "source_port INTEGER NOT NULL,last_update_utc INTEGER NOT NULL,source_type INTEGER NOT NULL,"
+              "has_cross_site_ancestor INTEGER NOT NULL)")
+    future = int((time.time() + CHROME_EPOCH_OFFSET + 20 * 86400) * 1e6)
+    past = int((time.time() + CHROME_EPOCH_OFFSET - 86400) * 1e6)
+    secret = {"A": os.urandom(24), "B": os.urandom(24), "C": os.urandom(24)}
+    other = os.urandom(16)
+
+    def put_account(who, uuid, exp=future):
+        db = app / "Cookies"
+        con = sqlite3.connect(str(db))
+        con.execute(schema.replace("CREATE TABLE", "CREATE TABLE IF NOT EXISTS"))
+        with con:
+            con.execute("delete from cookies where host_key like '%claude%'")
+            for host, name, val in ((".claude.ai", "sessionKey", b"SEGRETO-" + secret[who]),
+                                    (".claude.ai", "lastActiveOrg", b"org-" + who.encode()),
+                                    ("claude.ai", "anthropic-device-id", b"dev-" + who.encode())):
+                con.execute("insert into cookies values (1,?,'',?,'',?,'/',?,1,1,1,1,1,1,0,2,443,1,0,0)",
+                            (host, name, val, exp))
+            if not con.execute("select 1 from cookies where host_key='m.stripe.com'").fetchone():
+                con.execute("insert into cookies values (1,'m.stripe.com','','m','',?,'/',?,1,1,1,1,1,1,0,2,443,1,0,0)",
+                            (other, future))
+        con.close()
+        cfg = json.loads((app / "config.json").read_text()) if (app / "config.json").exists() else {"locale": "it-IT"}
+        cfg.update({"oauth:tokenCacheV2": "cache-" + who, "lastKnownAccountUuid": uuid})
+        (app / "config.json").write_text(json.dumps(cfg))
+
+    def run(*a, email=None):
+        e = dict(env, CLAUDE_ACCOUNT_SELFTEST_EMAIL=email) if email else env
+        r = subprocess.run([sys.executable, "-I", str(me), *a], env=e, capture_output=True, text=True)
+        return r.returncode, r.stdout + r.stderr
+
+    def session_key():
+        con = sqlite3.connect(str(app / "Cookies"))
+        row = con.execute("select encrypted_value from cookies where name='sessionKey'").fetchone()
+        con.close()
+        return row[0] if row else None
+
+    def kc_raw(label):
+        return subprocess.run(["security", "find-generic-password", "-s", svc, "-a", label, "-w"],
+                              capture_output=True, text=True).stdout
+
+    checks = []
+
+    def check(name, ok):
+        checks.append(ok)
+        print(("ok   " if ok else "FAIL ") + name)
+
+    outputs = []
+    try:
+        uA, uB = "aaaaaaaa-0000-4000-8000-000000000001", "bbbbbbbb-0000-4000-8000-000000000002"
+        put_account("A", uA)
+        rc, out = run("save", "alfa"); outputs.append(out)
+        check("save alfa esce 0", rc == 0)
+        put_account("B", uB)
+        (app / "bridge-state.json").write_text(json.dumps({f"o:{uA}": {"x": 1}, f"o:{uB}": {"x": 2}}))
+        rc, out = run("save", "beta"); outputs.append(out)
+        check("save beta esce 0", rc == 0)
+        rc, out = run("save", "alfa"); outputs.append(out)
+        check("save non sovrascrive un altro account con lo stesso nome (exit 2)", rc == 2)
+        (data / "alfa/meta.json").write_text(json.dumps(dict(json.loads((data / "alfa/meta.json").read_text()),
+                                                             email="alfa@esempio.test")))
+        rc, out = run("use", "esempio"); outputs.append(out)
+        check("use per dominio dell'email trova alfa ed esce 0", rc == 0)
+        con = sqlite3.connect(str(app / "Cookies"))
+        sk = (con.execute("select encrypted_value from cookies where name='sessionKey'").fetchone() or [None])[0]
+        st = (con.execute("select encrypted_value from cookies where host_key='m.stripe.com'").fetchone() or [None])[0]
+        n = con.execute("select count(*) from cookies where host_key like '%claude%'").fetchone()[0]
+        con.close()
+        check("cookie di accesso tornati quelli di alfa, byte per byte", sk == b"SEGRETO-" + secret["A"] and n == 3)
+        check("cookie di altri siti non toccati", st == other)
+        cfg = json.loads((app / "config.json").read_text())
+        check("config: voci oauth di alfa, il resto intatto",
+              cfg.get("oauth:tokenCacheV2") == "cache-A" and cfg.get("lastKnownAccountUuid") == uA
+              and cfg.get("locale") == "it-IT")
+        bridge = json.loads((app / "bridge-state.json").read_text())
+        check("controllo remoto: tolta solo la voce dell'account d'arrivo", list(bridge) == [f"o:{uB}"])
+        rc, out = run("use", "alfa"); outputs.append(out)
+        check("use sull'account già attivo non fa niente ed esce 0", rc == 0 and "già su alfa" in out)
+        rc, out = run("use", "alfa", "--again"); outputs.append(out)
+        check("--again sullo stesso account riscrive ed esce 0", rc == 0 and "app su alfa" in out)
+        rc, out = run("use", "beta"); outputs.append(out)
+        cfg = json.loads((app / "config.json").read_text())
+        check("ritorno su beta", rc == 0 and cfg.get("lastKnownAccountUuid") == uB)
+        # uscita dalla app: lastKnownAccountUuid resta, il cookie no. Non è «già su»
+        con = sqlite3.connect(str(app / "Cookies"))
+        with con:
+            con.execute("delete from cookies where name='sessionKey'")
+        con.close()
+        rc, out = run("use", "beta"); outputs.append(out)
+        check("app uscita dall'accesso: use rimette il cookie invece di dire «già su»",
+              rc == 0 and "già su" not in out and session_key() == b"SEGRETO-" + secret["B"])
+        # un account nuovo il cui nome ricavato dall'email è già di un altro
+        alfa_before = kc_raw("alfa")
+        put_account("C", "cccccccc-0000-4000-8000-000000000003")
+        rc, out = run("save", email="alfa@altro.test"); outputs.append(out)
+        check("nome ricavato già preso: salva come account-cccccccc e alfa resta com'era",
+              rc == 0 and (data / "account-cccccccc/meta.json").exists() and kc_raw("alfa") == alfa_before)
+        put_account("B", uB)
+        # config.json che non si può preparare: niente cookie a metà, niente traceback
+        before = (app / "Cookies").read_bytes()
+        env["CLAUDE_ACCOUNT_SELFTEST_DISK_FULL"] = "1"
+        try:
+            rc, out = run("use", "alfa"); outputs.append(out)
+        finally:
+            env.pop("CLAUDE_ACCOUNT_SELFTEST_DISK_FULL")
+        check("disco pieno sulla config: cookie intatti, messaggio in italiano, nessun file temporaneo",
+              rc == 1 and (app / "Cookies").read_bytes() == before and "errore inatteso" in out
+              and "Traceback" not in out and not list(app.glob(".config.json.*")))
+        rc, out = run("use", "gamma"); outputs.append(out)
+        check("account sconosciuto: exit 2", rc == 2)
+        # salvataggio rovinato nel Keychain: non deve arrivare a scrivere niente
+        before = (app / "Cookies").read_bytes()
+        subprocess.run(["security", "add-generic-password", "-U", "-s", svc, "-a", "alfa", "-w", "rovinato"],
+                       capture_output=True)
+        rc, out = run("use", "alfa"); outputs.append(out)
+        check("salvataggio rovinato: exit 5 e app intatta", rc == 5 and (app / "Cookies").read_bytes() == before)
+        put_account("A", uA, exp=past)
+        rc, out = run("save", "alfa"); outputs.append(out)
+        put_account("B", uB)
+        rc, out = run("use", "alfa"); outputs.append(out)
+        check("accesso salvato scaduto: exit 3", rc == 3)
+        rc, out = run("current"); outputs.append(out)
+        check("current esce 0 e dice beta", rc == 0 and "(beta)" in out)
+        logs = (tmp / "log").read_text() if (tmp / "log").exists() else ""
+        leak = any(s in blob for blob in outputs + [logs]
+                   for v in secret.values()
+                   for s in (v.hex(), base64.b64encode(b"SEGRETO-" + v).decode(), "SEGRETO-"))
+        check("nessun segreto in output o nel log", not leak)
+        metas = " ".join(p.read_text() for p in data.glob("*/meta.json"))
+        check("meta.json senza segreti", "SEGRETO" not in metas and "cache-" not in metas)
+    finally:
+        for label in ("alfa", "beta", "gamma", "account-cccccccc"):
+            subprocess.run(["security", "delete-generic-password", "-s", svc, "-a", label], capture_output=True)
+        shutil.rmtree(tmp, ignore_errors=True)
+    for name, good in selftest_quit():
+        check(name, good)
+    ok = all(checks)
+    print(f"selftest: {sum(checks)}/{len(checks)} {'verde' if ok else 'ROSSO'}")
+    return 0 if ok else 1
+
+
+def main():
+    ap = argparse.ArgumentParser(prog="claude-account",
+                                 description="Cambia l'account della app Claude desktop senza rifare il login.")
+    ap.add_argument("--selftest", action="store_true", help="prova su una app finta, exit 0 = verde")
+    sub = ap.add_subparsers(dest="cmd")
+    sub.add_parser("current", help="su quale account è la app, cosa è salvato, cosa usa il terminale")
+    s = sub.add_parser("save", help="salva nel Keychain l'account su cui è la app adesso")
+    s.add_argument("name", nargs="?", help="nome da dargli (di default la parte prima della @)")
+    for cmd in ("use", "aggiungi"):
+        u = sub.add_parser(cmd, aliases=["add"] if cmd == "aggiungi" else [],
+                           help="passa la app su un account salvato" if cmd == "use"
+                           else "login una tantum di un account nuovo, poi torna dove eri")
+        u.add_argument("name")
+        u.add_argument("--force", action="store_true", help="non aspetta le sessioni ferme (le taglia)")
+        u.add_argument("--again", action="store_true", help="rifà il cambio anche se la app è già su quell'account")
+        u.add_argument("--wait", type=int, default=0, help="minuti di attesa per sessioni ferme e Mac libero")
+        u.add_argument("--cron", action="store_true", help="modo notturno: richiede anche il Mac libero")
+        u.add_argument("--dry-run", action="store_true", help="dice cosa farebbe")
+        if cmd == "aggiungi":
+            u.add_argument("--wait-login", type=int, default=15, help="minuti per fare l'accesso")
+            u.add_argument("--stay", action="store_true", help="resta sull'account nuovo")
+    args = ap.parse_args()
+    try:
+        if args.selftest:
+            return selftest()
+        if args.cmd in ("use", "aggiungi", "add") and not args.dry_run and inside_app() \
+                and not os.environ.get("CLAUDE_ACCOUNT_DETACHED"):
+            return detach(sys.argv[1:])
+        if args.cmd == "save":
+            save(args.name)
+            return 0
+        if args.cmd == "use":
+            return use(args)
+        if args.cmd in ("aggiungi", "add"):
+            return add(args)
+        return current(args)
+    except Fail as e:
+        say(f"❌ {e}")
+        return e.code
+    except Exception as e:
+        # niente traceback ad Attilio: tipo e messaggio bastano, il resto si rifà a mano
+        say(f"❌ errore inatteso ({type(e).__name__}: {str(e)[:160]}). Stato: claude-account current")
+        return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

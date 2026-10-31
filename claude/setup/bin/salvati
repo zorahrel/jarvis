@@ -1,0 +1,3 @@
+#!/bin/bash
+# archivio dei salvati Instagram/TikTok, codice in ~/Projects/salvati/salvati.py
+exec python3 "$HOME/Projects/salvati/salvati.py" "$@"

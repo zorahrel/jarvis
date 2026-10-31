@@ -1,0 +1,41 @@
+#!/usr/bin/env bash
+# Accende il PC (RTX 3090) via Wake-on-LAN e attende Ollama.
+# I dati della macchina stanno FUORI dal repo, in ~/.config/winfleet/config.env (la stessa fonte
+# di offload e pc-state): HOST_MAC, HOST_BCAST, HOST_TS, HOST_SSH. Un MAC identifica una scheda di
+# rete per sempre e un IP dice troppo di una casa precisa: in un repo pubblico non servono a nessuno.
+# Se il file o una variabile mancano lo script lo dice ed esce con 3, invece di spedire
+# un pacchetto WoL nel nulla.
+# Dati del PC: solo da ~/.config/winfleet/config.env (fuori da ogni repo). Se il file o la variabile
+# mancano si esce con 3 e un messaggio, invece di proseguire con un host vuoto.
+wfconf() {
+  local v; v="$(set +eu; . "$HOME/.config/winfleet/config.env" >/dev/null 2>&1; printf '%s' "${!1:-}")"
+  [ -n "$v" ] || { echo "${0##*/}: manca $1 in ~/.config/winfleet/config.env" >&2; return 3; }
+  printf '%s' "$v"
+}
+MAC="$(wfconf HOST_MAC)" || exit 3
+BCAST="$(wfconf HOST_BCAST)" || exit 3
+TS="$(wfconf HOST_TS)" || exit 3
+
+python3 - "$MAC" "$BCAST" <<'PY'
+import socket, sys
+mac = sys.argv[1].replace(':','').replace('-','')
+pkt = bytes.fromhex('FF'*6 + mac*16)
+for port in (9, 7):
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    s.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+    s.sendto(pkt, (sys.argv[2], port))
+    s.sendto(pkt, ('255.255.255.255', port))
+    s.close()
+print("magic packet inviato a", sys.argv[1])
+PY
+
+[ "$1" = "-q" ] && exit 0
+echo -n "attendo il PC "
+for i in $(seq 1 60); do
+  if curl -s --max-time 3 "http://$TS:11434/api/version" >/dev/null 2>&1; then
+    echo " ✅ Ollama su (${i}0s circa)"; exit 0
+  fi
+  echo -n "."; sleep 5
+done
+echo " ⏱  timeout: il PC non ha risposto. WOL forse disattivato nel BIOS."
+exit 1

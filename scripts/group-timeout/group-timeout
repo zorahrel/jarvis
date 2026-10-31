@@ -1,0 +1,46 @@
+#!/usr/bin/perl
+# Tetto di durata che ferma il GRUPPO di processi del comando, non solo il figlio diretto.
+# Perché: un git ucciso per pid a metà di un filtro lascia `git-crypt clean` appeso per sempre, con la
+# pipe su cui scrive tenuta aperta da sé stesso (tre resti in ~/.claude/jarvis/private il 24/10, provato
+# in laboratorio il 25/10). Il comando gira in un gruppo suo; allo scadere TERM al gruppo, KILL dopo 5 s.
+# A comando finito si chiude anche ciò che ha lasciato nel gruppo: è quello che faceva launchd a fine
+# job (niente AbandonProcessGroup), e che col gruppo nuovo non vedrebbe più.
+# Se fermano lui (TERM, INT, HUP: stop del job di launchd, Ctrl-C, il Bash di un agente che scade) ferma il
+# gruppo e poi esce: senza, il passo restava vivo con ppid 1 (verifica del 25/10, lo stesso guaio dei resti).
+# Lanciato a mano in primo piano su un terminale lavora come l'alarm di prima, senza gruppo nuovo: in un gruppo
+# di sfondo il passo che legge dal terminale (git che chiede una password) si fermerebbe su SIGTTIN fino al tetto,
+# e c'e' una persona davanti che lo puo' fermare con Ctrl-C.
+#   group-timeout <secondi> <comando…>   esce come il comando; 142 se il tetto scatta (come l'alarm di prima),
+#                                         128+n se lo ferma il segnale n
+use strict;
+use warnings;
+use POSIX ":sys_wait_h";
+use Time::HiRes qw(sleep);
+
+my $max = shift;
+die "uso: group-timeout <secondi> <comando…>\n" unless defined $max && $max =~ /^\d+$/ && @ARGV;
+
+if (-t STDIN && POSIX::tcgetpgrp(0) == getpgrp()) { alarm $max; exec { $ARGV[0] } @ARGV or exit 127 }
+
+my $pid = fork // exit 127;
+if (!$pid) { setpgrp(0, 0); exec { $ARGV[0] } @ARGV or exit 127 }
+
+sub stop_group {
+  kill TERM => -$pid;
+  for (1 .. 50) {                       # fino a 5 s per uscire da soli
+    waitpid $pid, WNOHANG;              # il capogruppo zombie non deve far sembrare vivo il gruppo
+    return unless kill 0 => -$pid;
+    sleep 0.1;
+  }
+  kill KILL => -$pid;
+}
+
+$SIG{ALRM} = sub { stop_group(); waitpid $pid, 0; exit 142 };
+my %signo = (HUP => 1, INT => 2, TERM => 15);
+for my $s (keys %signo) { $SIG{$s} = sub { stop_group(); waitpid $pid, 0; exit 128 + $signo{$s} } }
+alarm $max;
+waitpid $pid, 0;
+my $st = $?;
+alarm 0;
+kill TERM => -$pid;                     # gli avanzi nel gruppo, se ce ne sono
+exit($st & 127 ? 128 + ($st & 127) : $st >> 8);

@@ -1,0 +1,75 @@
+#!/usr/bin/env bash
+# bonsai3090 — accende Bonsai 2 27B sulla 3090 del PC e apre il tunnel.
+#
+# Perche' esiste: sul Mac Bonsai fa 19,7 tok/s e il banco jevweb ci mette 290-675 s;
+# sulla 3090 fa 76 tok/s e lo stesso banco 49-76 s, cioe' alla pari con Jev cloud.
+# La GPU ha 24 GB e i pesi dei modelli sono 7-17 GB: i servizi sono MUTUAMENTE
+# ESCLUSIVI. Questo script spegne LlamaCpp200K prima di accendere Bonsai, e lo
+# rimette com'era quando si spegne.
+#
+#   bonsai3090            stato
+#   bonsai3090 on         Bonsai sulla 3090 + tunnel su 127.0.0.1:8099
+#   bonsai3090 off        spegne Bonsai, rimette LlamaCpp200K, chiude il tunnel
+#
+# Il PC si raggiunge via Tailscale (HOST_SSH in ~/.config/winfleet/config.env): dal 25/10 la 22 in LAN
+# non risponde, e il Tailscale del PC, rotto da un aggiornamento, va di nuovo (diretto in LAN, 3 ms).
+set -euo pipefail
+
+# Dati del PC: solo da ~/.config/winfleet/config.env (fuori da ogni repo). Se il file o la variabile
+# mancano si esce con 3 e un messaggio, invece di proseguire con un host vuoto.
+wfconf() {
+  local v; v="$(set +eu; . "$HOME/.config/winfleet/config.env" >/dev/null 2>&1; printf '%s' "${!1:-}")"
+  [ -n "$v" ] || { echo "${0##*/}: manca $1 in ~/.config/winfleet/config.env" >&2; return 3; }
+  printf '%s' "$v"
+}
+PC=${BONSAI_PC:-$(wfconf HOST_SSH)} || exit 3
+PORTA_PC=18081
+PORTA_MAC=8099
+URL=http://127.0.0.1:$PORTA_MAC
+
+tunnel_attivo() { pgrep -f "ssh -NT.*$PORTA_MAC:127.0.0.1:$PORTA_PC" >/dev/null 2>&1; }
+
+stato() {
+  if ! ping -c1 -W2000 "${PC#*@}" >/dev/null 2>&1; then
+    echo "PC irraggiungibile (${PC#*@})"; return 1
+  fi
+  local s
+  s=$(ssh -o ConnectTimeout=8 "$PC" 'powershell -NoProfile -Command "(Get-Service LlamaCppBonsai).Status; (Get-Service LlamaCpp200K).Status; nvidia-smi --query-gpu=memory.used --format=csv,noheader"' 2>/dev/null | tr -d '\r')
+  echo "Bonsai: $(echo "$s" | sed -n 1p)  ·  Qwen200K: $(echo "$s" | sed -n 2p)  ·  VRAM: $(echo "$s" | sed -n 3p)"
+  if tunnel_attivo && curl -s -m 4 "$URL/health" 2>/dev/null | grep -q ok; then
+    echo "tunnel: attivo, modello risponde su $URL"
+  else
+    echo "tunnel: assente"
+  fi
+}
+
+accendi() {
+  ssh -o ConnectTimeout=10 "$PC" 'powershell -NoProfile -Command "if ((Get-Service LlamaCpp200K).Status -eq \"Running\") { Stop-Service LlamaCpp200K -Force; Start-Sleep 6 }; Start-Service LlamaCppBonsai"' >/dev/null 2>&1
+  # Il tunnel va (ri)aperto dopo: se il server non ascolta ancora, ExitOnForwardFailure lo fa morire.
+  for _ in $(seq 1 30); do
+    ssh -o ConnectTimeout=5 "$PC" "powershell -NoProfile -Command \"(Test-NetConnection 127.0.0.1 -Port $PORTA_PC -WarningAction SilentlyContinue).TcpTestSucceeded\"" 2>/dev/null | grep -qi true && break
+    sleep 3
+  done
+  pkill -f "ssh -NT.*$PORTA_MAC:127.0.0.1:$PORTA_PC" 2>/dev/null || true
+  sleep 1
+  nohup ssh -NT -o ServerAliveInterval=15 -o ExitOnForwardFailure=yes \
+    -L "$PORTA_MAC:127.0.0.1:$PORTA_PC" "$PC" >/dev/null 2>&1 &
+  for _ in $(seq 1 20); do
+    curl -s -m 3 "$URL/health" 2>/dev/null | grep -q ok && { echo "Bonsai pronto su $URL"; return 0; }
+    sleep 2
+  done
+  echo "il server non risponde: controlla con '$0'"; return 1
+}
+
+spegni() {
+  pkill -f "ssh -NT.*$PORTA_MAC:127.0.0.1:$PORTA_PC" 2>/dev/null || true
+  # LlamaCpp200K torna su: quella GPU e' condivisa, non e' roba da lasciare spenta.
+  ssh -o ConnectTimeout=10 "$PC" 'powershell -NoProfile -Command "Stop-Service LlamaCppBonsai -Force -EA SilentlyContinue; Start-Sleep 3; Start-Service LlamaCpp200K"' >/dev/null 2>&1
+  echo "Bonsai spento, LlamaCpp200K ripristinato"
+}
+
+case "${1:-stato}" in
+  on)  accendi ;;
+  off) spegni ;;
+  *)   stato ;;
+esac

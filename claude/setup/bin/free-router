@@ -1,0 +1,266 @@
+#!/usr/bin/env python3
+"""free-router: un solo endpoint OpenAI-compatibile che gira sui canali LLM gratuiti.
+
+PERCHE'. I free tier cadono spesso e ognuno a modo suo: NIM e OpenRouter rispondono
+503 «overloaded», Z.ai 429 con concorrenza 1, Gemini ha un tetto di richieste al
+giorno. Un agente che punta a uno solo si ferma al primo intoppo. Qui il client
+chiede il modello `free-auto` e il router prova i canali in ordine di intelligenza
+(indice Artificial Analysis del 05/10/2026) finche' uno risponde.
+
+COME. Il failover avviene solo PRIMA del primo byte di risposta: su 429, 5xx,
+timeout di connessione o errore di rete si passa al canale successivo e quello
+fallito resta in panchina (cooldown) per qualche minuto. Dopo che lo stream e'
+partito si inoltra cosi' com'e': cambiare modello a meta' risposta romperebbe le
+tool call. Un 4xx diverso da 429 (richiesta malformata) si restituisce al client
+senza bruciare gli altri canali.
+
+Le chiavi si leggono dal Keychain e dagli env file di jcode a ogni avvio, mai
+scritte qui. Mai codice Armonia sotto NDA su questi canali (log e training).
+
+Avvio: launchd com.jarvis.free-router con socket activation su 127.0.0.1:18791
+(esce dopo 15 min di silenzio, launchd lo riaccende alla prima connessione).
+A mano: `free-router` (porta 18791) o `free-router --check` per provare i canali.
+"""
+from __future__ import annotations
+
+import json
+import os
+import subprocess
+import sys
+import threading
+import time
+import urllib.error
+import urllib.request
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+sys.path.insert(0, os.path.expanduser("~/.claude/jarvis/router/scripts"))
+try:
+    import idle_serve
+except Exception:  # senza idle_serve si serve per sempre, come una corsa a mano
+    idle_serve = None
+
+PORT = int(os.environ.get("FREE_ROUTER_PORT", "18791"))
+JCODE_ENV = os.path.expanduser("~/Library/Application Support/jcode")
+COOLDOWN_S = {"429": 300, "5xx": 120, "net": 60}
+FIRST_BYTE_TIMEOUT_S = 90
+LOG = os.path.expanduser("~/.claude/jarvis/logs/free-router.log")
+
+
+def keychain(service, account=None):
+    cmd = ["security", "find-generic-password", "-s", service]
+    if account:
+        cmd += ["-a", account]
+    p = subprocess.run(cmd + ["-w"], capture_output=True, text=True)
+    return p.stdout.strip() or None
+
+
+def env_file(name, var):
+    try:
+        for line in open(os.path.join(JCODE_ENV, name)):
+            k, _, v = line.strip().partition("=")
+            if k == var:
+                return v.strip().strip('"')
+    except OSError:
+        pass
+    return None
+
+
+# Ordine = indice di intelligenza Artificial Analysis (05/10) poi affidabilita'.
+# key: funzione che restituisce la chiave (None = canale senza chiave).
+CHANNELS = [
+    {"id": "gemini-3.8-flash", "aa": 41, "base": "https://generativelanguage.googleapis.com/v1beta/openai",
+     "model": "gemini-3.8-flash", "key": lambda: keychain("gemini", "api-key"), "note": "~20 req/giorno"},
+    {"id": "nim-nemotron-ultra", "aa": 23, "base": "https://integrate.api.nvidia.com/v1",
+     "model": "nvidia/nemotron-3-ultra-550b-a55b", "key": lambda: env_file("openai-compatible.env", "OPENAI_COMPAT_API_KEY")},
+    {"id": "kilo-nemotron-ultra", "aa": 23, "base": "https://api.kilo.ai/api/gateway",
+     "model": "nvidia/nemotron-3-ultra-550b-a55b:free", "key": lambda: None},
+    {"id": "gemini-3.5-flash-lite", "aa": 22, "base": "https://generativelanguage.googleapis.com/v1beta/openai",
+     "model": "gemini-3.5-flash-lite", "key": lambda: keychain("gemini", "api-key"), "note": "~500 req/giorno"},
+    {"id": "nim-nemotron-super", "aa": 13, "base": "https://integrate.api.nvidia.com/v1",
+     "model": "nvidia/nemotron-3-super-120b-a12b", "key": lambda: env_file("openai-compatible.env", "OPENAI_COMPAT_API_KEY")},
+    {"id": "mercury-2.5", "aa": 12, "base": "https://api.inceptionlabs.ai/v1",
+     "model": "mercury-2.5", "key": lambda: keychain("inception", "api"), "note": "100M una tantum"},
+    {"id": "glm-4.5-flash", "aa": None, "base": "https://api.z.ai/api/paas/v4",
+     "model": "glm-4.5-flash", "key": lambda: keychain("zai", "api"), "note": "concorrenza 1"},
+]
+BY_ID = {c["id"]: c for c in CHANNELS}
+_bench = {}  # id -> (motivo, fino_a)
+_lock = threading.Lock()
+
+
+def log(*a):
+    try:
+        with open(LOG, "a") as f:
+            print(time.strftime("%Y-%m-%dT%H:%M:%S"), *a, file=f)
+    except OSError:
+        pass
+
+
+def bench(cid, why):
+    with _lock:
+        _bench[cid] = (why, time.time() + COOLDOWN_S.get(why, 60))
+
+
+def benched(cid):
+    with _lock:
+        b = _bench.get(cid)
+        if b and b[1] > time.time():
+            return b[0]
+        _bench.pop(cid, None)
+        return None
+
+
+def chain_for(model):
+    """free-auto = tutta la catena; free-auto:<id> parte da quel canale; un id diretto = solo quello."""
+    if model in BY_ID:
+        return [BY_ID[model]]
+    if model.startswith("free-auto:") and model[10:] in BY_ID:
+        i = CHANNELS.index(BY_ID[model[10:]])
+        return CHANNELS[i:]
+    return CHANNELS
+
+
+def open_upstream(ch, body):
+    key = ch["key"]()
+    if key is None and "kilo.ai" not in ch["base"]:
+        raise RuntimeError("chiave mancante")
+    payload = dict(body, model=ch["model"])
+    # Gemini OpenAI-compat rifiuta campi che jcode puo' mandare
+    if "googleapis" in ch["base"]:
+        for f in ("parallel_tool_calls", "store", "metadata", "prompt_cache_key"):
+            payload.pop(f, None)
+    headers = {"Content-Type": "application/json", "Accept": "text/event-stream" if body.get("stream") else "application/json"}
+    if key:
+        headers["Authorization"] = f"Bearer {key}"
+    req = urllib.request.Request(f"{ch['base']}/chat/completions", data=json.dumps(payload).encode(), headers=headers)
+    return urllib.request.urlopen(req, timeout=FIRST_BYTE_TIMEOUT_S)
+
+
+class Handler(BaseHTTPRequestHandler):
+    protocol_version = "HTTP/1.1"
+
+    def log_message(self, *a):
+        pass
+
+    def _json(self, code, obj):
+        data = json.dumps(obj).encode()
+        self.send_response(code)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(data)))
+        self.end_headers()
+        self.wfile.write(data)
+
+    def do_GET(self):
+        if self.path.rstrip("/") in ("/v1/models", "/models"):
+            data = [{"id": "free-auto", "object": "model", "owned_by": "free-router"}]
+            data += [{"id": c["id"], "object": "model", "owned_by": "free-router"} for c in CHANNELS]
+            return self._json(200, {"object": "list", "data": data})
+        if self.path.rstrip("/") in ("/health", "/status"):
+            return self._json(200, {"channels": [{"id": c["id"], "aa": c["aa"], "benched": benched(c["id"])} for c in CHANNELS]})
+        self._json(404, {"error": {"message": "not found"}})
+
+    def do_POST(self):
+        if not self.path.rstrip("/").endswith("/chat/completions"):
+            return self._json(404, {"error": {"message": "solo /v1/chat/completions"}})
+        try:
+            body = json.loads(self.rfile.read(int(self.headers.get("Content-Length") or 0)) or b"{}")
+        except ValueError:
+            return self._json(400, {"error": {"message": "JSON non valido"}})
+        chain = chain_for(body.get("model", "free-auto"))
+        tried = []
+        for ch in chain:
+            if len(chain) > 1 and benched(ch["id"]):
+                tried.append(f"{ch['id']}: in panchina ({benched(ch['id'])})")
+                continue
+            try:
+                up = open_upstream(ch, body)
+            except urllib.error.HTTPError as e:
+                detail = e.read()[:300].decode(errors="replace")
+                if e.code == 429 or e.code >= 500:
+                    bench(ch["id"], "429" if e.code == 429 else "5xx")
+                    tried.append(f"{ch['id']}: HTTP {e.code}")
+                    log("fail", ch["id"], e.code, detail[:120])
+                    continue
+                # 4xx vero: la richiesta e' sbagliata, gli altri canali non la salverebbero
+                log("client-error", ch["id"], e.code, detail[:200])
+                return self._json(e.code, {"error": {"message": f"[{ch['id']}] {detail}"}})
+            except Exception as e:
+                bench(ch["id"], "net")
+                tried.append(f"{ch['id']}: {type(e).__name__} {str(e)[:80]}")
+                log("fail", ch["id"], "net", str(e)[:120])
+                continue
+            # Kilo/OpenRouter rispondono 200 e mettono l'errore del provider a valle nel corpo
+            # (anche come primo evento SSE): si legge il primo blocco prima di impegnarsi.
+            try:
+                first = up.read1(65536) if hasattr(up, "read1") else up.read(65536)
+            except Exception as e:
+                up.close()
+                bench(ch["id"], "net")
+                tried.append(f"{ch['id']}: lettura {type(e).__name__}")
+                continue
+            head = first[:2048].decode(errors="replace")
+            if '"error"' in head and '"choices"' not in head:
+                up.close()
+                bench(ch["id"], "5xx")
+                tried.append(f"{ch['id']}: errore nel corpo")
+                log("fail", ch["id"], "body-error", head[:160].replace("\n", " "))
+                continue
+            log("ok", ch["id"], "stream" if body.get("stream") else "json")
+            self.send_response(200)
+            self.send_header("Content-Type", up.headers.get("Content-Type", "application/json"))
+            self.send_header("X-Free-Router-Channel", ch["id"])
+            self.send_header("Connection", "close")
+            self.end_headers()
+            self.close_connection = True
+            try:
+                chunk = first
+                while chunk:
+                    self.wfile.write(chunk)
+                    self.wfile.flush()
+                    chunk = up.read1(65536) if hasattr(up, "read1") else up.read(65536)
+            except (BrokenPipeError, ConnectionResetError):
+                pass
+            finally:
+                up.close()
+            return
+        log("all-failed", "; ".join(tried))
+        self._json(503, {"error": {"message": "free-router: nessun canale gratuito disponibile. " + "; ".join(tried)}})
+
+
+def check():
+    body = {"messages": [{"role": "user", "content": "Rispondi solo: OK"}], "max_tokens": 200}
+    rc = 0
+    for ch in CHANNELS:
+        t = time.time()
+        try:
+            r = json.load(open_upstream(ch, body))
+            if "choices" not in r:  # alcuni gateway rispondono 200 con un errore dentro
+                raise RuntimeError(json.dumps(r.get("error", r))[:100])
+            msg = r["choices"][0]["message"]
+            txt = (msg.get("content") or msg.get("reasoning_content") or "").strip()[:30]
+            print(f"ok   {ch['id']:24} {time.time() - t:5.1f}s  {txt!r}")
+        except urllib.error.HTTPError as e:
+            print(f"FAIL {ch['id']:24} HTTP {e.code} {e.read()[:100].decode(errors='replace')}")
+            rc = 1
+        except Exception as e:
+            print(f"FAIL {ch['id']:24} {type(e).__name__} {str(e)[:100]}")
+            rc = 1
+    return rc
+
+
+def main():
+    if "--check" in sys.argv:
+        sys.exit(check())
+    listener = idle_serve.activated_socket() if idle_serve else None
+    server = ThreadingHTTPServer(("127.0.0.1", PORT), Handler, bind_and_activate=listener is None)
+    server.daemon_threads = True
+    if listener is not None:
+        idle_serve.adopt(server, listener)
+        idle_serve.serve_until_idle(server, idle_serve.idle_seconds("FREE_ROUTER_IDLE_EXIT_S"), log=lambda *a, **k: log(*a))
+    else:
+        print(f"free-router su http://127.0.0.1:{PORT}/v1", flush=True)
+        server.serve_forever()
+
+
+if __name__ == "__main__":
+    main()

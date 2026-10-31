@@ -1,0 +1,76 @@
+#!/usr/bin/env bash
+# vocecomando — crea un comando vocale nuovo in una riga.
+#
+#   vocecomando "Blocca schermo" "pmset displaysleepnow"
+#   poi dici: «Apri Blocca schermo»
+#
+# Perche' micro-app e non i «Comandi personalizzati» di Controllo vocale:
+# quel pannello salva in un formato che da fuori non e' scrivibile (cercato nei
+# binari di sistema, non e' esposto), quindi ogni comando andrebbe creato a mano
+# nell'interfaccia. Invece «Apri <nome app>» e' un comando NATIVO di Controllo
+# vocale: basta che esista un'app con quel nome, e il nome e' la frase.
+#
+# Le app sono LSUIElement: nessuna finestra, nessuna icona nel Dock, fanno il
+# lavoro e spariscono. Stanno in ~/Applications, non toccano /Applications.
+set -euo pipefail
+
+# Elenca solo i comandi vocali: nella stessa cartella ci sono app vere
+# (Topics, Jcode...), e le nostre si riconoscono dall'identificativo local.voce.*
+elenca() {
+  local trovato=0 a id
+  for a in "$HOME/Applications"/*.app; do
+    [ -d "$a" ] || continue
+    id=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$a/Contents/Info.plist" 2>/dev/null || true)
+    case "$id" in
+      local.voce.*) echo "  Apri $(basename "$a" .app)"; trovato=1 ;;
+    esac
+  done
+  [ "$trovato" = 1 ] || echo "  (nessuno)"
+}
+
+nome="${1:-}"; cmd="${2:-}"
+if [ -z "$nome" ] || [ -z "$cmd" ]; then
+  cat >&2 <<USO
+uso: vocecomando "<frase>" "<comando shell>"
+esempio: vocecomando "Blocca schermo" "pmset displaysleepnow"
+         poi dici «Apri Blocca schermo»
+
+comandi vocali gia' creati:
+$(elenca)
+USO
+  exit 2
+fi
+
+app="$HOME/Applications/$nome.app"
+mkdir -p "$app/Contents/MacOS"
+id="local.voce.$(echo "$nome" | tr -cd '[:alnum:]' | tr 'A-Z' 'a-z')"
+
+cat > "$app/Contents/Info.plist" <<PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>CFBundleName</key><string>$nome</string>
+  <key>CFBundleDisplayName</key><string>$nome</string>
+  <key>CFBundleIdentifier</key><string>$id</string>
+  <key>CFBundleExecutable</key><string>run</string>
+  <key>CFBundlePackageType</key><string>APPL</string>
+  <key>CFBundleVersion</key><string>1.0</string>
+  <key>LSUIElement</key><true/>
+</dict></plist>
+PLIST
+
+# Il comando registra sempre prima di agire e l'esito dopo: se una riga manca,
+# Controllo vocale non ha capito la frase; se c'e' ma l'esito e' un errore,
+# ha capito e il comando e' fallito. Sono due guasti diversi.
+cat > "$app/Contents/MacOS/run" <<RUN
+#!/bin/bash
+"\$HOME/bin/vocelog" registra '$nome'
+out=\$( { $cmd ; } 2>&1 | tail -1 )
+[ -n "\$out" ] && "\$HOME/bin/vocelog" registra "  -> \$out" || "\$HOME/bin/vocelog" registra "  -> ok"
+RUN
+chmod +x "$app/Contents/MacOS/run"
+
+# Senza questo Launch Services non lo vede e «Apri <nome>» fallisce.
+/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f "$app" 2>/dev/null || true
+
+echo "creato. Ora puoi dire: «Apri $nome»"

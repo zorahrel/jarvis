@@ -1,0 +1,89 @@
+#!/usr/bin/python3 -I
+"""mac-libero [secondi]: exit 0 se Attilio non tocca il Mac da almeno N secondi (default 300), altrimenti 1.
+
+Da chiamare prima di qualunque cosa che usi lo schermo vero: mouse, tastiera, menu, finestre in primo piano.
+Regola (24/10, terza volta): «non devi mai occuparmi il Mac mentre lo sto usando, dovresti sempre fare in background».
+
+Perché non HIDIdleTime (26/10): l'app Vorssaint («tieni sveglio il Mac») manda ogni ~5 minuti un mouseMoved finto che
+lascia il cursore dov'è (misurato: (1158.8, 1117.0) prima e dopo, 07:58:05). HIDIdleTime tornava a 0 prima dei 300 s e
+mac-libero non usciva mai 0, nemmeno con tastiera e clic fermi da 4 ore. Ora contano tastiera, clic, scroll e
+trascinamenti; il mouse conta solo se il cursore si è spostato davvero dall'ultima volta che l'abbiamo visto.
+
+MAC_LIBERO_IDLE sostituisce tutta la lettura (vecchi test dei chiamanti); MAC_LIBERO_REAL, _MOUSE, _POS, _NOW e
+_CURSOR_STATE sostituiscono i singoli pezzi nei test di questo file.
+"""
+import ctypes
+import json
+import os
+import subprocess
+import sys
+import time
+
+MIN = int(sys.argv[1]) if len(sys.argv) > 1 else 300
+STATE = os.environ.get("MAC_LIBERO_CURSOR_STATE", os.path.expanduser("~/.cache/mac-libero/cursor.json"))
+# tipi di evento CGEventType che solo una persona produce: tasti, modificatori, clic, scroll, trascinamenti
+REAL_TYPES = (10, 12, 1, 3, 25, 22, 6, 7, 27)
+MOUSE_MOVED = 5
+
+
+def hid_idle():
+    out = subprocess.run(["/usr/sbin/ioreg", "-c", "IOHIDSystem"], capture_output=True, text=True).stdout
+    for line in out.splitlines():
+        if "HIDIdleTime" in line:
+            return int(int(line.split()[-1]) / 1e9)
+    return 0
+
+
+def readings():
+    env = os.environ
+    if "MAC_LIBERO_REAL" in env:
+        pos = env.get("MAC_LIBERO_POS", "0,0")
+        return float(env["MAC_LIBERO_REAL"]), float(env.get("MAC_LIBERO_MOUSE", env["MAC_LIBERO_REAL"])), pos
+    cg = ctypes.CDLL("/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics")
+    since = cg.CGEventSourceSecondsSinceLastEventType
+    since.restype, since.argtypes = ctypes.c_double, [ctypes.c_int, ctypes.c_uint32]
+    hid_state = 1  # kCGEventSourceStateHIDSystemState: l'hardware, non gli eventi di una sola app
+
+    class Point(ctypes.Structure):
+        _fields_ = [("x", ctypes.c_double), ("y", ctypes.c_double)]
+
+    cg.CGEventCreate.restype, cg.CGEventCreate.argtypes = ctypes.c_void_p, [ctypes.c_void_p]
+    cg.CGEventGetLocation.restype, cg.CGEventGetLocation.argtypes = Point, [ctypes.c_void_p]
+    cg.CFRelease.argtypes = [ctypes.c_void_p]
+    ev = cg.CGEventCreate(None)
+    p = cg.CGEventGetLocation(ev)
+    cg.CFRelease(ev)
+    real = min(since(hid_state, t) for t in REAL_TYPES)
+    return real, since(hid_state, MOUSE_MOVED), f"{p.x:.1f},{p.y:.1f}"
+
+
+def idle_seconds():
+    if "MAC_LIBERO_IDLE" in os.environ:
+        return int(os.environ["MAC_LIBERO_IDLE"] or 0)
+    try:
+        real, mouse, pos = readings()
+    except Exception:
+        return hid_idle()  # senza CoreGraphics (sessione senza schermo) resta la lettura di prima, più prudente
+    now = float(os.environ.get("MAC_LIBERO_NOW", time.time()))
+    if real < MIN or mouse >= MIN:
+        return int(min(real, mouse))
+    # tastiera e clic fermi, il mouse no: conta solo se il cursore si è spostato da quando l'abbiamo visto
+    try:
+        st = json.load(open(STATE))
+    except (OSError, ValueError):
+        st = {}
+    if st.get("pos") == pos:
+        return int(min(real, now - st.get("since", now)))
+    # cursore spostato (o prima lettura): lo diamo per mosso all'ultimo mouseMoved, la stima più prudente
+    os.makedirs(os.path.dirname(STATE), exist_ok=True)
+    with open(STATE, "w") as f:
+        json.dump({"pos": pos, "since": now - mouse}, f)
+    return int(mouse)
+
+
+idle = idle_seconds()
+if idle >= MIN:
+    sys.exit(0)
+if not sys.stderr.isatty():
+    print(f"mac-libero: Attilio sta usando il Mac (fermo da {idle}s, ne servono {MIN})", file=sys.stderr)
+sys.exit(1)

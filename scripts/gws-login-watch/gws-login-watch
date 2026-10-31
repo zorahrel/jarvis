@@ -1,0 +1,76 @@
+#!/usr/bin/env python3
+"""Avvisa in «Ti aspetta» appena una cartella gws (~/.config/gws, gws-<casella>) perde il login.
+
+Il 28/10 sono spariti i credentials.enc di gws-zorahrel e gws-armonia senza traccia, e lo si è scoperto il giorno
+dopo da un cron rotto. Il controllo è locale (il file del login c'è o no, nessuna chiamata a Google): una voce per cartella,
+chiave gws-login-<nome>, aperta una volta sola e chiusa da sola quando il login torna.
+
+uso: gws-login-watch [--dry-run] [--root DIR] [--hub URL]
+"""
+import argparse
+import json
+import sys
+import urllib.request
+from pathlib import Path
+
+
+def status(d):
+    """Stato del login di una cartella: None se è a posto, altrimenti il motivo in parole. Basta guardare il file:
+    `gws auth status` passa dal portachiavi e costa 0,6 s di CPU a cartella, e il guasto del 28/10 era il file sparito."""
+    if (d / "credentials.enc").is_file() or (d / "credentials.json").is_file():
+        return None
+    return "manca il file del login (credentials.enc)"
+
+
+def name_of(d):
+    return d.name[len("gws-"):] if d.name.startswith("gws-") else ""
+
+
+def login_cmd(name):
+    return "gws-mail {} auth login".format(name) if name else "gws auth login"
+
+
+def hub(url, body=None):
+    req = urllib.request.Request(url + "/api/attesa", data=json.dumps(body).encode() if body else None,
+                                 headers={"Content-Type": "application/json"})
+    with urllib.request.urlopen(req, timeout=10) as r:
+        return json.load(r)
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--dry-run", action="store_true")
+    ap.add_argument("--root", default=str(Path.home() / ".config"))
+    ap.add_argument("--hub", default="http://127.0.0.1:3360")
+    a = ap.parse_args()
+
+    dirs = sorted(p for p in Path(a.root).glob("gws*") if p.is_dir() and (p.name == "gws" or p.name.startswith("gws-")))
+    bad = {d: why for d in dirs if (why := status(d))}
+    open_ = {}
+    if not a.dry_run:
+        open_ = {v["key"]: v["id"] for v in hub(a.hub).get("items", []) if str(v.get("key", "")).startswith("gws-login-")}
+
+    for d in dirs:
+        name = name_of(d)
+        key = "gws-login-" + (name or "default")
+        why = bad.get(d)
+        label = name or "gws"
+        if why and key not in open_:
+            body = {"tipo": "decisione", "key": key, "from": "gws-login-watch",
+                    "title": "Login Google da rifare: {}".format(label),
+                    "why": "{} in ~/.config/{}. Le automazioni che leggono questa casella si fermano. Da terminale: `{}`."
+                           .format(why, d.name, login_cmd(name))}
+            print("APRE", label, "-", why)
+            if not a.dry_run:
+                hub(a.hub, body)
+        elif not why and key in open_:
+            print("CHIUDE", label)
+            if not a.dry_run:
+                hub(a.hub, {"kind": "chiudi", "ref": open_[key], "by": "gws-login-watch", "note": "login tornato"})
+        else:
+            print("ok" if not why else "già aperta", label, *( [why] if why else []))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

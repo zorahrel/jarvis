@@ -1,0 +1,35 @@
+#!/bin/bash
+# Interruttore e stato del widget Promemoria: on e off accendono o spengono il job che scrive il JSON, status mostra com'è.
+LABEL=com.jarvis.reminders-desk
+PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"
+DATA="$HOME/.topics/reminders-desk/all.json"
+DOMAIN="gui/$(id -u)"
+
+# Il job è acceso solo se launchd lo conosce: il plist sul disco non basta.
+job_state() {
+  if launchctl print "$DOMAIN/$LABEL" >/dev/null 2>&1; then echo "job: acceso"; else echo "job: spento"; fi
+}
+
+case "${1:-status}" in
+  on)
+    # Se è già caricato, bootstrap fallisce: il job resta acceso comunque.
+    launchctl bootstrap "$DOMAIN" "$PLIST" 2>/dev/null
+    job_state ;;
+  off)
+    # Dopo 15 minuti il widget mostra «job fermo».
+    launchctl bootout "$DOMAIN/$LABEL" 2>/dev/null
+    job_state ;;
+  refresh)
+    launchctl kickstart -k "$DOMAIN/$LABEL" && echo "aggiornato adesso" ;;
+  status)
+    job_state
+    if [ -f "$DATA" ]; then
+      echo "dati scritti alle $(stat -f '%Sm' -t '%d/%m %H:%M' "$DATA")"
+      python3 -I -c 'import json,sys; R=json.load(open(sys.argv[1])); print("promemoria aperti:", sum(1 for r in R if not r.get("isCompleted")))' "$DATA"
+    else
+      echo "dati: assenti"
+    fi ;;
+  *)
+    echo "uso: reminders-desk on | off | status | refresh"
+    exit 1 ;;
+esac

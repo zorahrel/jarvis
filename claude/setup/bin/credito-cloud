@@ -1,0 +1,52 @@
+#!/usr/bin/env python3
+# Saldo vivo del bonus cloud di Claude Code (bucket `iguana_necktie` di /api/oauth/usage).
+# Sola lettura: legge il token OAuth dal Portachiavi e non lo stampa mai.
+# Perché non ~/.claude.json: la CLI scrive cachedUsageUtilization solo ogni tanto
+# (il 07/10 era fermo al 06/10 22:37), e il flag promo `claimed` mentiva.
+# Uso: credito-cloud [--json]   exit 0 = letto · 1 = errore · 3 = token scaduto
+import json, subprocess, sys, time, urllib.request, urllib.error, datetime, os
+sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
+from cloud_conto import oauth as conto_oauth, org as conto_org, cli_env  # CLOUD_ACCOUNT=auto-N: altro account di vdm
+
+BUCKET = "iguana_necktie"
+
+def token():
+    oauth = conto_oauth()
+    exp = oauth.get("expiresAt") or 0
+    if exp and exp / 1000 < time.time() + 30:
+        # il refresh lo fa la CLI: qualunque `claude -p` lo rinnova
+        print("credito-cloud: token OAuth scaduto, lancia `claude -p ok --max-turns 1` e riprova", file=sys.stderr)
+        sys.exit(3)
+    return oauth["accessToken"]
+
+req = urllib.request.Request(
+    "https://api.anthropic.com/api/oauth/usage",
+    headers={
+        "Authorization": "Bearer " + token(),
+        "anthropic-beta": "oauth-2025-04-20",
+        "Content-Type": "application/json",
+        "User-Agent": "credito-cloud/1",
+    },
+)
+try:
+    with urllib.request.urlopen(req, timeout=10) as r:
+        data = json.load(r)
+except urllib.error.HTTPError as e:
+    sys.exit(f"credito-cloud: HTTP {e.code} da /api/oauth/usage")
+except Exception as e:  # rete giù, timeout
+    sys.exit(f"credito-cloud: {type(e).__name__}: {e}")
+
+b = data.get(BUCKET)
+now = datetime.datetime.now().strftime("%d/%m %H:%M")
+if "--json" in sys.argv:
+    # modelli con una quota settimanale tutta loro (es. un modello nuovo): nome, % usata, reset
+    models = [{"name": l["scope"]["model"].get("display_name") or l["scope"]["model"].get("id"), "pct": l.get("percent"), "resets": l.get("resets_at")}
+              for l in data.get("limits") or [] if isinstance(l.get("scope"), dict) and isinstance(l["scope"].get("model"), dict)]
+    print(json.dumps({"letto": now, BUCKET: b, "seven_day": data.get("seven_day"), "models": models}))
+elif not b:
+    print(f"{now}  bucket {BUCKET} assente nella risposta (chiavi: {', '.join(sorted(data))})")
+    sys.exit(1)
+else:
+    print(f"{now}  credito cloud: ${b.get('remaining_dollars', 0):.2f} rimasti "
+          f"su ${b.get('limit_dollars')} (spesi ${b.get('used_dollars', 0):.2f}), "
+          f"scade {str(b.get('resets_at', ''))[:16]}Z")

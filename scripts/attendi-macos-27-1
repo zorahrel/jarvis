@@ -1,0 +1,13 @@
+#!/bin/bash
+# Attilio 25/10: oggi 26.7.1, a macOS 27 si passa alla 27.1 (la 27.0.1 ha ancora i problemi di Mission
+# Control con più schermi). Ogni lunedì guarda se Apple offre una 27.1 o successiva; la prima volta che
+# la vede la mette in «Ti aspetta» dell'hub e si toglie da launchd.
+set -u
+L=$(softwareupdate -l 2>/dev/null | /usr/bin/grep -o -E 'macOS [A-Za-z ]*27\.([1-9][0-9]*)(\.[0-9]+)?' | head -1)
+[ -n "$L" ] || exit 0
+body=$(python3 -I -c 'import json,sys; print(json.dumps({"tipo":"decisione","title":sys.argv[1]+" disponibile","why":"Avevi deciso di passare a macOS 27 alla 27.1. La preparo come la 26.7.1: download, snapshot, controllo dopo il riavvio; a te password e momento.","link":"#automations","from":"attendi-macos-27-1"}))' "$L")
+curl -s -m 10 -X POST http://127.0.0.1:3360/api/attesa -H 'content-type: application/json' -d "$body" >/dev/null || exit 1
+P="$HOME/Library/LaunchAgents/com.jarvis.attendi-macos-27-1.plist"
+mkdir -p "$HOME/Library/LaunchAgents/disabled"; mv "$P" "$HOME/Library/LaunchAgents/disabled/" 2>/dev/null
+launchctl bootout "gui/$(id -u)/com.jarvis.attendi-macos-27-1" 2>/dev/null
+exit 0

@@ -1,0 +1,245 @@
+#!/usr/bin/env bash
+# offload: fa girare un comando dove costa meno. Mac libero -> qui; Mac carico -> sul PC Windows
+# (lo sveglia se dorme), con una copia dei file del repo senza segreti, e riporta exit code e file.
+#
+#   offload [opzioni] -- <comando>     il comando (sul PC gira in cmd.exe: scrivilo per Windows)
+#   offload status                     carico del Mac, stato e carico del PC
+#
+#   -C <dir>       cartella da portare (default: radice git della cartella corrente)
+#   --pc|--local   forza dove (default: decide il carico)
+#   --get <path>   dopo il giro riporta <path> (relativo alla cartella) qui; ripetibile
+#   --mac-cmd <c>  comando da usare se gira sul Mac, quando quello per Windows è diverso
+#   --cosa <testo> il lavoro in parole («i test della dashboard»): lo mostra la tray al posto del comando
+#
+# Soglie: OFFLOAD_MAX_MAC (carico per core oltre il quale si va sul PC, default 1.5),
+# OFFLOAD_MAX_PC (CPU % del PC oltre la quale resta qui, default 60). Sul PC non vanno MAI segreti
+# (PC bonificato l'11/10): .env, .dev.vars, chiavi e credenziali restano fuori dalla copia.
+# La copia sul PC (E:\offload\<nome>) resta tra un giro e l'altro: node_modules non si rifà ogni volta.
+#
+# Sul Mac (Mac scarico, --local, PC spento o occupato) il giro prende un posto nella coda comune coi gate di Topics
+# (/tmp/topics-gate-slots/<i>.pid, gli stessi 3 posti di scripts/gate-slot.ts): una coda sola per tutta la macchina.
+# Le sessioni che nessuno guarda aspettano un posto e un Mac che respira (carico vivo sotto 1,5 per core e hub non «sotto sforzo»;
+# al massimo OFFLOAD_WAIT s, poi exit 75);
+# chi ha qualcuno davanti non aspetta mai. Il comando gira con TOPICS_GATE_HELD=offload, così il preload di Topics
+# non si mette in coda dietro al proprio genitore. Se il freno del Mac ha fermato il giro, a fine giro lo dice.
+set -uo pipefail
+# Dati del PC: solo da ~/.config/winfleet/config.env (fuori da ogni repo). Se il file o la variabile
+# mancano si esce con 3 e un messaggio, invece di proseguire con un host vuoto.
+wfconf() {
+  local v; v="$(set +eu; . "$HOME/.config/winfleet/config.env" >/dev/null 2>&1; printf '%s' "${!1:-}")"
+  [ -n "$v" ] || { echo "${0##*/}: manca $1 in ~/.config/winfleet/config.env" >&2; return 3; }
+  printf '%s' "$v"
+}
+HOST="${OFFLOAD_HOST:-$(wfconf HOST_SSH)}" || exit 3
+MAX_MAC="${OFFLOAD_MAX_MAC:-1.5}"
+MAX_PC="${OFFLOAD_MAX_PC:-60}"
+ROOT_PC="E:/offload"
+SSH=(ssh -o ConnectTimeout=5 -o BatchMode=yes -o ServerAliveInterval=30 -o ServerAliveCountMax=4)
+CACHE="${OFFLOAD_CACHE:-$HOME/.cache/offload}"
+SECRET_RE='(^|/)(\.env(\..*)?|\.dev\.vars.*|.*\.(pem|key|p12|pfx|keystore)|id_(rsa|ed25519|ecdsa).*|credentials(\..*)?|secrets?(\..*)?|.*\.secret)$'
+
+say() { echo "offload: $*" >&2; }
+
+mac_load() {  # carico a 1 minuto per core, 2 decimali; vuoto se non si legge (OFFLOAD_FAKE_LOAD: solo per il banco di prova)
+  [ -n "${OFFLOAD_FAKE_LOAD:-}" ] && { printf '%s' "$OFFLOAD_FAKE_LOAD"; return; }
+  # sysctl dentro la sandbox di Codex da "Operation not permitted": uptime e getconf sì
+  local l n; l=$(uptime 2>/dev/null | sed 's/.*load averages*: *//' | awk '{print $1}'); n=$(getconf _NPROCESSORS_ONLN 2>/dev/null)
+  awk -v l="$l" -v n="$n" 'BEGIN{ if (l ~ /^[0-9]/ && n+0 > 0) printf "%.2f", l/n }'
+}
+pc_up() { "${SSH[@]}" -o ConnectTimeout=3 "$HOST" exit 2>/dev/null; }
+pc_cpu() {
+  "${SSH[@]}" "$HOST" "powershell -NoProfile -Command \"[int](Get-CimInstance Win32_Processor | Measure-Object LoadPercentage -Average).Average\"" 2>/dev/null | tr -dc '0-9'
+}
+
+if [ "${1:-}" = status ]; then
+  echo "Mac: $(mac_load) per core ($(getconf _NPROCESSORS_ONLN) core), soglia $MAX_MAC"
+  if pc_up; then echo "PC: acceso ($HOST), CPU $(pc_cpu)%, soglia $MAX_PC%"; else echo "PC: non risponde ($HOST); si sveglia con winwake al primo giro"; fi
+  # lavori sul PC adesso (un file per giro, scritto qui sotto; pid morto = avanzo di un kill -9)
+  for f in "$CACHE"/running/*.json; do
+    [ -f "$f" ] || continue
+    kill -0 "$(jq -r .pid "$f")" 2>/dev/null || continue
+    jq -r '"\(if .local then "sul Mac ora" + (if .slot != null then " (posto \(.slot))" else " (senza posto)" end) else "sul PC ora" end): \(.cmd) (\(.dir), \(.who), da \(((now*1000 - .at)/1000|floor))s)"' "$f"
+  done
+  exit 0
+fi
+
+DIR=""; WHERE=auto; FORCED=""; GETS=(); MAC_CMD=""; WHAT="${OFFLOAD_COSA:-}"
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -C) DIR="$2"; shift 2 ;;
+    --pc) [ "$WHERE" = local ] && { say "--pc e --local insieme"; exit 64; }; WHERE=pc; FORCED=1; shift ;;
+    --local) [ -n "$FORCED" ] && { say "--pc e --local insieme"; exit 64; }; WHERE=local; shift ;;
+    --get) GETS+=("$2"); shift 2 ;;
+    --mac-cmd) MAC_CMD="$2"; shift 2 ;;
+    --cosa) WHAT="$2"; shift 2 ;;
+    --) shift; break ;;
+    -h|--help) sed -n 2,23p "$0"; exit 0 ;;
+    *) break ;;
+  esac
+done
+[ $# -gt 0 ] || { sed -n 2,23p "$0" >&2; exit 64; }
+CMD="$*"
+DIR="${DIR:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}"
+DIR="$(cd "$DIR" && pwd)" || exit 66
+
+# --- giro sul Mac, dentro la coda comune -----------------------------------------------------------------------------
+SLOT_DIR="${TOPICS_GATE_SLOT_DIR:-/tmp/topics-gate-slots}"
+SLOT=""
+slot_count() {  # TOPICS_GATE_SLOTS se > 0, altrimenti max(2, core/4): come gate-slot.ts, ma 0 qui non spegne la coda
+  local n="${TOPICS_GATE_SLOTS:-}" c
+  case "$n" in ''|*[!0-9]*) n=0 ;; esac
+  [ "$n" -gt 0 ] && { echo "$n"; return; }
+  c=$(getconf _NPROCESSORS_ONLN 2>/dev/null); c=${c:-4}
+  echo $(( c / 4 > 2 ? c / 4 : 2 ))
+}
+slot_reap() {  # un posto il cui titolare è morto è libero (reapStale di gate-slot.ts; vuoto = pid 0 = vivo)
+  local f p
+  for f in "$SLOT_DIR"/[0-9]*.pid; do
+    [ -f "$f" ] || continue
+    p=$(cat "$f" 2>/dev/null); p=${p//[[:space:]]/}
+    case "$p" in '') continue ;; *[!0-9]*) rm -f "$f" ;; *) kill -0 "$p" 2>/dev/null || rm -f "$f" ;; esac
+  done
+}
+slot_take() {  # set -C = O_EXCL: la stessa mutua esclusione di takeFile ('wx')
+  local i n
+  mkdir -p "$SLOT_DIR" 2>/dev/null || return 1
+  slot_reap; n=$(slot_count)
+  for ((i = 0; i < n; i++)); do
+    if ( set -C; echo $$ > "$SLOT_DIR/$i.pid" ) 2>/dev/null; then SLOT=$i; return 0; fi
+  done
+  return 1
+}
+slot_release() { [ -n "$SLOT" ] && [ "$(cat "$SLOT_DIR/$SLOT.pid" 2>/dev/null)" = "$$" ] && rm -f "$SLOT_DIR/$SLOT.pid"; SLOT=""; }
+mac_strained() {  # sotto sforzo = il carico vivo oltre OFFLOAD_STRAIN per core (default come MAX_MAC, 1,5: la linea del cancello
+  # dell'hook) OPPURE il hub lo dice (swap sostenuta, 3 per core da un minuto). Il hub si aggiunge al carico, non lo sostituisce.
+  local st now; now=$(date +%s)
+  awk -v l="$(mac_load)" -v m="${OFFLOAD_STRAIN:-$MAX_MAC}" 'BEGIN{exit !(l != "" && l > m)}' && return 0
+  st=$(jq -r 'select(.at != null) | "\(.at) \(.strained)"' "${OFFLOAD_STATE_FILE:-$HOME/.cache/claude-usage-hub/mac-state.json}" 2>/dev/null)
+  if [ -n "$st" ] && [ $(( now - ${st%% *} / 1000 )) -lt 90 ] 2>/dev/null; then [ "${st#* }" = true ]; return; fi
+  return 1
+}
+attention() {  # human|background|delegated; ogni guasto = human (non si fa aspettare Attilio per un errore qui)
+  local a="${MAC_ATTENTION:-}" node
+  if [ -z "$a" ]; then
+    node=$(command -v node || echo /opt/homebrew/bin/node)
+    a=$("$node" "${MAC_ATTENTION_BIN:-$HOME/Projects/claude-usage-hub/bin/mac-attention.mjs}" --pid $$ 2>/dev/null | head -1)
+  fi
+  case "$a" in background|delegated) echo "$a" ;; *) echo human ;; esac
+}
+brake_note() {  # $1 = inizio del giro in s: azioni del freno sul ramo di questo giro (io o i miei antenati)
+  local log="${OFFLOAD_BRAKE_LOG:-$HOME/.cache/claude-usage-hub/brake.jsonl}" pids="$$" p=$$ i r a b why
+  [ -s "$log" ] || return 0
+  for ((i = 0; i < 8; i++)); do p=$(ps -o ppid= -p "$p" 2>/dev/null | tr -d ' '); [ -n "$p" ] && [ "$p" -gt 1 ] || break; pids="$pids,$p"; done
+  r=$(tail -2000 "$log" | jq -rs --argjson t0 "$(( $1 * 1000 ))" "[.[] | select(.at >= \$t0 and (.pid as \$p | [$pids] | any(. == \$p)))] | select(length > 0) | \"\(map(.at) | min) \(map(.at) | max) \(.[0].why // .[0].action)\"" 2>/dev/null)
+  [ -n "$r" ] || return 0
+  a=${r%% *}; r=${r#* }; b=${r%% *}; why=${r#* }
+  say "⚠️ il freno del Mac ha fermato questo giro ($(date -r $((a / 1000)) +%H:%M)–$(date -r $((b / 1000)) +%H:%M), $why): un rosso di tempi qui non vale, rilancialo"
+}
+RUNF_LOCAL=""
+run_local() {
+  local why="$1" att="" waited=0 rc t0
+  trap 'slot_release; [ -n "$RUNF_LOCAL" ] && rm -f "$RUNF_LOCAL"' EXIT
+  trap 'exit 130' INT; trap 'exit 143' TERM
+  if [ -n "${TOPICS_GATE_HELD:-}" ] && [ "$TOPICS_GATE_HELD" != 0 ]; then
+    say "Mac ($why, dentro un posto già preso)"
+  else
+    att=$(attention)
+    if [ "$att" = background ]; then
+      # chi non ha nessuno davanti aspetta il suo turno: un posto libero e un Mac che respira
+      while mac_strained || ! slot_take; do
+        if [ "$waited" -ge "${OFFLOAD_WAIT:-480}" ]; then
+          say "nessun posto in coda da ${waited}s (Mac sotto sforzo o posti tutti presi): il comando NON è partito."
+          say "Rilancia più tardi con offload --local, o mandalo sul PC con offload --pc."
+          exit 75
+        fi
+        [ "$waited" = 0 ] && say "in coda per un posto sul Mac (sessione che nessuno guarda; al massimo ${OFFLOAD_WAIT:-480}s)"
+        sleep "${OFFLOAD_POLL:-5}"; waited=$(( waited + ${OFFLOAD_POLL:-5} ))
+      done
+    else
+      slot_take || say "posti tutti presi: chi ha qualcuno davanti non aspetta, giro senza posto"
+    fi
+    say "Mac ($why${SLOT:+, posto $SLOT}${att:+, $att})"
+  fi
+  t0=$(date +%s)
+  RUNF_LOCAL="$CACHE/running/$$.json"
+  mkdir -p "$CACHE/running" 2>/dev/null && jq -cn --argjson pid $$ --argjson at "$((t0 * 1000))" --arg dir "$(basename "$DIR")" --arg cmd "${CMD:0:120}" \
+    --arg who "$(who_am_i)" --arg session "${CLAUDE_CODE_SESSION_ID:-}" --arg what "$WHAT" --arg slot "$SLOT" \
+    '{pid:$pid,at:$at,dir:$dir,cmd:$cmd,who:$who,session:$session,local:true,slot:(if $slot == "" then null else ($slot|tonumber) end)} + (if $what == "" then {} else {what:$what} end)' > "$RUNF_LOCAL" 2>/dev/null || true
+  # niente exec: il posto si rilascia all'uscita, e chi tiene il posto (questo pid) resta antenato del comando
+  ( cd "$DIR" && TOPICS_GATE_HELD=offload exec bash -c "${MAC_CMD:-$CMD}" )
+  rc=$?
+  brake_note "$t0"
+  say "fine sul Mac, exit $rc"
+  exit $rc
+}
+who_am_i() {
+  if [ -n "${OFFLOAD_WHO:-}" ]; then echo "$OFFLOAD_WHO"
+  elif [ -n "${CLAUDECODE:-}" ]; then echo "Claude Code"
+  elif env | grep -q '^CODEX_'; then echo Codex
+  elif env | grep -q '^MUSE'; then echo Muse
+  elif env | grep -q '^JCODE'; then echo jcode
+  else echo terminale; fi
+}
+
+# decisione
+LOAD=$(mac_load)
+if [ "$WHERE" = auto ]; then
+  # carico illeggibile = non so se il Mac e' scarico: va sul PC, che resta qui se non risponde.
+  # Prima andava qui in silenzio (con l vuoto awk lo dava "<= soglia"): la prova Codex del 23/10 e' girata sul Mac.
+  if [ -n "$LOAD" ] && awk -v l="$LOAD" -v m="$MAX_MAC" 'BEGIN{exit !(l <= m)}'; then run_local "carico $LOAD per core"; fi
+  [ -n "$LOAD" ] || say "carico del Mac non leggibile: provo il PC"
+  WHERE=pc
+fi
+[ "$WHERE" = local ] && run_local "forzato"
+
+if ! pc_up; then
+  say "PC spento, lo sveglio"
+  ~/.local/bin/winwake >&2 || true
+  if ! pc_up; then
+    [ "${OFFLOAD_STRICT:-}" = 1 ] && { say "PC non raggiungibile"; exit 69; }
+    # --pc non parte mai sul Mac: la regola di Codex che lo lascia uscire dalla sandbox vale solo per questo
+    [ -n "$FORCED" ] && { say "PC non raggiungibile e --pc: non gira sul Mac"; exit 69; }
+    run_local "PC non raggiungibile, resto qui"
+  fi
+fi
+CPU=$(pc_cpu); CPU=${CPU:-0}
+if [ "$CPU" -gt "$MAX_PC" ] && [ -z "$FORCED" ] && [ "${OFFLOAD_STRICT:-}" != 1 ]; then run_local "PC occupato ($CPU%)"; fi
+
+# copia: file del repo (tracciati + nuovi non ignorati), segreti esclusi
+NAME="$(basename "$DIR" | tr -c 'A-Za-z0-9_-' '_')_$(printf %s "$DIR" | shasum | cut -c1-6)"
+LIST=$(mktemp); trap 'rm -f "$LIST"' EXIT
+( cd "$DIR"
+  if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then git ls-files -co --exclude-standard
+  else find . -type f -not -path '*/node_modules/*' -not -path '*/.git/*' | sed 's|^\./||'; fi
+) | while IFS= read -r f; do [ -f "$DIR/$f" ] && printf '%s\n' "$f"; done | grep -Eiv "$SECRET_RE" > "$LIST"
+SKIPPED=$( cd "$DIR"; (git ls-files -co --exclude-standard 2>/dev/null || true) | grep -Eic "$SECRET_RE" || true)
+say "PC (Mac $LOAD per core, PC $CPU%): copio $(wc -l < "$LIST" | tr -d ' ') file in $ROOT_PC/$NAME${SKIPPED:+, $SKIPPED segreti esclusi}"
+( cd "$DIR" && COPYFILE_DISABLE=1 tar -czf - -T "$LIST" ) \
+  | "${SSH[@]}" "$HOST" "mkdir \"${ROOT_PC//\//\\}\\$NAME\" 2>nul & tar -xzf - -C \"$ROOT_PC/$NAME\"" \
+  || { say "copia fallita"; exit 70; }
+# (mkdir senza if: `if cond mkdir X & tar` lega & dentro l'if e a cartella
+#  esistente non gira nemmeno tar (copia muta); le parentesi inghiottono il
+#  resto della riga via ssh. L'errore di mkdir esistente va in nul. 16/10/26)
+
+# esecuzione: output in diretta, exit code del comando
+T0=$(date +%s)
+# lavoro in corso, letto dall'hub (:3360/api/machines) per la tray: cosa, da quando, per chi.
+# Il file sparisce a fine giro; uno rimasto da un kill -9 lo scarta l'hub (pid morto).
+WHO=$(who_am_i)
+RUNF="$CACHE/running/$$.json"
+mkdir -p "$CACHE/running" && jq -cn --argjson pid $$ --argjson at "$((T0 * 1000))" --arg dir "$(basename "$DIR")" --arg cmd "${CMD:0:120}" \
+  --arg who "$WHO" --arg session "${CLAUDE_CODE_SESSION_ID:-}" --arg what "$WHAT" '{pid:$pid,at:$at,dir:$dir,cmd:$cmd,who:$who,session:$session} + (if $what == "" then {} else {what:$what} end)' > "$RUNF" 2>/dev/null || true
+trap 'rm -f "$LIST" "$RUNF"' EXIT
+"${SSH[@]}" "$HOST" "cd /d \"${ROOT_PC//\//\\}\\$NAME\" && $CMD"
+RC=$?
+# una riga per giro sul PC: il riepilogo del freno del Mac (usage-hub) dice quanti lavori pesanti sono andati di la'
+mkdir -p "$CACHE" && jq -cn --argjson at "$((T0 * 1000))" --argjson s "$(( $(date +%s) - T0 ))" --arg dir "$(basename "$DIR")" --arg cmd "${CMD:0:80}" --argjson rc "$RC" \
+  '{at:$at,dir:$dir,cmd:$cmd,rc:$rc,seconds:$s}' >> "$CACHE/runs.jsonl" 2>/dev/null || true
+
+# ritorno dei file chiesti
+for g in "${GETS[@]+"${GETS[@]}"}"; do
+  if "${SSH[@]}" "$HOST" "tar -czf - -C \"$ROOT_PC/$NAME\" \"$g\"" | ( cd "$DIR" && tar -xzf - ); then say "riportato $g"
+  else say "non riesco a riportare $g"; fi
+done
+say "fine sul PC, exit $RC"
+exit $RC

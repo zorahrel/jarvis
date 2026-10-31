@@ -1,0 +1,17 @@
+#!/bin/zsh
+# Lyric Fever 3.3 (ultima versione) gira al 100% di CPU quando muore il suo aiutante perl
+# (MediaRemoteAdapter): continua a leggere una pipe chiusa. Bug della libreria, corretto a monte
+# in ejbills/mediaremote-adapter#3 ma non ancora in Lyric Fever (25/10, 5 ore al 98%).
+# Cura: se Lyric Fever è vivo da più di 2 minuti e non ha il figlio perl, lo si riavvia nascosto.
+# launchd ogni 5 min. --dry-run dice cosa farebbe.
+pid=$(pgrep -x "Lyric Fever") || exit 0
+age=$(ps -o etime= -p $pid | awk -F'[-:]' '{s=0; for(i=1;i<=NF;i++) s=s*60+$i; print (NF>3)?999:s}')
+(( age < 120 )) && exit 0
+pgrep -P $pid -f MediaRemoteAdapter >/dev/null && exit 0
+cpu=$(ps -o %cpu= -p $pid | tr -d ' ')
+msg="$(date '+%F %T') aiutante morto, Lyric Fever al ${cpu}% (pid $pid): riavvio"
+[[ $1 == --dry-run ]] && { echo "DRY $msg"; exit 0; }
+echo "$msg" >> ~/.claude/jarvis/logs/lyricfever-guard.log
+kill $pid; for i in {1..10}; do kill -0 $pid 2>/dev/null || break; sleep 1; done
+kill -0 $pid 2>/dev/null && kill -9 $pid
+sleep 2; open -g -j -a "Lyric Fever"

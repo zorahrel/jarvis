@@ -1,0 +1,61 @@
+#!/usr/bin/env python3
+"""aimem-import-segnali: porta le correzioni di segnali.jsonl in ai-memory.
+
+Una pagina per tema in default/_global, percorso correzioni/<tema>.md, con le
+parafrasi (`perche`) deduplicate, la più recente per prima. Mai la citazione
+(`cit`): può contenere nomi di altri. Idempotente: riscrive la stessa pagina,
+e salta il tema se il corpo non è cambiato.
+--dry-run stampa cosa scriverebbe.
+"""
+import collections, hashlib, json, os, subprocess, sys
+
+SEGNALI = os.path.expanduser("~/.claude/jarvis/private/attilio/segnali.jsonl")
+AIM = os.path.expanduser("~/.local/bin/ai-memory")
+STATE = os.path.expanduser("~/.claude/jarvis/state/aimem-segnali.json")
+MAX_PER_TEMA = 60  # oltre, la pagina diventa un muro: tengo le più recenti
+
+def slug(s):
+    out = "".join(c if c.isalnum() else "-" for c in s.lower()).strip("-")
+    return "-".join(p for p in out.split("-") if p)[:60] or "varie"
+
+def main():
+    dry = "--dry-run" in sys.argv
+    rows = [json.loads(l) for l in open(SEGNALI) if l.strip()]
+    by = collections.defaultdict(list)
+    for r in rows:
+        if r.get("tipo") == "correzione" and r.get("perche"):
+            by[r.get("tema") or "varie"].append(r)
+    state = json.load(open(STATE)) if os.path.exists(STATE) else {}
+    written = 0
+    for tema, rs in sorted(by.items()):
+        rs.sort(key=lambda r: r.get("d", ""), reverse=True)
+        seen, lines = set(), []
+        for r in rs:
+            p = r["perche"].strip()
+            if p.lower() in seen:
+                continue
+            seen.add(p.lower())
+            lines.append(f"- {r.get('d', '')[:10]}: {p}")
+            if len(lines) >= MAX_PER_TEMA:
+                break
+        body = (f"Correzioni di Attilio sul tema «{tema}», dalla più recente. "
+                "Sono cose che ha già dovuto correggere: non ripeterle.\n\n" + "\n".join(lines) + "\n")
+        path = f"correzioni/{slug(tema)}.md"
+        digest = hashlib.sha1(body.encode()).hexdigest()
+        if state.get(path) == digest:
+            continue
+        if dry:
+            print(f"scriverei {path}: {len(lines)} voci")
+            continue
+        subprocess.run([AIM, "write-page", "--workspace", "default", "--project", "_global",
+                        "--path", path, "--title", f"Correzioni: {tema}", "--kind", "rule",
+                        "--body", body], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        state[path] = digest
+        written += 1
+    if not dry:
+        os.makedirs(os.path.dirname(STATE), exist_ok=True)
+        json.dump(state, open(STATE, "w"), indent=1)
+    print(f"temi {len(by)}, pagine scritte {written}")
+
+if __name__ == "__main__":
+    main()

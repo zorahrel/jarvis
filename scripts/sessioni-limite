@@ -1,0 +1,409 @@
+#!/usr/bin/env python3
+"""Sessioni di Claude Code (desktop e terminale) ferme su un limite d'uso, e quando si possono riprendere (P03).
+
+  sessioni-limite [--dry-run]
+
+Il primo rilevamento è il limite: l'ultimo messaggio è un errore di limite e la sessione da 20 minuti non si muove.
+Il desktop si legge dai file delle sue sessioni (claude-code-sessions/<account>/…: errore, titolo, attività
+pianificata), il terminale dalla coda del transcript.
+Quando si riprende lo dice SOLO il testo del limite, mai le risposte di altre sessioni (possono stare su un altro
+account): «weekly limit resets Oct 25 at 9am» → «dopo il reset del 25/10 alle 09:00», poi «ora (reset passato)».
+  · con un reset → elenco per il Guardiano, che decide se servono ancora e le riprende con un messaggio
+  · limite di spesa senza reset → una voce «Ti aspetta» (tipo spesa): è una spesa, decide Attilio; si chiude da sola
+«aspetta Attilio» (secondo rilevamento, solo desktop): una sessione non archiviata con un tool_use senza risultato
+in coda (anche più di uno, se lavora in parallelo), e né il transcript né i sottoagenti che lavorano per quel tool scrivono
+da 20 minuti → una voce «Ti aspetta» per tool (tipo decisione), una volta sola; si chiude da sola quando il tool
+riceve il risultato o la sessione si archivia. Tool più vecchi di 48 ore non contano. Una sessione letta male non si tocca.
+Una sessione sparita del tutto (né metadati né transcript in nessuna cartella d'account) per tre giri di fila chiude la sua voce; se torna, il conteggio riparte.
+Stato per sessione:tool in «attesa» dello state JSON.
+Le sessioni dell'Agent SDK (OpenClaw, delegate, cron) non c'entrano: ripiego e ripresa li gestisce chi le lancia.
+Elenco in <note del Guardiano>/sessioni-limite.md, riga nel diario quando qualcosa diventa riprendibile, stato in
+~/.claude/jarvis/state/sessioni-limite.json. Gira ogni 30 minuti (cron OpenClaw «sessioni-limite»). Exit 0.
+--dry-run stampa in JSON sia i limiti sia gli «aspetta Attilio» trovati, senza scrivere nulla.
+"""
+import datetime as dt, glob, json, os, re, subprocess, sys, time, urllib.error, urllib.request
+
+H = os.path.expanduser("~")
+ROOT = os.environ.get("SESSIONI_PROJECTS", os.path.join(H, ".claude", "projects"))
+DESKTOP = os.environ.get("SESSIONI_DESKTOP", os.path.join(H, "Library/Application Support/Claude/claude-code-sessions"))
+STATE = os.environ.get("SESSIONI_LIMITE_STATE", os.path.join(H, ".claude", "jarvis", "state", "sessioni-limite.json"))
+REGIA = os.environ.get("REGIA_NOTES", os.path.join(H, ".claude/jarvis/state/guardiano/note"))
+HUB = os.environ.get("SESSIONI_HUB_URL", "http://127.0.0.1:3360/api/attesa")
+ATTESA_MIN = 20 * 60  # quiete del transcript prima di dire «aspetta Attilio»: sotto, il tool può essere in corso
+GIRI_SPARITA = 3  # giri di fila in cui una sessione non c'è più (né metadati né transcript) prima di chiudere la sua voce
+PAROLE = {"AskUserQuestion": "ti ha fatto una domanda", "Bash": "un comando", "Edit": "modificare un file",
+          "MultiEdit": "modificare un file", "Write": "modificare un file", "request_access": "usare un'app",
+          "request_directory": "accedere a una cartella", "change_directory": "accedere a una cartella"}
+SOTTOAGENTE = ("Agent", "Task")  # il tool che avvia un sottoagente: chi aspetta il permesso è il sottoagente
+DIARIO = os.environ.get("SESSIONI_DIARIO", os.path.join(H, ".claude", "jarvis", "scripts", "task-sync", "diario.mjs"))
+LIMITE = re.compile(r"hit your (?:\w+ )?limit|usage limit|spend limit|limit (?:will )?resets?", re.I)
+SPESA = re.compile(r"spend limit", re.I)
+RESET = re.compile(r"resets? (?:on )?(?:([A-Z][a-z]{2}) (\d{1,2}) at )?(\d{1,2})(?::(\d{2}))?\s*(am|pm)", re.I)
+MESI = {m: i for i, m in enumerate("jan feb mar apr may jun jul aug sep oct nov dec".split(), 1)}
+
+
+def reset_at(testo, stop):
+    """L'ora del reset scritta nel messaggio (ora locale del Mac, Europe/Rome), o None."""
+    m = RESET.search(testo)
+    if not m:
+        return None
+    mese, giorno, ora, minuti, ap = m.groups()
+    h = int(ora) % 12 + (12 if ap.lower() == "pm" else 0)
+    base = dt.datetime.fromtimestamp(stop)
+    if mese:
+        r = base.replace(month=MESI[mese.lower()], day=int(giorno), hour=h, minute=int(minuti or 0), second=0, microsecond=0)
+        if r.timestamp() < stop - 86400:  # «Jan 2» scritto a dicembre
+            r = r.replace(year=r.year + 1)
+    else:
+        r = base.replace(hour=h, minute=int(minuti or 0), second=0, microsecond=0)
+        if r.timestamp() <= stop:
+            r += dt.timedelta(days=1)
+    return r.timestamp()
+
+
+def righe_coda(f, finestra):
+    """Le righe dell'ultima parte del file; la prima, tagliata a metà, si scarta."""
+    inizio = max(0, os.stat(f).st_size - finestra)
+    with open(f, "rb") as fh:
+        fh.seek(inizio)
+        return fh.read().decode("utf8", "ignore").split("\n")[1 if inizio else 0:]
+
+
+def valida(riga):
+    try:
+        json.loads(riga)
+        return True
+    except ValueError:
+        return False
+
+
+def coda(f):
+    """Messaggi di user e assistant nella coda del file, dal più recente, e se la coda si è letta intera. Un'ultima riga
+    più grande della finestra (un Write grande) si rilegge a 1 MB; se nemmeno così si legge, niente: meglio non decidere
+    che decidere su una risposta che non si vede. Un'ultima riga tagliata vuol dire transcript in scrittura: non intera."""
+    for finestra in (64000, 1000000):
+        righe = [l for l in righe_coda(f, finestra) if l.strip()]
+        if os.stat(f).st_size <= finestra or (righe and valida(righe[-1])):
+            break
+    else:
+        return [], False
+    out = []
+    for l in reversed(righe):
+        try:
+            e = json.loads(l)
+        except ValueError:
+            continue
+        if e.get("type") in ("assistant", "user"):
+            out.append(e)
+    return out, not righe or valida(righe[-1])
+
+
+def testo(e):
+    c = (e.get("message") or {}).get("content", "")
+    if isinstance(c, list):
+        c = " ".join(x.get("text", "") for x in c if isinstance(x, dict))
+    return str(c)
+
+
+def ts(e):
+    try:
+        return dt.datetime.fromisoformat(e["timestamp"].replace("Z", "+00:00")).timestamp()
+    except Exception:
+        return 0
+
+
+def stato_da(testo_limite, stop, now):
+    """Quando si può riprendere, dal solo testo del limite: un'altra sessione che risponde non prova niente,
+    può essere su un altro account (24/10: le 5 «riprendibili» erano tutte sull'account esaurito)."""
+    r = reset_at(testo_limite, stop)
+    if r and r <= now:
+        return r, "ora (reset passato)"
+    if r:
+        return r, "dopo il reset del " + time.strftime("%d/%m alle %H:%M", time.localtime(r))
+    return None, "dopo una spesa"  # limite di spesa senza reset: decide Attilio
+
+
+def transcript_of(cli):
+    """Il transcript più recente di una sessione, in qualunque cartella di progetto; None se non c'è."""
+    if not cli:
+        return None
+    return max(glob.glob(os.path.join(ROOT, "*", cli + ".jsonl")), key=os.path.getmtime, default=None)
+
+
+def desktop_copies():
+    """Le sessioni del desktop, una per sessionId. Se la cartella del progetto è collegata una sessione sta in più account:
+    vale la copia con il file dei metadati più recente. Ritorna sessionId → copia, e i sessionId con una copia illeggibile
+    (il nome del file è il sessionId: di quelli non si chiude niente, non si sa cosa dicono)."""
+    picked, unreadable = {}, set()
+    for f in glob.glob(os.path.join(DESKTOP, "*", "*", "local_*.json")):
+        try:
+            d = json.load(open(f))
+        except (ValueError, OSError):
+            unreadable.add(os.path.basename(f)[:-5])  # file in scrittura
+            continue
+        sid = d.get("sessionId") or ""
+        if not sid:
+            continue
+        mt = os.path.getmtime(f)
+        if sid not in picked or mt > picked[sid]["mt"]:
+            picked[sid] = {"d": d, "f": f, "mt": mt, "tr": transcript_of(d.get("cliSessionId") or "")}
+    return picked, unreadable
+
+
+def desktop(now):
+    """Sessioni del desktop dai loro file: account (la cartella), titolo, attività pianificata, errore e quando."""
+    out = []
+    for c in desktop_copies()[0].values():
+        d, f = c["d"], c["f"]
+        err, at = d.get("error") or "", (d.get("errorAt") or 0) / 1000
+        if d.get("isArchived") or not LIMITE.search(err) or now - at > 48 * 3600 or now - at < 20 * 60:
+            continue
+        if (d.get("lastActivityAt") or 0) / 1000 - at > 60:
+            continue  # dopo l'errore ha ripreso a lavorare
+        reset, quando = stato_da(err, at, now)
+        out.append({"sessione": d.get("sessionId") or "", "cli": d.get("cliSessionId") or "", "titolo": d.get("title") or "",
+                    "cwd": d.get("cwd") or "", "account": os.path.relpath(f, DESKTOP).split(os.sep)[0][:8], "entrypoint": "desktop",
+                    "stop": int(at), "reset": reset, "quando": quando, "pianificata": d.get("scheduledTaskId") or None})
+    return out
+
+
+def terminale(now):
+    """Sessioni da terminale (entrypoint cli) dalla coda del transcript: l'account non si sa, il testo del limite sì."""
+    out = []
+    for f in glob.glob(os.path.join(ROOT, "*", "*.jsonl")):
+        idle = now - os.stat(f).st_mtime
+        if idle > 48 * 3600 or idle < 20 * 60:
+            continue
+        msgs, _ = coda(f)
+        if not msgs or (msgs[0].get("entrypoint") or "") != "cli":
+            continue  # desktop: dai suoi file; sdk-cli: ripiego e ripresa li gestisce chi le lancia
+        e = msgs[0]
+        t = testo(e)
+        if e.get("type") != "assistant" or not e.get("isApiErrorMessage") or not LIMITE.search(t):
+            continue
+        stop = ts(e) or os.stat(f).st_mtime
+        reset, quando = stato_da(t, stop, now)
+        out.append({"sessione": os.path.basename(f)[:-6], "cli": os.path.basename(f)[:-6], "titolo": "", "cwd": e.get("cwd") or "",
+                    "account": "terminale", "entrypoint": "terminale", "stop": int(stop), "reset": reset, "quando": quando,
+                    "pianificata": None})
+    return out
+
+
+def giro(now):
+    return sorted(desktop(now) + terminale(now), key=lambda x: x["stop"])
+
+
+def cosa(nome):
+    """La richiesta in parole: una domanda o un permesso per un tool, senza nomi interni. Il nome può arrivare con il
+    prefisso del server MCP (mcp__server__tool): conta solo l'ultima parte."""
+    base = nome.rsplit("__", 1)[-1]
+    if base in SOTTOAGENTE:
+        return "un sottoagente aspetta il tuo permesso"
+    if base == "AskUserQuestion":
+        return PAROLE[base]
+    return "aspetta il tuo permesso per " + PAROLE.get(base, "un'azione")
+
+
+def quando(t):
+    """L'ora della richiesta; con la data se non è di oggi."""
+    fmt = "%H:%M" if dt.date.fromtimestamp(t) == dt.date.today() else "%d/%m %H:%M"
+    return time.strftime(fmt, time.localtime(t))
+
+
+def subagent_counts(f, pending_ids):
+    """Il sottoagente di questo file lavora per un tool in attesa? Dal suo meta.json: il toolUseId, se c'è; altrimenti
+    conta a meno che non sia in background. Senza meta non si sa per chi lavora: non conta."""
+    try:
+        meta = json.load(open(os.path.splitext(f)[0] + ".meta.json"))
+    except (ValueError, OSError):
+        return False
+    if not isinstance(meta, dict):
+        return False
+    if meta.get("toolUseId"):
+        return meta["toolUseId"] in pending_ids
+    return meta.get("requestShape") != "background"
+
+
+def quiete_di(tr, now, pending_ids):
+    """Da quanto non scrive né il transcript né i sottoagenti che lavorano per un tool in attesa: un Agent in foreground
+    resta fermo sul transcript anche 40 minuti mentre il sottoagente scrive nel suo file."""
+    file = [tr] + [f for f in glob.glob(os.path.join(os.path.splitext(tr)[0], "subagents", "*.jsonl"))
+                   if subagent_counts(f, pending_ids)]
+    return now - max(os.path.getmtime(f) for f in file)
+
+
+def pendenti(msgs, now, mtime):
+    """I tool_use della coda senza risultato: id → (ora, nome). Più di uno se lavorano in parallelo, e il risultato di
+    un altro non chiude questo. Oltre 48 ore non conta: è una sessione abbandonata."""
+    usati, risposti = {}, set()
+    for e in msgs:
+        contenuto = (e.get("message") or {}).get("content")
+        if not isinstance(contenuto, list):
+            continue
+        for x in contenuto:
+            if not isinstance(x, dict):
+                continue
+            if x.get("type") == "tool_use":
+                usati.setdefault(x.get("id"), (ts(e) or mtime, x.get("name") or ""))
+            elif x.get("type") == "tool_result":
+                risposti.add(x.get("tool_use_id"))
+    return {i: v for i, v in usati.items() if i not in risposti and now - v[0] <= 48 * 3600}
+
+
+def tool_ids(msgs):
+    """Tutti gli id dei tool_use nella coda, con o senza risultato."""
+    out = set()
+    for e in msgs:
+        contenuto = (e.get("message") or {}).get("content")
+        if isinstance(contenuto, list):
+            out.update(x.get("id") for x in contenuto if isinstance(x, dict) and x.get("type") == "tool_use")
+    return out
+
+
+def in_attesa(now):
+    """Desktop non archiviate con un tool_use senza risultato in coda: chiave sessione:tool → dati. Ritorna anche le
+    chiavi che si possono chiudere senza dubbio (il tool_use è nella coda letta e ha il suo risultato) e le sessioni
+    archiviate. Una sessione letta male (metadati illeggibili, ultima riga del transcript tagliata) non si apre né si
+    chiude. La quiete dice quando segnalare, non quando chiudere: una sessione che riparte resta in lista finché il tool
+    ha il suo risultato."""
+    out, resolved, archived = {}, set(), set()
+    picked, unreadable = desktop_copies()
+    present = set(picked) | unreadable  # con un file dei metadati, anche se illeggibile: la sessione c'è
+    for sid, c in picked.items():
+        if sid in unreadable:
+            continue
+        d, tr = c["d"], c["tr"]
+        if d.get("isArchived"):
+            archived.add(sid)
+            continue
+        if not tr:
+            continue
+        try:
+            msgs, intera = coda(tr)
+        except OSError:
+            continue  # il transcript è sparito mentre lo leggevo
+        if not intera:
+            continue
+        pend = pendenti(msgs, now, os.path.getmtime(tr))
+        quiete = quiete_di(tr, now, set(pend))
+        for id_, (at, nome) in pend.items():
+            out[f"{sid}:{id_}"] = {"sessione": sid, "titolo": d.get("title") or "", "stop": at,
+                                   "cosa": cosa(nome), "quiete": quiete, "cli": d.get("cliSessionId") or ""}
+        resolved.update(f"{sid}:{id_}" for id_ in tool_ids(msgs) if id_ not in pend)
+    return out, resolved, archived, present
+
+
+def attesa(body):
+    req = urllib.request.Request(HUB, data=json.dumps(body).encode(), headers={"content-type": "application/json"})
+    try:
+        with urllib.request.urlopen(req, timeout=10) as r:
+            return json.loads(r.read() or b"{}")
+    except urllib.error.HTTPError as e:
+        raise RuntimeError(f"HTTP {e.code}: {e.read().decode('utf8', 'ignore')[:200]}") from None
+
+
+def errore(stato, chiave, e):
+    """Una voce che il hub non accetta: sempre a schermo, nel diario una volta sola per voce. Il giro dopo riprova."""
+    print(f"sessioni-limite: Ti aspetta non raggiunto ({e})")
+    fallite = stato.setdefault("fallite", [])
+    if chiave not in fallite:
+        fallite.append(chiave)
+        subprocess.run(["node", DIARIO, f"Ti aspetta: una voce di sessioni-limite non è passata ({e}). Riprovo al prossimo giro.",
+                        "--source", "sessioni-limite"], capture_output=True, timeout=30)
+
+
+def posta(stato, chiave, body):
+    """Una voce del Ti aspetta: la risposta del hub, o None se non è passata."""
+    try:
+        r = attesa(body)
+    except Exception as e:
+        errore(stato, chiave, e)
+        return None
+    if chiave in stato.get("fallite", []):
+        stato["fallite"].remove(chiave)
+    return r
+
+
+def main():
+    now = time.time()
+    xs = giro(now)
+    ferme, resolved, archived, present = in_attesa(now)
+    if "--dry-run" in sys.argv:
+        print(json.dumps({"limite": xs, "aspetta": [p for p in ferme.values() if p["quiete"] >= ATTESA_MIN]},
+                         indent=1, ensure_ascii=False))
+        return 0
+    stato = json.load(open(STATE)) if os.path.exists(STATE) else {}
+    spesa = [x for x in xs if x["quando"] == "dopo una spesa"]
+    ora = [x for x in xs if x["quando"].startswith("ora")]
+    if spesa and not stato.get("voce"):
+        r = posta(stato, "spesa", {"tipo": "spesa", "title": f"{len(spesa)} sessioni di Claude ferme sul limite di spesa, senza un reset",
+                                   "why": "Ripartono solo alzando il limite su claude.ai/settings/usage o cambiando account; elenco nella nota sessioni-limite del Guardiano.",
+                                   "link": "https://claude.ai/settings/usage", "from": "sessioni-limite"})
+        if r is not None:
+            stato["voce"] = (r.get("row") or {}).get("id")
+    elif not spesa and stato.get("voce"):
+        if posta(stato, "chiudi spesa", {"kind": "chiudi", "ref": stato["voce"], "by": "sessioni-limite",
+                                         "note": "nessuna sessione ferma sulla spesa"}) is not None:
+            stato.pop("voce")
+    attese = stato.setdefault("attesa", {})
+    cli_of = stato.setdefault("cli", {})  # sessione → id del transcript, per riconoscerla anche senza metadati
+    for k, p in sorted(ferme.items()):
+        if k in attese or p["quiete"] < ATTESA_MIN:
+            continue
+        r = posta(stato, k, {"tipo": "decisione", "title": f"{p['titolo'] or 'Sessione di Claude'}: aspetta una tua risposta",
+                             "why": f"da {quando(p['stop'])} {p['cosa']}",
+                             "link": f"claude://claude.ai/epitaxy/{p['sessione']}", "from": "sessioni-limite"})
+        if r is not None:
+            attese[k] = (r.get("row") or {}).get("id") or ""
+            cli_of[p["sessione"]] = p["cli"]
+    for k in [k for k in attese if k not in ferme and (k in resolved or k.partition(":")[0] in archived)]:  # risultato arrivato, o archiviata
+        if attese[k] and posta(stato, "chiudi " + k, {"kind": "chiudi", "ref": attese[k]}) is None:
+            continue  # il hub non ha chiuso: resta in lista, il giro dopo riprova
+        attese.pop(k)
+    assenti = stato.setdefault("assenti", {})  # voce → giri di fila in cui la sua sessione è sparita del tutto
+    for k in list(attese):  # anche le voci in ferme: una sessione che torna azzera il conteggio
+        sid = k.partition(":")[0]
+        if sid in present or transcript_of(cli_of.get(sid)):
+            assenti.pop(k, None)  # torna, anche solo con un file: il conteggio riparte da zero
+            continue
+        assenti[k] = assenti.get(k, 0) + 1
+        if assenti[k] < GIRI_SPARITA:
+            continue
+        if attese[k] and posta(stato, "chiudi " + k, {"kind": "chiudi", "ref": attese[k], "by": "sessioni-limite",
+                                                      "note": "sessione sparita: né metadati né transcript"}) is None:
+            continue  # il hub non ha chiuso: resta in lista, il giro dopo riprova
+        attese.pop(k)
+        assenti.pop(k)
+    if os.path.isdir(REGIA):
+        nota = os.path.join(REGIA, "sessioni-limite.md")
+        if xs:
+            righe = ["# Sessioni di Claude Code ferme su un limite", "",
+                     f"Aggiornato {time.strftime('%d/%m %H:%M')} da ~/.claude/jarvis/scripts/sessioni-limite, ogni 30 minuti. "
+                     "Lo stato viene dal testo del limite e dall'account della cartella. "
+                     "Prima di riprenderne una guarda se serve ancora; «dopo una spesa» decide Attilio, è in Ti aspetta.", ""]
+            for x in xs:
+                righe.append(f"- {x['quando']} · account {x['account']} · ferma dal {time.strftime('%d/%m %H:%M', time.localtime(x['stop']))}"
+                             f"{' · pianificata (' + x['pianificata'] + '), la rifà il prossimo giro' if x['pianificata'] else ''}"
+                             f" · {x['titolo'] or x['cwd'] or '?'} · sessione {x['sessione']}")
+            open(nota, "w").write("\n".join(righe) + "\n")
+        elif os.path.exists(nota):
+            os.remove(nota)  # niente di fermo: una nota vecchia direbbe il falso
+    chiavi = sorted(x["sessione"] for x in ora)
+    if chiavi and chiavi != stato.get("riprendibili"):
+        msg = f"{len(ora)} sessioni di Claude ferme su un limite sono di nuovo riprendibili (nota sessioni-limite del Guardiano)"
+        subprocess.run(["node", DIARIO, msg, "--source", "sessioni-limite"], capture_output=True, timeout=30)
+        print(msg)
+    vive = set(ferme) | set(attese) | {"chiudi " + k for k in attese} | ({"spesa"} if spesa else set()) \
+        | ({"chiudi spesa"} if stato.get("voce") else set())
+    stato["fallite"] = [c for c in stato.get("fallite", []) if c in vive]  # niente falliti di sessioni ormai ferme o chiuse
+    stato["assenti"] = {k: n for k, n in assenti.items() if k in attese}
+    aperte = {k.partition(":")[0] for k in attese}
+    stato["cli"] = {s: c for s, c in cli_of.items() if s in aperte}
+    stato.update({"giro": int(now), "ferme": len(xs), "riprendibili": chiavi, "spesa": len(spesa)})
+    os.makedirs(os.path.dirname(STATE), exist_ok=True)
+    json.dump(stato, open(STATE, "w"), indent=1)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

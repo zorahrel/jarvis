@@ -1,0 +1,108 @@
+#!/usr/bin/env python3
+"""board — la board interna di Jarvis sui progetti Armonia.
+
+  board                 tutto, per stato
+  board <persona>       solo la sua parte, pronta da mandare
+  board sync            riscrive i campi derivati (commit, canale) e segnala le derive
+  board set <id> k=v    aggiorna un campo (next.cosa, next.chi, stato, fase, aspetta, note)
+
+Lo stato sta in ~/.openclaw/board/board.json. Nessun daemon, nessun launchd:
+gira quando lo lancio io.
+"""
+import json, sys, os, datetime
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from board_core import P, load, save, days, sync as core_sync  # noqa: E402
+
+ORDER = {"bloccato": 0, "fermo": 1, "attivo": 2, "archiviato": 9}
+C = {"r": "\033[31m", "y": "\033[33m", "g": "\033[32m", "d": "\033[2m", "b": "\033[1m", "0": "\033[0m"}
+if not sys.stdout.isatty():
+    C = {k: "" for k in C}
+
+
+def sync():
+    n, derive = core_sync()
+    print(f"sync ok — {n} progetti")
+    for x in derive:
+        print(f"  {C['y']}~{C['0']} {x}")
+
+
+def line(p, d, show_owner=True):
+    dv = p.get("derived") or {}
+    dp, dc = days(dv.get("push")), days(dv.get("chat"))
+    bits = []
+    if dp is not None:
+        bits.append(f"push {dp}g")
+    if dc is not None:
+        bits.append(f"chat {dc}g")
+    tail = f" {C['d']}({', '.join(bits)}){C['0']}" if bits else ""
+    col = {"bloccato": C["r"], "fermo": C["y"], "attivo": C["g"]}.get(p["stato"], "")
+    who = ""
+    if show_owner:
+        who = f" {C['d']}·{C['0']} " + d["people"].get(p.get("owner") or "", {}).get("nome", "—")
+    print(f"{col}●{C['0']} {C['b']}{p['id']}{C['0']}{who}  {C['d']}{p.get('fase','')}{C['0']}{tail}")
+    nx = p.get("next") or {}
+    if nx.get("cosa"):
+        chi = d["people"].get(nx.get("chi") or "", {}).get("nome", "?")
+        mark = C["r"] + "→" + C["0"] if p.get("aspetta") else "→"
+        print(f"   {mark} {chi}: {nx['cosa']}")
+
+
+def show_all():
+    d = load()
+    ps = sorted(d["projects"], key=lambda p: (ORDER.get(p["stato"], 5), p["id"]))
+    s = d.get("_synced")
+    print(f"{C['b']}Board Armonia{C['0']} {C['d']}— {len(ps)} progetti, sync {days(s)}g fa{C['0']}\n" if s
+          else f"{C['b']}Board Armonia{C['0']}\n")
+    for p in ps:
+        line(p, d)
+    att = [p for p in ps if p.get("aspetta") == "attilio"]
+    if att:
+        print(f"\n{C['r']}Aspettano te: {C['0']}" + ", ".join(p["id"] for p in att))
+
+
+def show_person(key):
+    d = load()
+    if key not in d["people"]:
+        print("chi? " + ", ".join(d["people"]))
+        sys.exit(1)
+    nome = d["people"][key]["nome"]
+    mine = [p for p in d["projects"] if (p.get("next") or {}).get("chi") == key or p.get("owner") == key]
+    mine.sort(key=lambda p: (0 if (p.get("next") or {}).get("chi") == key else 1, ORDER.get(p["stato"], 5)))
+    print(f"{C['b']}{nome}{C['0']}\n")
+    todo = [p for p in mine if (p.get("next") or {}).get("chi") == key and (p.get("next") or {}).get("cosa")]
+    for p in todo:
+        print(f"• {C['b']}{p['id']}{C['0']} — {p['next']['cosa']}")
+    rest = [p for p in mine if p not in todo]
+    if rest:
+        print(f"\n{C['d']}segue anche: " + ", ".join(p["id"] for p in rest) + C["0"])
+    if not todo:
+        print(f"{C['d']}niente in attesa di {nome}.{C['0']}")
+
+
+def setter(pid, kvs):
+    d = load()
+    p = next((x for x in d["projects"] if x["id"] == pid), None)
+    if not p:
+        print("progetto sconosciuto: " + pid)
+        sys.exit(1)
+    for kv in kvs:
+        k, _, v = kv.partition("=")
+        v = None if v in ("", "null") else v
+        if k.startswith("next."):
+            p.setdefault("next", {})[k[5:]] = v
+        else:
+            p[k] = v
+    save(d)
+    line(p, d)
+
+
+a = sys.argv[1:]
+if not a:
+    show_all()
+elif a[0] == "sync":
+    sync()
+elif a[0] == "set":
+    setter(a[1], a[2:])
+else:
+    show_person(a[0])

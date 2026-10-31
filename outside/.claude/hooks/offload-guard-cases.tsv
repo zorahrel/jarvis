@@ -1,0 +1,62 @@
+# Comandi veri o quasi del 24/10 e i loro falsi positivi: `attesa<TAB>comando`. attesa = classe della prima riga
+# di heavy.ere (start/both) che li prende, `-` se nessuna. Li usano offload-guard-test.sh (contro l'hook) e
+# usage-hub test/heavy-parity.test.mjs (traduttore JS contro /usr/bin/grep): una lista sola.
+media	~/bin/vis giuria /tmp/pop-v10k/clip.mp4 --atteso "salto" --scelte @voci.txt
+media	bash ~/Projects/pop/run-axes.sh pop-v10k
+media	ffmpeg -y -i in.mp4 -vf fps=10 out/%03d.png
+media	magick montage f/*.png -tile 6x sheet.png
+media	cd /tmp/x && /opt/homebrew/bin/convert a.png -resize 50% b.png
+test	cd ~/Projects/claude-usage-hub && npm test
+test	bash -lc "npm test"
+test	bun test ./server --timeout 30000
+test	node --test test/shed.test.mjs
+test	node --import=./x.mjs --test test/a.test.mjs
+test	pnpm run e2e:smoke
+test	npm run test:unit
+test	npx playwright test e2e/home.spec.ts
+test	cd ~/Projects/offload-lab && npm test
+test	OFFLOAD=local npm test
+test	python3 -m pytest -q modules/tray/server
+test	pnpm vitest run
+test	pnpm playwright test e2e
+test	yarn jest
+test	bun run vitest
+test	bun --bun x playwright test
+test	npm exec -- playwright test
+test	/usr/bin/time -l npm test
+test	watch -n 5 npm test
+test	nice -n 10 pnpm exec vitest
+test	env FOO=1 bun --bun run vitest
+check	bun run typecheck:server
+check	npx tsc --noEmit -p .
+check	pnpm lint
+check	bun run scripts/checks/emdash-gate.ts
+check	bun run tsc --noEmit
+check	pnpm eslint .
+build	swift build -c release
+build	xcodebuild -scheme Tray -configuration Debug build
+build	pnpm build
+build	npx astro build
+build	pnpm next build
+build	bun run astro build
+bulk	grep -rn "offload" ~/.claude/projects
+bulk	rg -l memsig ~
+bulk	ugrep -r -l "vortex" $HOME
+bulk	find ~/Projects -name "*.log" -size +10M
+bulk	find ~/Projects
+bulk	openclaw update --yes --json --tag 2026.10.9
+bypass	OFFLOAD=local /private/tmp/claude-501/r-tools/gates.sh
+bypass	export OFFLOAD=local TOPICS_GATE_SLOTS=0
+-	ffprobe -v error clip.mp4
+-	find ~/Projects -maxdepth 1
+-	cat tsconfig.json
+-	git log --oneline -5
+-	/usr/bin/grep -ril offload ~/.claude/projects/-Users-zorahrel/memory/
+-	ls ~/Projects/
+-	echo jest-config
+-	openclaw update status --json
+-	npm install
+-	find ~/Projects/topics-app -name x
+-	cat notes/testing.md
+-	node bin/usage-hub.mjs pace
+-	git diff --stat

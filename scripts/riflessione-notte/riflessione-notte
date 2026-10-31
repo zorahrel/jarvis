@@ -1,0 +1,197 @@
+#!/usr/bin/python3
+"""Riflessione notturna sulle regole + guasti, un passo della manutenzione delle 2:30.
+
+Perché: il 29/10 la riflessione aveva visto 4 volte «questo progetto è prioritario!» di Attilio ma le ha solo
+elencate; propone regole di testo e non apre mai un guasto da curare. Qui sopra il giro esistente si aggiunge
+l'ultimo pezzo: ogni riga della sezione «## Guasti» del file delle proposte diventa una card (una per chiave).
+
+Passi, in fila, nessuno ferma l'altro (come nella manutenzione):
+  a) lancia la riflessione (cron OpenClaw) e aspetta che finisca
+  b) esegue il controllo esistente riflessione-verifica.py (non riscritto: riusato)
+  c) legge «## Guasti» del file di oggi e apre le card con board-card
+Esce 0 se a, b e c sono andati, 1 altrimenti. Stampa UNA riga in italiano con l'esito.
+
+Variabili per i test: OPENCLAW_BIN, RIFL_DIR, BOARD_CARD_BIN, RIFL_VERIFY_BIN.
+"""
+import json
+import os
+import re
+import time
+import subprocess
+import sys
+import unicodedata
+from datetime import datetime
+from zoneinfo import ZoneInfo
+
+JOB = "edf05df9-5e3d-4d1b-bb6c-3cc3b65821d0"
+HOME = os.path.expanduser("~")
+OPENCLAW = os.environ.get("OPENCLAW_BIN") or "/opt/homebrew/bin/openclaw"
+VERIFY = os.environ.get("RIFL_VERIFY_BIN") or os.path.join(HOME, ".openclaw/bin/riflessione-verifica.py")
+BOARD_CARD = os.environ.get("BOARD_CARD_BIN") or os.path.join(HOME, ".claude/jarvis/scripts/board-card")
+RIFL_DIR = os.environ.get("RIFL_DIR") or os.path.join(HOME, ".openclaw/memory/proposte-regole")
+RUN_TIMEOUT_MS = 1500000
+
+# launchd ha un PATH povero: i figli (openclaw è uno script node) devono trovare /opt/homebrew/bin
+os.environ["PATH"] = "/opt/homebrew/bin:/usr/local/bin:" + os.environ.get("PATH", "/usr/bin:/bin")
+
+
+def err(msg):
+    print(msg, file=sys.stderr)
+
+
+def _json(text):
+    """L'ultimo oggetto JSON stampato da openclaw (prima ci può essere un banner)."""
+    i = text.find("{")
+    try:
+        return json.loads(text[i:]) if i >= 0 else {}
+    except ValueError:
+        return {}
+
+
+def run_reflection(poll_s=15):
+    """a) True se la riflessione è partita (o era già in corso) ed è finita ok.
+    `cron run` non aspetta la fine della run (29/10: il primo giro dal vivo è uscito in 3 s e ha controllato un file
+    non ancora scritto), quindi dopo l'avvio si legge `cron runs` finché compare la run finita dopo l'avvio."""
+    t0 = time.time() * 1000 - 5000
+    try:
+        p = subprocess.run([OPENCLAW, "cron", "run", JOB, "--json"], capture_output=True, text=True, timeout=120)
+    except (OSError, subprocess.TimeoutExpired) as e:
+        err(f"riflessione: openclaw cron run non è andato a buon fine ({e})")
+        return False
+    out = (p.stdout or "") + (p.stderr or "")
+    # con una run già in corso openclaw esce 1 ma risponde ok + already-running: decide la risposta, non l'exit code
+    d = _json(p.stdout or "") or _json(out)
+    if not d.get("ok") or not (d.get("ran") or d.get("reason") == "already-running"):
+        # un job spento va detto chiaro: altrimenti sembra un guasto qualunque
+        if re.search(r"disabled|disabilitat", out, re.I):
+            err(f"riflessione: il cron {JOB} è disabilitato e cron run lo rifiuta")
+        else:
+            err(f"riflessione: openclaw cron run non è partito (exit {p.returncode}): {out.strip()[:300]}")
+        return False
+    deadline = time.time() + RUN_TIMEOUT_MS / 1000
+    while time.time() < deadline:
+        try:
+            r = subprocess.run([OPENCLAW, "cron", "runs", JOB, "--json"], capture_output=True, text=True, timeout=120)
+            for e in _json(r.stdout or "").get("entries", []):
+                if e.get("action") == "finished" and (e.get("ts") or 0) >= t0:
+                    if e.get("status") != "ok":
+                        err(f"riflessione: run finita in errore: {(e.get('error') or e.get('summary') or '')[:300]}")
+                    return e.get("status") == "ok"
+        except (OSError, subprocess.TimeoutExpired):
+            pass
+        time.sleep(poll_s)
+    err("riflessione: la run non è finita entro il tetto")
+    return False
+
+
+def run_verify():
+    """b) (ok, stdout) del controllo esistente; il suo exit code decide."""
+    try:
+        p = subprocess.run(["/usr/bin/python3", VERIFY], capture_output=True, text=True, timeout=180)
+    except (OSError, subprocess.TimeoutExpired) as e:
+        return False, f"controllo non eseguibile ({e})"
+    return p.returncode == 0, (p.stdout or "").strip()
+
+
+def today_rome():
+    return datetime.now(ZoneInfo("Europe/Rome")).strftime("%Y-%m-%d")
+
+
+def split_sections(text):
+    """Dizionario titolo-sezione -> righe; le righe prima del primo '## ' stanno sotto ''."""
+    sections, cur = {"": []}, ""
+    for line in text.splitlines():
+        m = re.match(r"^##\s+(.*?)\s*$", line)
+        if m:
+            cur = m.group(1)
+            sections.setdefault(cur, [])
+        else:
+            sections[cur].append(line)
+    return sections
+
+
+def count_proposals(text):
+    """Proposte numerate fuori dalle sezioni di servizio; «Nessuna proposta.» in testa = 0."""
+    if re.match(r"^\s*Nessuna proposta", text, re.I):
+        return 0
+    n = 0
+    for title, lines in split_sections(text).items():
+        if re.match(r"(Correzioni viste|Guasti)", title, re.I):
+            continue
+        n += sum(1 for l in lines if re.match(r"^\s*(?:#{1,4}\s*)?(?:Proposta\s+)?\d+[.):]\s", l))
+        # le proposte possono stare anche come titolo '## 1. ...'
+        n += 1 if re.match(r"^(?:Proposta\s+)?\d+[.):]\s", title) else 0
+    return n
+
+
+def parse_faults(text):
+    """Righe «- titolo | cartella | episodi» della sezione «## Guasti» -> lista di tuple."""
+    faults = []
+    for title, lines in split_sections(text).items():
+        if not re.match(r"Guasti\s*$", title, re.I):
+            continue
+        for line in lines:
+            m = re.match(r"^\s*[-*]\s+(.*)$", line)
+            if not m:
+                continue
+            parts = [p.strip() for p in m.group(1).split(" | ", 2)]
+            if len(parts) == 3 and all(parts):
+                faults.append(tuple(parts))
+            else:
+                err(f"guasti: riga non nel formato «titolo | cartella | episodi»: {line.strip()[:120]}")
+    return faults
+
+
+def slugify(title):
+    s = unicodedata.normalize("NFKD", title).encode("ascii", "ignore").decode().lower()
+    return re.sub(r"[^a-z0-9]+", "-", s).strip("-")[:50].strip("-")
+
+
+def open_cards(date, faults):
+    """c) (card aperte, errori). Cartella inesistente: niente card, conta come errore."""
+    opened = errors = 0
+    for title, folder, episodes in faults:
+        if not os.path.isdir(folder):
+            err(f"guasti: cartella inesistente per «{title}»: {folder}")
+            errors += 1
+            continue
+        desc = (f"{episodes}\n\nGuasto visto più volte nelle parole di Attilio (riflessione del {date}): "
+                "trova la causa e curala, con la prova.")
+        p = subprocess.run([BOARD_CARD, "--key", "guasto-" + slugify(title), "--title", title,
+                            "--desc", desc, "--notte", "--dir", folder], capture_output=True, text=True)
+        if p.returncode == 0:
+            opened += 1
+        else:
+            err(f"guasti: board-card è uscito {p.returncode} per «{title}»: {(p.stderr or p.stdout).strip()[:200]}")
+            errors += 1
+    return opened, errors
+
+
+def main():
+    date = today_rome()
+    ok_run = run_reflection()
+    ok_verify, verify_out = run_verify()
+    if verify_out:
+        err(verify_out)
+
+    proposals, faults, ok_cards, opened = 0, [], True, 0
+    try:
+        with open(os.path.join(RIFL_DIR, f"{date}.md"), encoding="utf-8") as f:
+            text = f.read()
+        proposals = count_proposals(text)
+        faults = parse_faults(text)
+    except OSError as e:
+        err(f"riflessione: file delle proposte di oggi non leggibile ({e})")
+        ok_cards = False
+    opened, card_errors = open_cards(date, faults)
+    ok_cards = ok_cards and card_errors == 0
+
+    ok = ok_run and ok_verify and ok_cards
+    bad = [n for n, v in (("riflessione", ok_run), ("controllo", ok_verify), ("guasti", ok_cards)) if not v]
+    print(f"Riflessione del {date}: {'ok' if ok else 'PROBLEMI (' + ', '.join(bad) + ')'}, "
+          f"{proposals} proposte, {opened} card di guasto aperte.")
+    return 0 if ok else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -1,0 +1,134 @@
+# Dependencies
+node_modules/
+dist/
+
+# Secrets
+.env
+router/.env
+# I backup del .env: stessa roba, altro nome. Un `git add -A` li raccoglieva
+# perche' la regola sopra e' per nome esatto, e questo repo e' PUBBLICO.
+.env.*
+*.env.bak*
+**/.env.bak*
+**/*.env.bak*
+
+# Personal data (create your own from examples)
+config.yaml
+router/config.yaml
+agents/
+
+# Runtime data
+memory/
+state/
+# …ma i fixture dei test dell'hub stanno nel commit, anche le cartelle state/ e i .bak finti (giro 9: barra rossa su una copia pulita)
+!tools/usage-hub/test/fixtures/**/state/
+**/moondream-env/
+**/*-venv/
+**/__pycache__/
+media/
+logs/
+data/
+router/wa-auth/
+router/certs/
+router/data/
+# Local-sessions monitor runtime dirs — created by the hooks installer at
+# $HOME/.claude/jarvis/{events,hooks}, which lands inside the repo when it's
+# cloned as ~/.claude/jarvis. Anchored to repo root to avoid masking
+# `router/dashboard/src/hooks/` (which IS source code).
+/events/
+/hooks/
+router/logs/
+router/cli-sessions.json
+router/session-stats.json
+router/*.pid
+router/cron/
+chroma-data/
+mem0-data/
+stats.json
+
+# Local Claude settings (never commit)
+.claude/settings.local.json
+**/.claude/settings.local.json
+
+# Playwright MCP artifacts
+.playwright-mcp/
+
+# Private analysis notes
+research/
+
+# Backup files
+*.bak
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor
+*.swp
+*.swo
+*~
+.idea/
+.vscode/
+
+# Screenshots (keep docs/images/ if present)
+*.png
+!docs/images/*.png
+
+# Python venvs — not committed (setup.sh creates them). omega-env is the
+# retired OMEGA venv, kept locally only for rollback.
+router/scripts/docs-env/
+router/scripts/omega-env/
+
+# Memory migration artefacts (contain real user data)
+docs/migration/mem0-export-*.json
+docs/migration/omega-export-*.json
+docs/migration/chroma-full-*.json
+mem0-history.db
+
+# Local promo/marketing material
+promo/
+active-sessions/
+
+# ─── Security hardening (2026-05-11) ──────────────────────────────────────────
+# MCP Auth Manager creates daily backups of OAuth credentials. These MUST NEVER
+# be committed. The backup service in v3.1+ writes to ~/Library/Application
+# Support/jarvis/auth-backups/ instead of inside the repo, but keep this guard
+# in case someone copies an old version of the code.
+backups/
+auth-backups/
+*.credentials.json
+mcp-needs-auth-cache*.json
+.mcp-auth/
+
+# Token files of any kind
+*token*.json
+*credential*.json
+relocated-mcp/
+bin-ocr-vision
+
+# memory-recall: eval.json contiene prompt reali (chat di clienti e colleghi, numeri) e
+# hits.log i path delle schede richiamate. Il repo è PUBBLICO: restano solo in locale.
+memory-recall/eval.json
+memory-recall/hits.log
+
+# Dal 19/10: parti pubbliche di ai-config e openclaw-workspace (sync-public.sh).
+# Le regole sopra (agents/, memory/, ...) non valgono qui dentro: l elenco lo fa lo script.
+!claude/
+!claude/**
+!openclaw/
+!openclaw/**
+
+# Dal 19/10: file con dati di persone vere (email, numeri, nomi). La copia sta nel
+# privato (private/sync.sh, PRIVATE_FILES); qui restano fuori.
+docs/estirpazione-2026-10.md
+scripts/fatture-mensili.py
+scripts/fatture-portali.py
+scripts/jcode-auth-sync.py
+# il .bak finto dei fixture dell'hub serve al test che lo esclude (dopo «*.bak», che altrimenti vince)
+!tools/usage-hub/test/fixtures/**/*.bak
+!tools/usage-hub/modules/tray/assets/bar-*.png
+
+# Dati veri di Attilio (messaggi): restano fuori dal pubblico
+scripts/registro-richieste/ref-attilio.json
+**/__pycache__/
+tools/usage-hub/.claude/

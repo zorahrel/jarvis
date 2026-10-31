@@ -1,0 +1,28 @@
+#!/bin/zsh
+# Apre Beeper anche quando una vecchia istanza è rimasta "fantasma" (stato UE: sospesa e zombie nel kernel,
+# immune a kill -9, sparisce solo al riavvio). Dock e `open -a` mandano l'apertura al fantasma e non succede niente.
+# Visto il 25/10 e il 26/10/2026.
+DIR=~/Library/Application\ Support/BeeperTexts
+BIN="/Applications/Beeper Desktop.app/Contents/MacOS/Beeper Desktop"
+
+# istanza viva = processo principale non in stato U (fantasma)
+live=$(ps -axo pid=,stat=,command= | awk -v b="$BIN" 'index($0,b) && $2 !~ /^U/ {print $1}' | tail -1)
+
+if [ -z "$live" ]; then
+  # il lucchetto può puntare a un PID morto: Beeper lo ricrea
+  for f in SingletonLock SingletonCookie SingletonSocket; do [ -L "$DIR/$f" ] && trash "$DIR/$f"; done
+  open -n -a "Beeper Desktop"
+  for i in {1..30}; do
+    live=$(ps -axo pid=,stat=,command= | awk -v b="$BIN" 'index($0,b) && $2 !~ /^U/ {print $1}' | tail -1)
+    [ -n "$live" ] && break; sleep 1
+  done
+  [ -z "$live" ] && { echo "Beeper non è partito" >&2; exit 1; }
+  sleep 8   # la finestra nasce nascosta: aspetta che sia pronta
+fi
+
+# "riapri" mandato al PID vivo, non al bundle (che finirebbe al fantasma)
+swift -e "import AppKit
+let t = NSAppleEventDescriptor(processIdentifier: $live)
+let e = NSAppleEventDescriptor(eventClass: AEEventClass(kCoreEventClass), eventID: AEEventID(kAEReopenApplication), targetDescriptor: t, returnID: AEReturnID(kAutoGenerateReturnID), transactionID: AETransactionID(kAnyTransactionID))
+_ = try? e.sendEvent(options: [.noReply], timeout: 5)
+NSRunningApplication(processIdentifier: $live)?.activate(options: [.activateAllWindows])" && echo "Beeper aperto (PID $live)"

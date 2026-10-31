@@ -1,0 +1,265 @@
+#!/usr/bin/env python3
+"""rispondi — consegna una risposta a una sessione Claude ferma, da fuori.
+
+Il punto: quando Attilio risponde su WhatsApp al sollecito di `sessioni-ferme`,
+qualcuno deve scrivere quel testo DENTRO la sessione. Un processo `claude` legge
+da un terminale, e nessuno puo' scrivere nel terminale di un altro processo — su
+macOS TIOCSTI non c'e' piu'. Si consegna solo dove qualcun altro possiede quello
+stdin, e i proprietari possibili sono due:
+
+  sessione aperta da Topics -> POST /api/chat col suo sessionKey. E' la strada
+                               preferita: si vede nella UI e non cambia il terminale.
+  sessione dentro tmux      -> send-keys (le apre `cc`)
+  sessione in un tty nudo   -> NON si consegna, e lo si dice invece di far finta
+
+  rispondi                      elenca chi puo' ricevere e chi no
+  rispondi --json               la stessa mappa per gli altri script
+  rispondi <nome> "<testo>"     consegna e stampa cosa e' successo
+  rispondi --dove <nome>        dice A CHI arriverebbe, senza mandare niente
+  rispondi <nome> --file f.txt  stessa cosa, testo da file (multilinea)
+"""
+import json, os, subprocess, sys
+
+CSESS = os.path.expanduser("~/bin/csess")
+TOPICS = "https://localhost:3333"
+TOPICS_DB = os.path.expanduser("~/Projects/topics-app/data/topics.db")
+# Sei ore, non un giorno: oltre, un topic non "aspetta" — e' una conversazione
+# finita. Con la finestra a 24h l'elenco si riempiva di chat di ieri sera che
+# nessuno stava aspettando, ed e' cosi' che un avviso diventa rumore.
+FINESTRA_MIN = int(os.environ.get("RISPONDI_FINESTRA_MIN", "360"))
+
+
+def sh(cmd, timeout=20, **kw):
+    return subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, **kw)
+
+
+def panes():
+    """pane -> (pid del pane, cartella). Vuoto se tmux non gira: non e' un errore."""
+    r = sh(["tmux", "list-panes", "-a", "-F",
+            "#{session_name}:#{window_index}.#{pane_index}\t#{pane_pid}\t#{pane_current_path}"])
+    out = {}
+    if r.returncode != 0:
+        return out
+    for l in r.stdout.splitlines():
+        p = l.split("\t")
+        if len(p) == 3:
+            out[p[0]] = (int(p[1]), p[2])
+    return out
+
+
+def figli(pid):
+    """tutta la discendenza di un pid: il claude di un pane e' un nipote, non un figlio."""
+    r = sh(["/bin/ps", "-Ao", "pid,ppid"])
+    tree = {}
+    for l in r.stdout.splitlines()[1:]:
+        f = l.split()
+        if len(f) == 2:
+            tree.setdefault(int(f[1]), []).append(int(f[0]))
+    visti, coda = set(), [pid]
+    while coda:
+        p = coda.pop()
+        for c in tree.get(p, []):
+            if c not in visti:
+                visti.add(c)
+                coda.append(c)
+    return visti
+
+
+def topics_stato():
+    """{claudeSessionId -> sessionKey} per le sessioni che Topics ospita davvero.
+    sessionKey None = sessione solo OSSERVATA (adottata): Topics la vede, non ci scrive."""
+    try:
+        st = json.load(open(os.path.expanduser("~/.topics/daemon-state.json")))
+    except Exception:
+        return {}
+    try:
+        r = sh(["curl", "-sk", "--max-time", "5", "-H", f"Authorization: Bearer {st['token']}",
+                f"{TOPICS}/api/claude-sessions"])
+        d = json.loads(r.stdout or "{}")
+    except Exception:
+        return {}
+    return {x["claudeSessionId"]: x.get("sessionKey")
+            for x in d.get("sessions", []) if x.get("claudeSessionId")}
+
+
+def session_id_di(pid):
+    """l'--session-id con cui e' partito quel claude: e' la chiave verso Topics."""
+    r = sh(["/bin/ps", "-o", "command=", "-p", str(pid)])
+    parti = (r.stdout or "").split()
+    for i, x in enumerate(parti):
+        if x == "--session-id" and i + 1 < len(parti):
+            return parti[i + 1]
+    return None
+
+
+def senza_markdown(t):
+    """L'estratto finisce in un messaggio WhatsApp, non in un file: gli asterischi
+    e i cancelletti li' sono rumore, non grassetto."""
+    import re
+    t = (t or "").strip().replace("\n", " ")
+    t = re.sub(r"[*`#>]+", "", t)
+    t = re.sub(r"\s*\|\s*", " ", t)
+    return re.sub(r"\s{2,}", " ", t).strip()
+
+
+def topics_in_attesa():
+    """I topic di Topics il cui ULTIMO messaggio e' dell'assistente.
+
+    E' la stessa definizione che `csess` usa per un terminale — «ha finito e non
+    ha risposta» — applicata dove il lavoro vive adesso. Senza questo il guardiano
+    sorveglia una stanza vuota: le sessioni CLI le abbiamo chiuse, e un topic fermo
+    in attesa non ha nessun processo che lo dica.
+
+    Si legge il DB in sola lettura invece di chiamare l'API: nessun token da
+    maneggiare, e funziona anche a server spento (uno spento e' proprio il caso in
+    cui la risposta manca da piu' tempo).
+    """
+    if not os.path.exists(TOPICS_DB):
+        return []
+    q = """
+    SELECT t.name, t.session_key, t.project_path,
+           CAST((julianday('now') - julianday(m.timestamp)) * 86400 AS INT) AS eta_s,
+           m.content
+    FROM topics t
+    JOIN messages m ON m.id = (
+      SELECT id FROM messages WHERE session_key = t.session_key AND partial = 0
+      ORDER BY timestamp DESC, sort_order DESC LIMIT 1)
+    WHERE t.archived = 0 AND COALESCE(t.muted, 0) = 0 AND m.role = 'assistant'
+    ORDER BY m.timestamp DESC
+    """
+    try:
+        import sqlite3
+        con = sqlite3.connect(f"file:{TOPICS_DB}?mode=ro&immutable=0", uri=True)
+        righe = con.execute(q).fetchall()
+        con.close()
+    except Exception:
+        return []
+    out = []
+    for nome, chiave, path, eta, testo in righe:
+        if eta is None or eta > FINESTRA_MIN * 60:
+            continue
+        out.append({
+            "pid": None, "cwd": path or "", "headless": False,
+            "status": "ASPETTA TE", "why": "topic: ha finito e non ha risposta",
+            "idle_s": eta, "last": senza_markdown(testo)[:200],
+            "pane": None, "topic": chiave,
+            "via": "topics", "nome": (nome or chiave).strip(),
+        })
+    return out
+
+
+def sessioni():
+    """csess + la strada per rispondere a ciascuna."""
+    try:
+        tutte = json.loads(sh([CSESS, "--json"]).stdout or "[]")
+    except Exception:
+        tutte = []
+    pn = panes()
+    disc = {k: figli(v[0]) | {v[0]} for k, v in pn.items()}
+    tp = topics_stato()
+    out = []
+    for s in tutte:
+        if s.get("headless"):
+            continue
+        s["pane"] = next((k for k, ids in disc.items() if s["pid"] in ids), None)
+        sid = session_id_di(s["pid"])
+        s["topic"] = tp.get(sid) if sid else None
+        # Topics batte tmux: passa dalla UI, quindi quello che consegno si vede.
+        s["via"] = "topics" if s["topic"] else ("tmux" if s["pane"] else None)
+        s["nome"] = os.path.basename(s["cwd"])
+        out.append(s)
+    # I topic si aggiungono DOPO: se un progetto ha gia' una sessione CLI viva,
+    # quella e' la stessa attesa vista da piu' vicino e non si conta due volte.
+    cwd_visti = {s["cwd"] for s in out}
+    for t in topics_in_attesa():
+        if t["cwd"] and t["cwd"] in cwd_visti:
+            continue
+        out.append(t)
+    return out
+
+
+def elenca():
+    ss = sessioni()
+    if not ss:
+        print("nessuna sessione.")
+        return
+    for s in ss:
+        via = {"topics": f"topics {s['topic']}", "tmux": f"tmux {s['pane']}"}.get(
+            s["via"], "NON raggiungibile (tty nudo)")
+        print(f"{s['nome']:24} {s['status']:11} {via}")
+
+
+def consegna(nome, testo):
+    tutte = sessioni()
+    n = nome.strip().lower()
+    ss = [s for s in tutte if s["nome"].lower() == n or s["cwd"] == nome
+          or os.path.basename(s["cwd"] or "").lower() == n
+          or s["nome"].lower().startswith(n)]
+    if not ss:
+        print("chi? " + " · ".join(
+            f'{s["nome"]}' + (f' ({os.path.basename(s["cwd"])})' if s["cwd"] else "")
+            for s in tutte))
+        sys.exit(1)
+    if len({s.get("topic") or s["cwd"] for s in ss}) > 1:
+        print("ambiguo, ce ne sono piu' di uno: " + " · ".join(s["nome"] for s in ss))
+        sys.exit(1)
+    s = ss[0]
+    if s["via"] == "topics":
+        st = json.load(open(os.path.expanduser("~/.topics/daemon-state.json")))
+        body = json.dumps({"sessionKey": s["topic"],
+                           "messages": [{"role": "user", "content": testo}],
+                           "contextMode": "lean"})
+        r = sh(["curl", "-sk", "--max-time", "300", "-X", "POST",
+                "-H", f"Authorization: Bearer {st['token']}",
+                "-H", "Content-Type: application/json",
+                "-d", body, f"{TOPICS}/api/chat"], timeout=310)
+        if r.returncode != 0 or "data:" not in (r.stdout or ""):
+            print("Topics non ha accettato: " + (r.stdout or r.stderr)[:200])
+            sys.exit(3)
+        print(f"consegnato a {s['nome']} via Topics ({s['topic']}): {testo[:70]}")
+        return
+    if not s["pane"]:
+        print(f"{s['nome']} gira in un terminale nudo: non posso scriverci dentro. "
+              f"Aprila da Topics (`topics {s['cwd']}`) e la prossima volta si consegna.")
+        sys.exit(2)
+    # -l = letterale: il testo puo' contenere ; { } e non deve diventare un comando tmux.
+    # Invio a parte, dopo una pausa: la TUI di Claude incolla e poi manda.
+    r1 = sh(["tmux", "send-keys", "-t", s["pane"], "-l", testo])
+    if r1.returncode != 0:
+        print("tmux: " + (r1.stderr or "").strip()[:200])
+        sys.exit(3)
+    sh(["tmux", "send-keys", "-t", s["pane"], "Enter"])
+    print(f"consegnato a {s['nome']} ({s['pane']}): {testo[:80]}")
+
+
+def dove(nome):
+    """Risolve il nome come farebbe una consegna, ma non consegna: serve a
+    controllare che un sollecito e la risposta parlino della stessa cosa."""
+    tutte = sessioni()
+    n = nome.strip().lower()
+    ss = [s for s in tutte if s["nome"].lower() == n or s["cwd"] == nome
+          or os.path.basename(s["cwd"] or "").lower() == n
+          or s["nome"].lower().startswith(n)]
+    if not ss:
+        print("nessuna corrispondenza per " + nome); sys.exit(1)
+    for s in ss:
+        via = {"topics": f"topics {s.get('topic')}", "tmux": f"tmux {s.get('pane')}"}.get(
+            s.get("via"), "NON raggiungibile")
+        print(f"{s['nome']}  ->  {via}  [{s['cwd'] or '-'}]")
+
+
+a = sys.argv[1:]
+if a and a[0] == "--dove" and len(a) > 1:
+    dove(a[1])
+elif a and a[0] == "--json":
+    # unico proprietario della mappa "sessione -> come le si parla": sessioni-ferme
+    # la legge da qui invece di rifare il calcolo dell'albero dei processi.
+    print(json.dumps(sessioni(), ensure_ascii=False))
+elif not a:
+    elenca()
+elif len(a) >= 3 and a[1] == "--file":
+    consegna(a[0], open(a[2]).read().rstrip("\n"))
+elif len(a) >= 2:
+    consegna(a[0], " ".join(a[1:]))
+else:
+    elenca()

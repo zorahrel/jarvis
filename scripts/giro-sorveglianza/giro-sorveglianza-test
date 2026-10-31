@@ -1,0 +1,58 @@
+#!/bin/bash
+# Barra del giro di sorveglianza: tace quando va tutto bene, parla una volta sola, ricorda dopo 6 ore, di notte aspetta.
+# Letture finte (--fake) e stato in una cartella temporanea: non tocca stato, registro né nota veri. Esce 0 se tutto passa.
+set -u
+here=$(cd "$(dirname "$0")" && pwd)
+tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT
+export GIRO_STATE=$tmp/stato.json GIRO_ACCEPT=$tmp/accept.json GIRO_LOG=$tmp/giro.log GIRO_NOTE=$tmp/nota.md
+echo '[{"match": "AGENTS.md: ", "why": "prova"}]' >"$tmp/accept.json"
+fail=0
+ok()  { echo "ok   $1"; }
+bad() { echo "FAIL $1"; fail=1; }
+giro() { python3 -I "$here/giro-sorveglianza" "$@" 2>/dev/null; }
+SANO=(load=0.5 swap=0.2 cron=ok lw=1 doctor= quota=ok hour=12 now=1800000000000)
+T0=1800000000000
+
+out=$(giro --fake "${SANO[@]}")
+[ -z "$out" ] && ok "tutto a posto: nessun messaggio" || bad "tutto a posto ma ha parlato: $out"
+
+out=$(giro --fake "${SANO[@]}" load=7.7 swap=0.95 pc=chiuso top="node (310%)")
+case "$out" in *"Mac sotto sforzo"*"7,7 per core"*"swap al 95%"*"node (310%)"*"ssh è chiuso"*) ok "Mac sotto sforzo: una riga con carico, swap, causa e PC";; *) bad "riga del Mac: $out";; esac
+
+out=$(giro --fake "${SANO[@]}" load=7.7 swap=0.95 pc=chiuso)
+[ -z "$out" ] && ok "stesso problema subito dopo: silenzio" || bad "ha ripetuto: $out"
+
+out=$(giro --fake "${SANO[@]}" load=7.7 swap=0.95 pc=chiuso now=$((T0 + 7*3600*1000)))
+[ -n "$out" ] && ok "dopo 7 ore e ancora lì: lo ricorda" || bad "non ha ricordato dopo 7 ore"
+
+giro --fake "${SANO[@]}" >/dev/null
+out=$(giro --fake "${SANO[@]}" load=9 pc=dorme)
+[ -n "$out" ] && ok "rientrato e ricomparso: è di nuovo una notizia" || bad "rientro non azzerato"
+
+rm -f "$GIRO_STATE"
+out=$(giro --fake "${SANO[@]}" load=9 hour=3)
+[ -z "$out" ] && ok "di notte tace" || bad "ha parlato alle 3: $out"
+out=$(giro --fake "${SANO[@]}" load=9 hour=9)
+[ -n "$out" ] && ok "al mattino dice ciò che è rimasto" || bad "al mattino non ha detto nulla"
+
+rm -f "$GIRO_STATE"
+out=$(giro --fake "${SANO[@]}" cron=ok,"Brief mattutino","Mail importanti",err:"Esito riflessione" lw=45 doctor="FAIL memrecall: regressione|FAIL ~/.openclaw/AGENTS.md: 18607/20000" quota=claude-out)
+n=$(printf '%s\n' "$out" | grep -c '^⚠️')
+case "$out" in *"cron non partiti all'ora: Brief mattutino, Mail importanti"*"in errore"*"lavori-watch non scrive da 45"*"memrecall"*"Quote: tutti gli account Claude"*) ok "Jarvis e quote: ogni problema ha la sua riga ($n righe)";; *) bad "righe di Jarvis/quote: $out";; esac
+case "$out" in *"AGENTS.md: 18607"*) bad "la riga accettata è uscita";; *) ok "la riga in accept.json resta zitta";; esac
+[ "${#out}" -le 600 ] && ok "messaggio sotto i 600 caratteri" || bad "messaggio di ${#out} caratteri"
+
+rm -f "$GIRO_STATE"
+out=$(giro --fake "${SANO[@]}" quota=hub-down)
+[ -z "$out" ] && ok "hub muto per un giro solo: silenzio" || bad "ha parlato al primo timeout dell'hub"
+out=$(giro --fake "${SANO[@]}" quota=hub-down)
+case "$out" in *"hub su :3360"*) ok "hub muto per due giri: lo dice";; *) bad "hub muto due giri: $out";; esac
+
+rm -f "$GIRO_STATE" "$GIRO_NOTE"
+out=$(giro --dry-run --fake "${SANO[@]}" load=9)
+{ [ ! -e "$GIRO_STATE" ] && [ ! -e "$GIRO_NOTE" ] && case "$out" in "[prova a secco]"*) true;; *) false;; esac; } && ok "prova a secco: stampa e non scrive stato né nota" || bad "prova a secco ha scritto o non ha stampato: $out"
+
+giro --riepilogo-carico --ore 1 >"$tmp/r.txt"; grep -q "ultime 1 h" "$tmp/r.txt" && ok "riepilogo del carico dal registro" || bad "riepilogo: $(cat "$tmp/r.txt")"
+
+[ $fail -eq 0 ] && echo "tutto verde" || echo "ROSSO"
+exit $fail

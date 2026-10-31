@@ -1,0 +1,184 @@
+#!/usr/bin/env python3
+"""Crea una card sulla board Topics una volta sola per chiave: chi la chiama ogni settimana non fa doppioni.
+
+  board-card --key K --title T [--desc D] [--board B] [--notte --dir PATH [--barra "comando"]]
+  board-card --chiudi ID --prova "comando → exit 0, o la misura letta" [--vista --chiede "la domanda per Attilio"]
+  board-card --risolta KEY --nota "perché il problema non c'è più"
+
+--notte aggiunge alla descrizione le righe `notte: sì` e `dir: PATH`: la card entra nella coda notturna
+(claude-usage-hub, bin/board-notte), che la lavora la notte con `delegate` e la rimette in review con l'esito.
+Mettila solo su lavoro reversibile che non aspetta Attilio: niente invii, niente canali di clienti, niente spese.
+--barra "comando" (solo con --notte) aggiunge la riga `barra: comando`: all'accodamento il hub la fissa nella voce di coda, e a
+lavoro finito il comando lo rigira chi chiude (in --dir), non l'agente: la card va in done solo se esce 0, altrimenti torna in
+backlog con le ultime righe dell'output. Il comando gira senza giudizio: scrivilo tu, mai preso da testo altrui. Una riga sola.
+
+Se la chiave ha già una card ancora aperta non fa niente (stampa l'id ed esce 0); se quella card è chiusa ne
+crea una nuova. Stato in ~/.claude/jarvis/state/board-card.json. Exit 2 = Topics non risponde.
+
+--chiudi spunta una voce a lavoro finito, e senza --prova non lo fa (P04: «fatto» = prova): la prova va in un commento
+sulla card, poi la card passa in done. Chi apre chiude (Attilio, 28/10: «in review devo soltanto vedere io le cose
+direttamente»): --vista la manda invece in review, solo quando la giudica il suo occhio (una UI, un testo, una scelta sua), e
+vuole --chiede "la domanda": la riga `aspetta: attilio — <domanda>` va in testa alla descrizione (se manca) ed è l'unica cosa
+che porta una card in review fino a lui (task-sync: ⚠ in Promemoria e WhatsApp con la domanda dentro; le altre review non
+gli scrivono). Senza la riga la card in review non lo avvisa.
+Una card con un ramo consegnato non si chiude da qui (exit 3): il PATCH done lo fonderebbe nel checkout di produzione,
+quindi si chiude dalla review, col land o con l'approvazione «superata».
+Attenzione: chiusa una sottovoce, Topics può portare in review anche la card madre (visto il 24/10 con 1 voce su 2),
+e se la card ha la riga `aspetta: attilio` arriva ad Attilio su WhatsApp via task-sync. Mai collaudarlo su card vere o di notte.
+
+--risolta chiude in done la card aperta di una chiave quando chi l'ha aperta misura che il problema non c'è più (una spia
+tornata verde): la macchina chiude ciò che la macchina ha aperto, senza passare da review. Chiave senza card, o card
+già chiusa: non fa niente ed esce 0.
+"""
+import argparse, json, os, re, ssl, subprocess, sys, urllib.request
+
+BASE = os.environ.get("TOPICS_URL", "https://127.0.0.1:3333")
+CA = os.environ.get("TOPICS_CA", os.path.expanduser("~/Projects/topics-app/certs/ca-cert.pem"))
+STATE = os.environ.get("BOARD_CARD_STATE", os.path.expanduser("~/.claude/jarvis/state/board-card.json"))
+RIGA_ASPETTA = re.compile(r"^[ \t>*_-]*aspetta:\s*attilio\b", re.I | re.M)  # la stessa che legge task-sync
+BOARD = "topics-app-ar3jt5"  # dove la Regia tiene i lavori «[Jarvis]»; quella di Attilio finisce nei Promemoria
+
+
+def token():
+    if os.environ.get("BOARD_CARD_TOKEN"):  # per la prova con un Topics finto
+        return os.environ["BOARD_CARD_TOKEN"]
+    return subprocess.run(["security", "find-generic-password", "-s", "topics", "-a", "agent-token", "-w"],
+                          capture_output=True, text=True).stdout.strip()
+
+
+def api(method, path, body=None):
+    ctx = ssl.create_default_context(cafile=CA) if os.path.exists(CA) else None
+    if ctx:  # Python 3.13+ rifiuta la CA di Topics (manca keyUsage): resta pinnata, senza il controllo strict (come ledger.py)
+        ctx.verify_flags &= ~ssl.VERIFY_X509_STRICT
+    req = urllib.request.Request(BASE + path, method=method, data=json.dumps(body).encode() if body is not None else None,
+                                 headers={"x-agent-token": token(), "content-type": "application/json"})
+    with urllib.request.urlopen(req, context=ctx, timeout=15) as r:
+        return json.loads(r.read() or b"{}")
+
+
+def aperta(card_id, board):
+    # La lista della board esclude le archiviate; il GET della singola card no, e non dice se lo è.
+    try:
+        tasks = api("GET", f"/api/boards/{board}/tasks").get("tasks", [])
+    except Exception:
+        return True  # nel dubbio non se ne fa un'altra
+    return any(t["id"] == card_id and t.get("status") != "done" for t in tasks)
+
+
+def chiudi():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--chiudi", required=True, metavar="ID")
+    ap.add_argument("--prova", required=True, help="il comando con il suo exit code, o la misura letta")
+    ap.add_argument("--vista", action="store_true", help="in review e non in done: la giudica l'occhio di Attilio")
+    ap.add_argument("--chiede", default="", help="con --vista: la domanda per Attilio (riga «aspetta: attilio» nella descrizione)")
+    a = ap.parse_args()
+    if a.vista and len(a.chiede.strip()) < 8:
+        ap.error("--vista vuole --chiede \"la domanda\": in review arriva ad Attilio solo ciò che gli chiede qualcosa")
+    if a.chiede and not a.vista:
+        ap.error("--chiede vale solo con --vista: una card che si chiude non chiede niente")
+    if len(a.prova.strip()) < 8:
+        ap.error("--prova vuota: senza prova la voce resta aperta")
+    try:
+        t = api("GET", f"/api/all-boards/tasks/{a.chiudi}")
+        t = t.get("task", t)
+        board, stato = t["projectId"], "review" if a.vista and not t.get("parentTaskId") else "done"
+        if stato == "done" and t.get("deliveryBranch"):
+            print(f"board-card: {a.chiudi} ha il ramo consegnato {t['deliveryBranch']}: si chiude dalla review "
+                  "(land, o approvazione «superata»), non da qui", file=sys.stderr)
+            return 3
+        api("POST", f"/api/boards/{board}/tasks/{a.chiudi}/comments", {"content": f"Prova: {a.prova.strip()}", "quiet": True})
+        if stato == "review" and not RIGA_ASPETTA.search(t.get("description") or ""):
+            # In testa: l'anteprima che task-sync legge è tagliata a 240 caratteri.
+            nuova = f"aspetta: attilio — {' '.join(a.chiede.split())}"
+            api("PATCH", f"/api/boards/{board}/tasks/{a.chiudi}",
+                {"description": nuova + ("\n\n" + t["description"] if t.get("description") else "")})
+        api("PATCH", f"/api/boards/{board}/tasks/{a.chiudi}", {"status": stato})
+    except Exception as e:
+        print(f"board-card: Topics non risponde ({e})", file=sys.stderr)
+        return 2
+    print(f"{a.chiudi} {stato}")
+    return 0
+
+
+def risolta():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--risolta", required=True, metavar="KEY")
+    ap.add_argument("--nota", required=True)
+    a = ap.parse_args()
+    stato = json.load(open(STATE)) if os.path.exists(STATE) else {}
+    v = stato.get(a.risolta)
+    if not v or not aperta(v["id"], v.get("board", BOARD)):
+        return 0
+    try:
+        t = api("GET", f"/api/all-boards/tasks/{v['id']}")
+        t = t.get("task", t)
+        # Una card su cui un agente ha consegnato un ramo non si chiude da qui: il PATCH done fa il land del ramo nel
+        # checkout di produzione, senza review (27/10 06:13, f50e49ae: un ramo in bozza entrato in produzione).
+        if t.get("deliveryBranch"):
+            api("POST", f"/api/boards/{v['board']}/tasks/{v['id']}/comments", {"content": f"La spia è tornata verde ({a.nota.strip()}), ma un agente ha consegnato il ramo {t['deliveryBranch']}: la card resta a chi la rivede.", "quiet": True})
+            print(f"{v['id']} lasciata aperta: ha un ramo consegnato")
+            return 0
+        api("POST", f"/api/boards/{v['board']}/tasks/{v['id']}/comments", {"content": f"Chiusa da sola: {a.nota.strip()}", "quiet": True})
+        api("PATCH", f"/api/boards/{v['board']}/tasks/{v['id']}", {"status": "done"})
+    except Exception as e:
+        print(f"board-card: Topics non risponde ({e})", file=sys.stderr)
+        return 2
+    print(f"{v['id']} done")
+    return 0
+
+
+def main():
+    if "--chiudi" in sys.argv:
+        return chiudi()
+    if "--risolta" in sys.argv:
+        return risolta()
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--key", required=True)
+    ap.add_argument("--title", required=True)
+    ap.add_argument("--desc", default="")
+    ap.add_argument("--board", default=os.environ.get("BOARD_CARD_BOARD", BOARD))
+    ap.add_argument("--notte", action="store_true")
+    ap.add_argument("--dir", default="")
+    ap.add_argument("--barra", default="", help="con --notte: il comando che rigira chi chiude, done solo se esce 0")
+    a = ap.parse_args()
+    if a.notte and not a.dir:
+        ap.error("--notte vuole --dir: la coda notturna deve sapere dove lavorare")
+    if a.barra and not a.notte:
+        ap.error("--barra vale solo con --notte: la rigira la coda notturna")
+    if a.barra and (not a.barra.strip() or "\n" in a.barra.strip() or "\r" in a.barra):
+        ap.error("--barra vuole un comando su una riga sola")
+    stato = json.load(open(STATE)) if os.path.exists(STATE) else {}
+    vecchia = stato.get(a.key, {}).get("id")
+    if vecchia and aperta(vecchia, stato[a.key].get("board", a.board)):
+        print(vecchia)
+        return 0
+    desc = a.desc.strip()
+    if a.notte:
+        desc += f"\n\nnotte: sì\ndir: {os.path.expanduser(a.dir)}"
+        if a.barra:
+            desc += f"\nbarra: {a.barra.strip()}"
+    try:
+        # Nasce senza descrizione e la riceve subito dopo: con una descrizione lunga Topics riscrive il titolo
+        # (stessa trappola di task-sync, 24/10).
+        t = api("POST", f"/api/boards/{a.board}/tasks", {"text": a.title})
+    except Exception as e:
+        print(f"board-card: Topics non risponde ({e})", file=sys.stderr)
+        return 2
+    # La board vera è quella che Topics dà alla card, non quella chiesta: un id di riga del progetto diventa il suo
+    # id di board. Con l'id chiesto la descrizione e il controllo «già aperta» fallivano, e il 24/10 l'hub ha
+    # rifatto la stessa card 39 volte. La chiave si salva appena la card esiste, prima di tutto il resto.
+    board = t.get("projectId") or t.get("project_id") or a.board
+    stato[a.key] = {"id": t["id"], "board": board, "title": a.title}
+    os.makedirs(os.path.dirname(STATE), exist_ok=True)
+    json.dump(stato, open(STATE, "w"), indent=1, ensure_ascii=False)
+    if desc:
+        try:
+            api("PATCH", f"/api/boards/{board}/tasks/{t['id']}", {"description": desc})
+        except Exception as e:
+            print(f"board-card: card creata senza descrizione ({e})", file=sys.stderr)
+    print(t["id"])
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

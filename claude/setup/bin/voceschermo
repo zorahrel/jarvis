@@ -1,0 +1,187 @@
+#!/usr/bin/env python3
+"""voceschermo — «fai clic su <qualcosa>» deciso da Jev sull'albero di accessibilita'.
+
+Questo e' il pezzo che i comandi letterali NON possono fare. «apri note» sta in
+una tabella; «fai clic sul pulsante di invio» no: il bersaglio e' sullo schermo
+e va scelto fra cio' che c'e' in quel momento.
+
+Jev e' la politica giusta qui, e non per gusto: sul banco `test-pick2` fa 10/10
+nello scegliere l'elemento e 8/8 sul tipo di passo, contro 6-8/10 di un modello
+locale (scheda reference_bonsai2_locale_vs_jev). Un comando vocale non ha un
+passo successivo che corregga l'errore: la prima risposta e' la risposta.
+
+    voceschermo "il pulsante di invio"
+    voceschermo --elenca          mostra cosa vede sullo schermo
+
+Serve il permesso Accessibilita per LEGGERE l'albero e per cliccare.
+"""
+import json
+import subprocess
+import sys
+import urllib.request
+
+API = "https://api.typesafe.ai/v1/systemone"
+
+
+def chiave():
+    r = subprocess.run(["security", "find-generic-password", "-s", "typesafe", "-a", "jev", "-w"],
+                       capture_output=True, text=True)
+    if r.returncode != 0:
+        sys.exit("chiave typesafe/jev assente dal keychain")
+    return r.stdout.strip()
+
+
+def permesso_accessibilita():
+    """True se il processo puo' leggere l'albero AX.
+
+    `AXIsProcessTrusted` e' la domanda diretta: chiederlo evita di dedurre il
+    permesso da una lista vuota, che ha anche altre cause.
+    """
+    r = subprocess.run(
+        ["osascript", "-e", 'tell application "System Events" to get UI elements enabled'],
+        capture_output=True, text=True)
+    return r.stdout.strip() == "true"
+
+
+def albero():
+    """Elementi cliccabili della finestra in primo piano, via AppleScript.
+
+    Si usa System Events e non un binario dedicato perche' e' gia' installato:
+    aggiungere una dipendenza per leggere l'albero sarebbe sproporzionato.
+    """
+    js = '''
+    tell application "System Events"
+      set frontApp to name of first application process whose frontmost is true
+      set fuori to {}
+      try
+        tell application process frontApp
+          set els to entire contents of front window
+          repeat with e in els
+            try
+              set r to role of e
+              if r is in {"AXButton", "AXMenuButton", "AXCheckBox", "AXRadioButton", "AXLink", "AXTextField", "AXPopUpButton"} then
+                set n to ""
+                try
+                  set n to name of e
+                end try
+                if n is missing value then set n to ""
+                set d to ""
+                try
+                  set d to description of e
+                end try
+                if d is missing value then set d to ""
+                if n is not "" or d is not "" then
+                  set p to position of e
+                  set s to size of e
+                  set end of fuori to (r & "|" & n & "|" & d & "|" & (item 1 of p) & "|" & (item 2 of p) & "|" & (item 1 of s) & "|" & (item 2 of s))
+                end if
+              end if
+            end try
+          end repeat
+        end tell
+      end try
+      return fuori
+    end tell
+    '''
+    r = subprocess.run(["osascript", "-e", js], capture_output=True, text=True, timeout=25)
+    if r.returncode != 0:
+        # Il messaggio grezzo di AppleScript non dice all'utente cosa fare.
+        if "assistive" in r.stderr or "1728" in r.stderr:
+            sys.exit("serve il permesso Accessibilita: Impostazioni > Privacy e sicurezza > Accessibilita")
+        sys.exit(f"non riesco a leggere lo schermo: {r.stderr.strip()[:200]}")
+
+    fuori = []
+    for riga in r.stdout.strip().split(", "):
+        parti = riga.split("|")
+        if len(parti) != 7:
+            continue
+        ruolo, nome, descr, x, y, w, h = parti
+        try:
+            x, y, w, h = int(x), int(y), int(w), int(h)
+        except ValueError:
+            continue
+        fuori.append({"ruolo": ruolo, "nome": nome.strip() or descr.strip(),
+                      "x": x, "y": y, "w": w, "h": h})
+    return fuori
+
+
+def scegli(obiettivo, elementi):
+    opzioni = {f"e{i}": f"{e['ruolo']} {e['nome']!r}" for i, e in enumerate(elementi)}
+    corpo = {
+        "model": "jev-latest",
+        "state": {"obiettivo_utente": obiettivo,
+                  "elementi_visibili": [f"{e['ruolo']} {e['nome']}" for e in elementi]},
+        "questions": {
+            "elemento": {
+                "type": "choice",
+                "instructions": "Su quale elemento bisogna cliccare per fare cio' che chiede l'utente?",
+                "criteria": opzioni,
+            },
+            # Senza questa, un obiettivo che NON sta sullo schermo riceve comunque
+            # un bersaglio: il modello sceglie sempre. La fattibilita' e' il freno.
+            "fattibile": {
+                "type": "noul",
+                "instructions": "L'obiettivo si puo' raggiungere cliccando uno degli elementi elencati.",
+            },
+        },
+    }
+    req = urllib.request.Request(API, data=json.dumps(corpo).encode(),
+                                 headers={"Authorization": f"Bearer {chiave()}",
+                                          "Content-Type": "application/json"})
+    r = json.load(urllib.request.urlopen(req, timeout=30))
+    a = r["answers"]
+    f = a["fattibile"]
+    fattibile = f.get("probability", f.get("noul", 0))
+    return a["elemento"]["choice"], a["elemento"]["confidence"], fattibile
+
+
+def clicca(e):
+    x, y = e["x"] + e["w"] // 2, e["y"] + e["h"] // 2
+    r = subprocess.run(["osascript", "-e", f'tell application "System Events" to click at {{{x}, {y}}}'],
+                       capture_output=True, text=True)
+    return r.returncode == 0
+
+
+def main():
+    if len(sys.argv) < 2:
+        sys.exit(__doc__)
+
+    elementi = albero()
+    if not elementi:
+        # "Nessun elemento" ha due cause opposte e il messaggio deve
+        # distinguerle: una finestra davvero senza pulsanti, oppure il permesso
+        # Accessibilita' mancante, che fa restituire una lista vuota SENZA
+        # errore. Confonderle manda a cercare il problema nel posto sbagliato.
+        if not permesso_accessibilita():
+            sys.exit("manca il permesso Accessibilita.\n"
+                     "  Impostazioni > Privacy e sicurezza > Accessibilita\n"
+                     "  attiva 'Comandi Vocali' (o il terminale da cui lanci).")
+        sys.exit("la finestra in primo piano non ha elementi cliccabili")
+
+    if sys.argv[1] == "--elenca":
+        for i, e in enumerate(elementi):
+            print(f"e{i}: {e['ruolo']} {e['nome']!r}")
+        return 0
+
+    obiettivo = " ".join(sys.argv[1:])
+    scelto, conf, fattibile = scegli(obiettivo, elementi)
+
+    # Due soglie, non una: un bersaglio scelto con poca fiducia su una schermata
+    # dove l'obiettivo non esiste e' esattamente il clic sbagliato da evitare.
+    if fattibile < 0.5:
+        print(f"non lo vedo sullo schermo (fattibile={fattibile:.2f})")
+        return 1
+    if conf < 0.4:
+        print(f"non sono sicuro di quale elemento (confidenza={conf:.2f})")
+        return 1
+
+    e = elementi[int(scelto[1:])]
+    if clicca(e):
+        print(f"cliccato: {e['nome']} (p={conf:.2f})")
+        return 0
+    print("clic fallito: serve il permesso Accessibilita")
+    return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

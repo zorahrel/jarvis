@@ -1,0 +1,186 @@
+#!/usr/bin/env python3
+"""Registro della memoria del gateway OpenClaw (una riga ogni 10 minuti, launchd com.jarvis.oc-memwatch)
+e tampone dichiarato: riavvio a gateway libero sopra una soglia.
+
+Causa (25/10, card c4e3df18): non e' una perdita dei plugin nostri ne' del loopback MCP. In 2026.10.5 il
+pavimento sono i worker thread del core (~1 GB su 15-17 worker; quelli di trascrizione sono 7 su 12 core,
+~560 MB), sopra ci sono l'heap principale (~0,8 GB) e ~0,5 GB nativi non attribuiti. 2 processi su 3 della
+10.5 crescono (da +30 a +97 MB/h): la crescita e' nell'heap principale e nel nativo, non nei worker.
+Il registro separa le tre parti (fp_mb - heap_mb - workers_mb = nativo) per vedere quale sale.
+
+Tampone: se il footprint resta sopra OC_MEMWATCH_MB (default 3500) per 4 righe di fila (30 min) sullo
+stesso processo, acceso da almeno 2 h, e nelle ultime 6 h non c'e' stato un riavvio di questo script,
+chiama oc-restart SOLO se `oc-restart --dry-run` dice che il gateway e' libero; se no riprova al giro dopo.
+Cosi' nessun turno viene tagliato e nessun messaggio perso (oc-restart fa anche il recupero Discord).
+
+Colonne: ora pid up_s fp_mb heap_mb workers_mb workers versione azione
+Uso: oc-memwatch            (un giro: misura, scrive, decide)
+     oc-memwatch --dry-run  (misura e dice cosa farebbe, non scrive e non riavvia)
+     oc-memwatch --selftest (prova la decisione su righe finte, exit 0 se giusta)"""
+import json, os, re, subprocess, sys, time
+from pathlib import Path
+
+HOME = Path.home()
+LOG = HOME / ".claude/jarvis/logs/oc-memwatch.log"
+STATE = HOME / ".claude/jarvis/state/oc-memwatch-last-restart"
+OC_RESTART = HOME / "bin/oc-restart"
+LABEL = "ai.openclaw.gateway"
+THRESHOLD_MB = int(os.environ.get("OC_MEMWATCH_MB", "3500"))
+STREAK = 4              # righe consecutive sopra soglia: 4 campioni a 10 min = 30 min coperti
+MIN_UP_S = 2 * 3600     # un processo giovane sta ancora salendo dallo scalino d'avvio (~2 GB in 3 min)
+COOLDOWN_S = 6 * 3600   # al massimo un riavvio automatico ogni 6 h
+os.environ["PATH"] = "/opt/homebrew/bin:" + os.environ.get("PATH", "/usr/bin:/bin")
+
+
+def run(cmd, timeout):
+    try:
+        return subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+    except (subprocess.TimeoutExpired, OSError):
+        return None
+
+
+def gateway_pid():
+    r = run(["launchctl", "list"], 10)
+    for line in (r.stdout.splitlines() if r else []):
+        parts = line.split()
+        if len(parts) == 3 and parts[2] == LABEL and parts[0].isdigit():
+            return int(parts[0])
+    return None
+
+
+def uptime_s(pid):
+    r = run(["ps", "-o", "etime=", "-p", str(pid)], 10)
+    m = re.match(r"(?:(\d+)-)?(?:(\d+):)?(\d+):(\d+)$", (r.stdout.strip() if r else ""))
+    if not m:
+        return 0
+    d, h, mi, s = (int(x or 0) for x in m.groups())
+    return ((d * 24 + h) * 60 + mi) * 60 + s
+
+
+def footprint_mb(pid):
+    r = run(["footprint", "-p", str(pid)], 60)
+    m = re.search(r"phys_footprint: ([\d.]+) ([KMG])B", r.stdout if r else "")
+    if not m:
+        return None
+    return round(float(m.group(1)) * {"K": 1 / 1024, "M": 1, "G": 1024}[m.group(2)])
+
+
+def heaps():
+    """Heap principale e somma degli heap dei worker, dall'ultimo campione del gateway (chiamata leggera)."""
+    r = run(["openclaw", "gateway", "call", "diagnostics.stability", "--json", "--timeout", "60000"], 90)
+    try:
+        m = json.loads(r.stdout)["summary"]["memory"]["latest"]
+        return m["heapTotalBytes"] >> 20, m["workerHeapTotalBytes"] >> 20, m["workerCount"]
+    except (AttributeError, TypeError, ValueError, KeyError):
+        return None, None, None
+
+
+def version():
+    r = run(["openclaw", "--version"], 30)
+    m = re.search(r"\d{4}\.\d+\.\d+\S*", r.stdout if r else "")
+    return m.group(0) if m else "-"
+
+
+def recent_rows(n):
+    try:
+        lines = LOG.read_text().splitlines()[-n:]
+    except FileNotFoundError:
+        return []
+    rows = []
+    for line in lines:
+        f = line.split("\t")
+        if len(f) >= 4 and f[1].isdigit() and f[3].isdigit():
+            rows.append({"pid": int(f[1]), "fp": int(f[3])})
+    return rows
+
+
+def decide(rows, up, now, last_restart, threshold=THRESHOLD_MB):
+    """rows: le ultime righe, la corrente per ultima. Ritorna True se il gateway va riavviato (a libero)."""
+    tail = rows[-STREAK:]
+    if len(tail) < STREAK or len({r["pid"] for r in tail}) != 1:
+        return False
+    if any(r["fp"] < threshold for r in tail):
+        return False
+    return up >= MIN_UP_S and now - last_restart >= COOLDOWN_S
+
+
+def gateway_free():
+    r = run([str(OC_RESTART), "--dry-run"], 180)
+    return bool(r and r.stdout.startswith("0 cose"))
+
+
+def restart(now):
+    STATE.parent.mkdir(parents=True, exist_ok=True)
+    STATE.write_text(str(now))
+    subprocess.Popen([str(OC_RESTART)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+
+
+def act(over, dry, is_free, do_restart):
+    """Riavvia solo se sopra soglia, gateway libero e non in --dry-run. Ritorna l'azione da scrivere nel registro."""
+    if not over:
+        return "-"
+    if not is_free():
+        return "sopra-soglia-occupato"
+    if not dry:
+        do_restart()
+    return "riavvio"
+
+
+def selftest():
+    hi, lo, now = 3600, 2500, 10 ** 9
+    cases = [
+        ("quattro sopra soglia, vecchio, nessun riavvio recente", [{"pid": 1, "fp": hi}] * 4, 3 * 3600, 0, True),
+        ("solo tre righe sopra (20 min)", [{"pid": 1, "fp": lo}] + [{"pid": 1, "fp": hi}] * 3, 3 * 3600, 0, False),
+        ("pid cambiato in mezzo", [{"pid": 1, "fp": hi}, {"pid": 2, "fp": hi}] + [{"pid": 2, "fp": hi}] * 2, 3 * 3600, 0, False),
+        ("processo giovane", [{"pid": 1, "fp": hi}] * 4, 3600, 0, False),
+        ("riavviato 1 h fa", [{"pid": 1, "fp": hi}] * 4, 3 * 3600, now - 3600, False),
+        ("sotto soglia", [{"pid": 1, "fp": lo}] * 4, 3 * 3600, 0, False),
+    ]
+    bad = [name for name, rows, up, last, want in cases if decide(rows, up, now, last, 3500) != want]
+    # la parte che agisce: (sopra soglia, dry-run, gateway libero) -> (azione, riavvio chiamato)
+    acts = [
+        ("libero: riavvia", True, False, True, "riavvio", 1),
+        ("occupato: non riavvia", True, False, False, "sopra-soglia-occupato", 0),
+        ("dry-run: non riavvia", True, True, True, "riavvio", 0),
+        ("sotto soglia: non chiede neanche", False, False, True, "-", 0),
+    ]
+    for name, over, dry, free, want, calls in acts:
+        called = []
+        got = act(over, dry, lambda: free, lambda: called.append(1))
+        if got != want or len(called) != calls:
+            bad.append(name)
+    print("selftest: " + ("ok" if not bad else "SBAGLIATO: " + ", ".join(bad)))
+    return 1 if bad else 0
+
+
+def main():
+    a = sys.argv[1:]
+    if "--selftest" in a:
+        return selftest()
+    dry = "--dry-run" in a
+    pid = gateway_pid()
+    if not pid:
+        print("gateway non in esecuzione")
+        return 0
+    up, fp = uptime_s(pid), footprint_mb(pid)
+    heap, workers_mb, workers = heaps()
+    now = int(time.time())
+    try:
+        last = int(STATE.read_text().strip())
+    except (FileNotFoundError, ValueError):
+        last = 0
+    rows = recent_rows(STREAK - 1) + ([{"pid": pid, "fp": fp}] if fp is not None else [])
+    action = act(fp is not None and decide(rows, up, now, last), dry, gateway_free, lambda: restart(now))
+    fields = [time.strftime("%Y-%m-%dT%H:%M:%S"), pid, up, fp, heap, workers_mb, workers, version(), action]
+    line = "\t".join("-" if v is None else str(v) for v in fields)
+    if dry:
+        print(line)
+    else:
+        LOG.parent.mkdir(parents=True, exist_ok=True)
+        with LOG.open("a") as f:
+            f.write(line + "\n")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

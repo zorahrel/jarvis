@@ -1,0 +1,45 @@
+#!/bin/bash
+# Guardiano 26/10: Topics.app si aggiorna su disco anche a finestra aperta (swap atomico del
+# bundle, il processo vecchio non lo sente), ma la versione nuova parte solo al rilancio, e
+# chiudere la app toglie la finestra ad Attilio. Questo giro la rilancia solo a Mac libero
+# (~/bin/mac-libero exit 0), con un SIGTERM (la app salva la geometria e chiude pulita; i
+# terminali vivono nel pty-bridge, non nella app), poi si toglie da launchd.
+set -u
+LABEL=com.jarvis.topics-app-rilancio
+APP="$HOME/Applications/Topics.app"
+BIN="$APP/Contents/MacOS/app"
+LOG="$HOME/.claude/jarvis/logs/topics-app-rilancio.log"
+HR="$HOME/Library/Application Support/io.armonia.topics.tauri/hot-reload.log"
+say() { echo "[$(date '+%d/%m %H:%M:%S')] $*" >> "$LOG"; }
+finish() {
+  say "$1"
+  P="$HOME/Library/LaunchAgents/$LABEL.plist"
+  mkdir -p "$HOME/Library/LaunchAgents/disabled"; mv "$P" "$HOME/Library/LaunchAgents/disabled/" 2>/dev/null
+  launchctl bootout "gui/$(id -u)/$LABEL" 2>/dev/null
+  exit 0
+}
+# inode dell'eseguibile che il processo ha in memoria: diverso da quello su disco = gira la versione vecchia
+running_ino() { lsof -nP -a -p "$1" -d txt -Fn -Fi 2>/dev/null | awk '/^i/{i=substr($0,2)} /^n.*\/Contents\/MacOS\/app$/{print i; exit}'; }
+gui_pid() { pgrep -f -- 'Topics.app/Contents/MacOS/app$' | head -1; }
+
+want=$(defaults read "$APP/Contents/Info.plist" CFBundleShortVersionString 2>/dev/null)
+pid=$(gui_pid)
+[ -n "$pid" ] || finish "Topics non e' aperta: alla prossima apertura parte gia' la $want"
+[ "$(running_ino "$pid")" = "$(stat -f %i "$BIN")" ] && finish "Topics (pid $pid) gira gia' la versione su disco, $want"
+~/bin/mac-libero >/dev/null 2>&1 || exit 0
+
+say "Mac libero: chiudo Topics (pid $pid) per farla ripartire sulla $want"
+kill -TERM "$pid"
+for _ in $(seq 1 60); do kill -0 "$pid" 2>/dev/null || break; sleep 0.5; done
+if kill -0 "$pid" 2>/dev/null; then
+  say "Topics non si e' chiusa in 30 s: non la forzo, riprovo al prossimo giro"
+  exit 0
+fi
+t0=$(date +%s)
+open "$APP"
+for _ in $(seq 1 30); do sleep 1; np=$(gui_pid); [ -n "$np" ] && break; done
+sleep 8
+np=$(gui_pid)
+[ -n "$np" ] || { say "ATTENZIONE: dopo open Topics non risulta aperta, riprovo al prossimo giro"; exit 0; }
+line=$(awk -F'[][]' -v t="$t0" '$2>=t' "$HR" 2>/dev/null | tail -2 | tr '\n' ' ')
+finish "fatto: Topics pid $np sulla $want (inode $(running_ino "$np") = disco $(stat -f %i "$BIN")); hot-reload.log: $line"

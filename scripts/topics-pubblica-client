@@ -1,0 +1,48 @@
+#!/bin/bash
+# Costruisce il client di Topics da un worktree PULITO di <commit> e lo pubblica nel
+# public/ di produzione (~/Projects/topics-app/public), che servono sia il server :3333
+# sia l'app desktop (disk-serving). Scritto il 26/10 dal Guardiano; pagina:
+# ~/.claude/jarvis/memory/tools/topics-aggiornamento.md
+#
+#   topics-pubblica-client <commit>            costruisce, verifica, pubblica
+#   topics-pubblica-client <commit> --solo-build  si ferma prima di toccare public/
+#
+# - mai dal checkout vivo: un build da li' impacchetta il WIP di chiunque ci lavori;
+# - la build passa da offload (a Mac carico gira sul PC) e torna in .offload-bundle;
+# - si verifica con gli stessi controlli di scripts/build-client.ts e si pubblica con
+#   lo stesso publishBundle (copia gli asset, poi un rename atomico di index.html, e i
+#   chunk vecchi restano 3 giorni per le finestre gia' aperte);
+# - le finestre aperte vedono il toast «Ricarica», quelle nascoste ricaricano da sole.
+#   Pubblicare DOPO il riavvio del server: il client nuovo legge campi che il server
+#   vecchio non manda (usage.sideCalls, 26/10).
+set -u
+R="$HOME/Projects/topics-app"
+C=$(git -C "$R" rev-parse --verify "${1:?uso: topics-pubblica-client <commit> [--solo-build]}^{commit}") || exit 2
+ONLY_BUILD=0; [ "${2:-}" = "--solo-build" ] && ONLY_BUILD=1
+LOG="${LOG:-$HOME/.claude/jarvis/logs/topics-aggiornamento.log}"
+BUN=$("$R/scripts/pinned-bun.sh" 2>/dev/null || command -v bun)
+say() { echo "[$(date '+%d/%m %H:%M:%S')] $*" | tee -a "$LOG"; }
+
+T=$(mktemp -d); W="$T/wt"
+cleanup() { git -C "$R" worktree remove --force "$W" 2>/dev/null; trash "$T" 2>/dev/null; git -C "$R" worktree prune; }
+trap cleanup EXIT
+git -C "$R" worktree add -q --detach "$W" "$C" || { say "ABORT: worktree non creato"; exit 3; }
+say "client: build di ${C:0:10} in $W (offload)"
+( cd "$W" && offload --cosa "bundle del client di Topics" --get .offload-bundle \
+    --mac-cmd "bun install --frozen-lockfile && cd client && bun install --frozen-lockfile && bunx tsc -b && bunx vite build --outDir ../.offload-bundle --emptyOutDir" \
+    -- "bun install --frozen-lockfile && cd client && bun install --frozen-lockfile && bunx tsc -b && bunx vite build --outDir ..\\.offload-bundle --emptyOutDir" ) >> "$LOG" 2>&1 \
+  || { say "ABORT: build fallita (dettagli sopra nel log)"; exit 4; }
+OUT="$W/.offload-bundle"
+( cd "$W" && "$BUN" -e 'import {missingBundleAssets, mismatchedPrecompressedSiblings} from "./server/lib/client-bundle"; const d=process.argv[1]; const m=missingBundleAssets(d), x=mismatchedPrecompressedSiblings(d+"/assets"); if (m.length||x.length) { console.error("mancanti", m.slice(0,5), "compressi sfasati", x.slice(0,5)); process.exit(1) }' "$OUT" ) \
+  || { say "ABORT: il bundle non passa i controlli di build-client.ts"; exit 5; }
+ver=$(jq -r .version "$W/package.json")
+/usr/bin/grep -rlq "\"$ver\"" "$OUT/assets" || { say "ABORT: la versione $ver non e' nel bundle"; exit 5; }
+say "client: bundle verificato ($(ls "$OUT/assets" | wc -l | tr -d ' ') asset, versione $ver)"
+[ "$ONLY_BUILD" = 1 ] && { say "client: --solo-build, public/ non toccato"; exit 0; }
+( cd "$W" && "$BUN" -e 'import {publishBundle} from "./scripts/build-client-publish.ts"; const r=publishBundle(process.argv[1],process.argv[2]); console.log(JSON.stringify(r)); process.exit(r.broken?1:0)' "$OUT" "$R/public" ) >> "$LOG" 2>&1 \
+  || { say "ABORT: publishBundle ha lasciato un bundle incompleto (vedi log)"; exit 6; }
+entry=$(/usr/bin/grep -o '/assets/index-[^"]*\.js' "$R/public/index.html" | head -1)
+sleep 3
+# il server timbra la rev nel meta topics-bundle-rev: basta che l'entry compaia nella pagina servita
+curl -sk -m10 https://127.0.0.1:3333/ | /usr/bin/grep -q "src=\"$entry\"" || { say "ATTENZIONE: public/ ha $entry ma la pagina di :3333 non lo carica"; exit 7; }
+say "client: pubblicato $entry, servito da :3333"

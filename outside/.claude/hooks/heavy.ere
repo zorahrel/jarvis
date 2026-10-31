@@ -1,0 +1,40 @@
+# Lavori pesanti: una riga per schema, `classe<TAB>dove<TAB>ERE`. Lo leggono l'hook offload-guard.sh
+# (/usr/bin/grep -E, alla partenza) e il freno del Mac (usage-hub, src/owner.mjs, mentre gira): una lista
+# sola, così le due parti non si allontanano.
+#   dove: start = solo alla partenza (testo del comando o dello script), run = solo sui processi vivi, both = tutti e due
+#   ERE POSIX, solo classi [[:...:]]: il traduttore JS le conosce, \s e \b no (BSD grep non li garantisce)
+# I terminatori comprendono le virgolette: `bash -lc "npm test"` finisce con " e deve valere.
+test	both	playwright[[:space:]]+test([[:space:]"';)|&]|$)
+test	both	(^|[^[:alnum:]_-])(vitest|jest)([[:space:]"';)|&]|$)
+test	both	cypress[[:space:]]+run
+test	both	(pnpm|npm|yarn|bun)[[:space:]]+(run[[:space:]]+)?(test|e2e)(:[^[:space:]"';)|&]*)?([[:space:]"';)|&]|$)
+test	both	bun[[:space:]]+test([[:space:]"';)|&]|$)
+test	both	node[[:space:]]+(-[^[:space:]]+[[:space:]]+)*--test([[:space:]"';)|&=]|$)
+test	both	(^|[^[:alnum:]_-])pytest([[:space:]"';)|&]|$)
+test	both	(cargo|go|swift)[[:space:]]+test([[:space:]"';)|&]|$)
+test	both	spec-flow
+check	both	(pnpm|npm|yarn|bun)[[:space:]]+(run[[:space:]]+)?(check|typecheck|lint|deadcode)[[:alnum:]:_-]*([[:space:]"';)|&]|$)
+check	both	(^|[[:space:]/"'])tsc([[:space:]"';)|&]|$)
+check	both	(^|[^[:alnum:]_-])eslint([[:space:]"';)|&]|$)
+check	both	bun[[:space:]]+run[[:space:]]+[^[:space:]]*(check|gate)[^[:space:]]*\.ts
+browser	run	/ms-playwright/
+browser	run	Playwright\.app
+browser	run	chrome-headless-shell
+browser	run	Chrome for Testing
+build	both	(pnpm|npm|yarn|bun)[[:space:]]+(run[[:space:]]+)?build(:[^[:space:]"';)|&]*)?([[:space:]"';)|&]|$)
+build	both	swift[[:space:]]+build
+build	run	swift-frontend
+build	run	swift-build
+build	both	xcodebuild
+build	both	(^|[[:space:]/"'])swiftc([[:space:]"';)|&]|$)
+build	both	cargo[[:space:]]+build
+build	both	(astro|next|vite)[[:space:]]+build
+media	both	(^|[[:space:]/"'])(ffmpeg|magick|convert)([[:space:]"';)|&]|$)
+media	both	vis[[:space:]]+giuria
+media	both	run-axes\.sh
+bulk	both	(^|[^[:alnum:]_-])(rg|ugrep)[[:space:]].*(~|\$HOME|/Users/[[:alnum:]_.-]+)(/\.claude/projects)?/?([[:space:]"';)|&]|$)
+bulk	both	(^|[^[:alnum:]_-])grep[[:space:]]+(.*[[:space:]])?-[[:alpha:]]*[rR][[:alpha:]]*[[:space:]].*(~|\$HOME|/Users/[[:alnum:]_.-]+)(/\.claude/projects)?/?([[:space:]"';)|&]|$)
+bulk	both	(^|[^[:alnum:]_-])find[[:space:]]+(~|\$HOME|/Users/[[:alnum:]_.-]+)/Projects/?(([[:space:]]+(-([^m[:space:]]|m[^a])|[^-[:space:]]))|[[:space:]]*["';)|&]|[[:space:]]*$)
+bulk	both	openclaw[[:space:]]+update([[:space:]]+-|[[:space:]]*(["';)|&]|$))
+bypass	start	OFFLOAD=local
+bypass	start	TOPICS_GATE_SLOTS=0

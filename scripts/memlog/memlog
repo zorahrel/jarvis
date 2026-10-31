@@ -1,0 +1,338 @@
+#!/usr/bin/env python3
+"""memlog — registro della memoria del Mac: una riga ogni 5 minuti (launchd com.jarvis.memlog).
+
+Nato il 26/10/2026 dalla domanda di Attilio «come e' possibile mancanza di memoria?»: Topics fermava le
+card locali da ore con `kern.memorystatus_level` al 53% (il kernel dice «meta' libera»), e nessuno aveva
+una storia da guardare per capire se la pressione era vera. Esistevano solo `[memsig]` dentro
+topics-server.log (solo a Topics acceso, in un log da 400.000 righe troncato a 50 MB, senza wired ne'
+memorystatus) e `oc-memwatch` (solo il gateway OpenClaw, ogni 10 min): questo e' il registro della
+macchina intera. oc-memwatch resta com'e', e il gruppo OpenClaw compare qui fra i gruppi di app.
+
+Una riga JSON per campione, in ~/.claude/jarvis/logs/memlog.log (un file solo, tagliato da se' a 14 giorni):
+  t          ora locale ISO
+  lvl        kern.memorystatus_level (% «libera» secondo il kernel; conta anche cache e inattive, e inganna)
+  swap_mb / swap_tot_mb   vm.swapusage
+  wired_mb / comp_mb      pagine wired / pagine occupate dal compressore (vm_stat)
+  avail_gb   la somma di Topics: free + speculative + purgeable + file-backed (`parseVmStat`, dispatch-capacity.ts)
+  topics_gb / topics_swap  cio' che Topics dice di vedere: held2m e verdetto dell'ultima riga [memsig]
+                           (null se piu' vecchia di 3 min: Topics spento o cieco)
+  swapins    contatore cumulativo di vm_stat; il ritmo e' la differenza fra righe (10 pagine/s = soglia di Topics)
+  load       load average a 1 minuto
+  proc_mb    somma dei footprint di tutti i processi (la DOMANDA di memoria: puo' superare la RAM, il resto e' compresso)
+  top        i 5 gruppi di app piu' pesanti, «nome:GB», footprint di `top` (conta anche il compresso, come memhog)
+
+    memlog                un campione: misura, scrive, taglia
+    memlog --dry-run      stampa la riga e non scrive
+    memlog --report [--days N] [--json]   sintesi (default 7 giorni): per mac-health e per chi legge
+    memlog --check        righe per il giro del Guardiano; stdout vuoto = niente da dire
+Prova: scripts/memlog/memlog-test.sh (exit 0)."""
+import datetime as dt
+import json
+import os
+import re
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+HOME = Path.home()
+LOG = Path(os.environ.get("MEMLOG_FILE", HOME / ".claude/jarvis/logs/memlog.log"))
+TOPICS_LOG = Path(os.environ.get("MEMLOG_TOPICS_LOG", HOME / ".claude/jarvis/logs/topics-server.log"))
+MAX_LINES = int(os.environ.get("MEMLOG_MAX_LINES", "4032"))   # 14 giorni a 288 righe al giorno
+SLACK = max(1, MAX_LINES // 14)                               # si riscrive il file una volta al giorno, non a ogni giro
+INTERVAL_S = 300
+SWAP_HI = 0.85            # quota di swap «piena» nel rapporto
+PAGES_READ_BACK = 10      # swapin/s: la stessa soglia di Topics (mem-signal.ts)
+STALE_S = 20 * 60         # registro fermo
+PRESSURE_WINDOW_S = 2 * 3600
+PRESSURE_SHARE = 0.75
+MEMSIG_MAX_AGE_S = 180
+INTERPRETERS = {"node", "bun", "python", "python3", "tsx", "deno"}
+
+
+def run(args, timeout=20):
+    try:
+        return subprocess.run(args, capture_output=True, text=True, timeout=timeout).stdout
+    except (subprocess.TimeoutExpired, OSError):
+        return ""
+
+
+# ------------------------------------------------------------------ misura (pure sul testo)
+
+def parse_vm_stat(out):
+    num = lambda pat: (int(m.group(1)) if (m := re.search(pat, out)) else None)
+    page = num(r"page size of (\d+) bytes")
+    pages = lambda name: num(rf"Pages {name}:\s+(\d+)")
+    free, spec, purg = pages("free"), pages("speculative"), pages("purgeable")
+    file_backed = num(r"File-backed pages:\s+(\d+)")
+    wired, comp = pages("wired down"), pages("occupied by compressor")
+    terms = [free, spec, purg, file_backed]
+    mb = lambda p: round(p * page / 1048576) if page and p is not None else None
+    return dict(
+        wired_mb=mb(wired), comp_mb=mb(comp), swapins=num(r"Swapins:\s+(\d+)"),
+        avail_gb=round(sum(terms) * page / 1e9, 1) if page and all(t is not None for t in terms) else None)
+
+
+def parse_swap(out):
+    m = re.search(r"total = ([\d.]+)M\s+used = ([\d.]+)M", out)
+    return (round(float(m.group(2))), round(float(m.group(1)))) if m else (None, None)
+
+
+def mem_mb(s):
+    """«2254M», «13G», «26K+», «0B»: i valori della colonna MEM di top."""
+    m = re.match(r"([\d.]+)([BKMG])[+-]?$", s)
+    return float(m.group(1)) * {"B": 1 / 1048576, "K": 1 / 1024, "M": 1, "G": 1024}[m.group(2)] if m else None
+
+
+def parse_top(out):
+    """{pid: (mb, nome troncato di top)}"""
+    rows = {}
+    for line in out.splitlines():
+        p = line.split(None, 2)
+        if len(p) >= 2 and p[0].isdigit() and (mb := mem_mb(p[1])) is not None:
+            rows[int(p[0])] = (mb, p[2].strip() if len(p) > 2 else "?")
+    return rows
+
+
+def parse_ps(out):
+    cmds = {}
+    for line in out.splitlines():
+        p = line.strip().split(None, 1)
+        if len(p) == 2 and p[0].isdigit():
+            cmds[int(p[0])] = p[1]
+    return cmds
+
+
+def group(cmd, fallback="?"):
+    """Il «gruppo di app» di un processo: l'app per i bundle, interprete:script per node/bun/python."""
+    if not cmd:
+        return fallback
+    toks = cmd.split()
+    exe = toks[0].rsplit("/", 1)[-1]
+    script = next((t for t in toks[1:] if not t.startswith("-")), "")
+    if exe.startswith("openclaw") or (exe.lower() in INTERPRETERS and "/openclaw/" in script):
+        return "OpenClaw"
+    if "/claude-code/" in cmd:
+        return "claude-cli"
+    if exe.lower() in INTERPRETERS or exe.lower().startswith("python"):
+        return f"{exe}:{script.rsplit('/', 1)[-1]}" if script else exe
+    if m := re.search(r"/([^/]+)\.app/", cmd):
+        return m.group(1)
+    if "WebKit.framework" in cmd:
+        return "WebKit"
+    return exe
+
+
+def top_groups(top_rows, cmds, n=5):
+    """(proc_mb totale, 'nome:GB,...' dei n gruppi piu' pesanti)"""
+    g = {}
+    for pid, (mb, name) in top_rows.items():
+        k = group(cmds.get(pid), name)
+        g[k] = g.get(k, 0) + mb
+    best = sorted(g.items(), key=lambda kv: -kv[1])[:n]
+    return round(sum(g.values())), ",".join(f"{k}:{v / 1024:.1f}" for k, v in best)
+
+
+def parse_memsig(tail, now):
+    """L'ultima riga [memsig] di Topics non piu' vecchia di 3 minuti -> (held2m GB, verdetto)."""
+    for line in reversed(tail.splitlines()):
+        if "[memsig]" not in line:
+            continue
+        t = re.match(r"(\d{4}-\d\d-\d\dT[\d:.]+Z)", line)
+        held, swap = re.search(r"held2m=([\d.]+)", line), re.search(r"swap=(\w+)", line)
+        if not (t and held):
+            return None, None
+        ts = dt.datetime.fromisoformat(t.group(1).replace("Z", "+00:00")).timestamp()
+        if now - ts > MEMSIG_MAX_AGE_S:
+            return None, None
+        return float(held.group(1)), (swap.group(1) if swap else None)
+    return None, None
+
+
+def topics_view(now):
+    try:
+        with open(TOPICS_LOG, "rb") as f:
+            f.seek(0, 2)
+            f.seek(max(0, f.tell() - 262144))
+            return parse_memsig(f.read().decode("utf-8", "replace"), now)
+    except OSError:
+        return None, None
+
+
+def sample(now=None):
+    now = now or time.time()
+    vm = parse_vm_stat(run(["vm_stat"]))
+    swap_mb, swap_tot = parse_swap(run(["sysctl", "-n", "vm.swapusage"]))
+    lvl = run(["sysctl", "-n", "kern.memorystatus_level"]).strip()
+    held, tswap = topics_view(now)
+    proc_mb, top = None, None
+    rows = parse_top(run(["top", "-l", "1", "-s", "0", "-o", "mem", "-n", "1000", "-stats", "pid,mem,command"], 30))
+    if rows:
+        proc_mb, top = top_groups(rows, parse_ps(run(["ps", "-Ao", "pid=,command="])))
+    return dict(
+        t=dt.datetime.fromtimestamp(now).isoformat(timespec="seconds"),
+        lvl=int(lvl) if lvl.isdigit() else None, swap_mb=swap_mb, swap_tot_mb=swap_tot,
+        wired_mb=vm["wired_mb"], comp_mb=vm["comp_mb"], avail_gb=vm["avail_gb"],
+        topics_gb=held, topics_swap=tswap, swapins=vm["swapins"],
+        load=round(os.getloadavg()[0], 1), proc_mb=proc_mb, top=top)
+
+
+# ------------------------------------------------------------------ file
+
+def trim(lines, keep=MAX_LINES, slack=SLACK):
+    """Oltre keep+slack righe tiene le ultime keep; sotto, non tocca niente (una riscrittura al giorno)."""
+    return lines[-keep:] if len(lines) > keep + slack else lines
+
+
+def append(row, path=None):
+    path = Path(path or LOG)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "a") as f:
+        f.write(json.dumps(row, separators=(",", ":"), ensure_ascii=False) + "\n")
+    lines = path.read_text().splitlines()
+    kept = trim(lines)
+    if len(kept) != len(lines):
+        tmp = path.with_suffix(".tmp")
+        tmp.write_text("\n".join(kept) + "\n")
+        os.replace(tmp, path)   # nuovo inode: l'unico scrittore e' questo script, nessuno tiene il vecchio aperto
+
+
+def load(path=None, days=None, now=None):
+    now = now or time.time()
+    out = []
+    try:
+        for line in Path(path or LOG).read_text().splitlines():
+            try:
+                r = json.loads(line)
+                r["_ts"] = dt.datetime.fromisoformat(r["t"]).timestamp()
+            except (ValueError, KeyError):
+                continue
+            if days is None or r["_ts"] >= now - days * 86400:
+                out.append(r)
+    except OSError:
+        pass
+    return out
+
+
+# ------------------------------------------------------------------ lettura
+
+def swap_pct(r):
+    return r["swap_mb"] / r["swap_tot_mb"] if r.get("swap_mb") is not None and r.get("swap_tot_mb") else None
+
+
+def swapin_rates(rows):
+    """pagine/s fra righe consecutive; il salto all'indietro e' un riavvio del Mac e si scarta."""
+    out = []
+    for a, b in zip(rows, rows[1:]):
+        if a.get("swapins") is None or b.get("swapins") is None:
+            continue
+        dt_s, d = b["_ts"] - a["_ts"], b["swapins"] - a["swapins"]
+        if 0 < dt_s <= 3 * INTERVAL_S and d >= 0:
+            out.append((b["_ts"], d / dt_s))
+    return out
+
+
+def median(xs):
+    xs = sorted(x for x in xs if x is not None)
+    return xs[len(xs) // 2] if xs else None
+
+
+def top_mean(rows, n=5):
+    tot, cnt = {}, len(rows)
+    for r in rows:
+        for part in (r.get("top") or "").split(","):
+            if ":" in part:
+                k, v = part.rsplit(":", 1)
+                tot[k] = tot.get(k, 0) + float(v)
+    return [(k, v / cnt) for k, v in sorted(tot.items(), key=lambda kv: -kv[1])[:n]] if cnt else []
+
+
+def report(days=7, path=None, now=None):
+    now = now or time.time()
+    rows = load(path, days, now)
+    if not rows:
+        return None
+    sp = [x for x in map(swap_pct, rows) if x is not None]
+    rates = [x for _, x in swapin_rates(rows)]
+    return dict(
+        # attese dalla prima riga e non dall'inizio della finestra: un registro nato ieri non e' «a buchi» su 7 giorni
+        days=days, samples=len(rows), expected=round(min(days * 86400, now - rows[0]["_ts"]) / INTERVAL_S) + 1,
+        last_age_s=round(now - rows[-1]["_ts"]),
+        lvl_min=min((r["lvl"] for r in rows if r.get("lvl") is not None), default=None),
+        lvl_p50=median(r.get("lvl") for r in rows),
+        avail_min=min((r["avail_gb"] for r in rows if r.get("avail_gb") is not None), default=None),
+        avail_p50=median(r.get("avail_gb") for r in rows),
+        topics_min=min((r["topics_gb"] for r in rows if r.get("topics_gb") is not None), default=None),
+        topics_p50=median(r.get("topics_gb") for r in rows),
+        swap_hi_share=round(sum(1 for x in sp if x >= SWAP_HI) / len(sp), 2) if sp else None,
+        swap_max_mb=max((r["swap_mb"] for r in rows if r.get("swap_mb") is not None), default=None),
+        swapin_mean=round(sum(rates) / len(rates), 1) if rates else None,
+        swapin_hi_share=round(sum(1 for x in rates if x >= PAGES_READ_BACK) / len(rates), 2) if rates else None,
+        wired_p50=median(r.get("wired_mb") for r in rows), comp_p50=median(r.get("comp_mb") for r in rows),
+        comp_max=max((r["comp_mb"] for r in rows if r.get("comp_mb") is not None), default=None),
+        top=[(k, round(v, 1)) for k, v in top_mean(rows)])
+
+
+def render(rep):
+    g = lambda v, f="{}": "n.d." if v is None else f.format(v)
+    L = [f"{rep['days']} giorni, {rep['samples']} righe su {rep['expected']} attese; l'ultima {rep['last_age_s'] // 60} min fa",
+         f"kernel «libera» (memorystatus): minimo {g(rep['lvl_min'], '{}%')}, mediana {g(rep['lvl_p50'], '{}%')}",
+         f"swap: {g(rep['swap_hi_share'] and round(rep['swap_hi_share'] * 100), '{}%')} dei campioni sopra {SWAP_HI:.0%}, massimo {g(rep['swap_max_mb'] and round(rep['swap_max_mb'] / 1024, 1), '{} GB')}; "
+         f"swapin {g(rep['swapin_mean'], '{}')} pagine/s in media, {g(rep['swapin_hi_share'] and round(rep['swapin_hi_share'] * 100), '{}%')} degli intervalli sopra {PAGES_READ_BACK}",
+         f"disponibile per Topics (free+speculative+purgeable+file): mediana {g(rep['avail_p50'], '{} GB')}, minimo {g(rep['avail_min'], '{} GB')}; "
+         f"Topics dice di vedere: mediana {g(rep['topics_p50'], '{} GB')}, minimo {g(rep['topics_min'], '{} GB')}",
+         f"wired mediana {g(rep['wired_p50'] and round(rep['wired_p50'] / 1024, 1), '{} GB')}, compressore mediana {g(rep['comp_p50'] and round(rep['comp_p50'] / 1024, 1), '{} GB')} "
+         f"(massimo {g(rep['comp_max'] and round(rep['comp_max'] / 1024, 1), '{} GB')})",
+         "gruppi piu' pesanti in media: " + ", ".join(f"{k} {v}" for k, v in rep["top"])]
+    return "\n".join(L)
+
+
+def check(path=None, now=None):
+    """Righe per il giro del Guardiano. Due fallimenti, ognuno con la sua cura:
+    registro fermo (sono cieco: il job non gira -> launchctl kickstart gui/UID/com.jarvis.memlog) e
+    pressione cronica (swap piena e letta di continuo da disco per 2 ore -> chi tiene la memoria e' nella riga)."""
+    now = now or time.time()
+    rows = load(path, None, now)
+    if not rows or now - rows[-1]["_ts"] > STALE_S:
+        age = "mai" if not rows else f"{round((now - rows[-1]['_ts']) / 60)} min"
+        return [f"memoria  registro fermo (ultima riga: {age}): com.jarvis.memlog non scrive, la storia della memoria si sta perdendo"]
+    win = [r for r in rows if r["_ts"] >= now - PRESSURE_WINDOW_S]
+    rates = swapin_rates(win)
+    if len(win) < 12 or len(rates) < 10:
+        return []
+    swap_hi = sum(1 for r in win if (swap_pct(r) or 0) >= SWAP_HI) / len(win)
+    read_hi = sum(1 for _, x in rates if x >= PAGES_READ_BACK) / len(rates)
+    if swap_hi >= PRESSURE_SHARE and read_hi >= PRESSURE_SHARE:
+        last = win[-1]
+        tops = ", ".join(f"{k} {v}" for k, v in top_mean(win, 3))
+        topics = f", Topics vede {last['topics_gb']} GB" if last.get("topics_gb") is not None else ""
+        return [f"memoria  pressione da 2 h: swap oltre {SWAP_HI:.0%} nel {swap_hi:.0%} dei campioni e letta da disco oltre "
+                f"{PAGES_READ_BACK} pagine/s nel {read_hi:.0%} (kernel «libera» {last.get('lvl')}%{topics}); in testa {tops}. "
+                "Ordine di cura: card locali a una alla volta e app ferme chiuse da Attilio, non un kill"]
+    return []
+
+
+def main():
+    a = sys.argv[1:]
+    if "--report" in a:
+        days = int(a[a.index("--days") + 1]) if "--days" in a else 7
+        rep = report(days)
+        if "--json" in a:
+            print(json.dumps(dict(rep, text=render(rep)) if rep else rep))
+        else:
+            print(render(rep) if rep else "nessuna riga: il registro e' vuoto o manca")
+        return 0 if rep else 1
+    if "--check" in a:
+        for line in check():
+            print(line)
+        return 0
+    row = sample()
+    if "--dry-run" in a:
+        print(json.dumps(row, separators=(",", ":"), ensure_ascii=False))
+        return 0
+    append(row)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

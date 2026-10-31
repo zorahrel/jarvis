@@ -1,0 +1,29 @@
+#!/bin/bash
+# aimem-fine-prova: esito della settimana di prova di ai-memory (una tantum, 03/11).
+# Lancia aimem-bar e conta quanto è stato usato davvero; una riga ad Attilio in ogni caso,
+# perché è la prova che decide se ai-memory resta.
+set -u
+export PATH=$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin
+DB="$HOME/Library/Application Support/ai-memory/db/memory.sqlite"
+q() { sqlite3 "file:$DB?mode=ro" "$1" 2>/dev/null || echo "?"; }
+# la prova dashboard del 27/10 (marcatore AIMEMPROBE) tiene verde «OpenClaw cattura» finché
+# non entra una chat diretta vera; se è entrata, la prova si cancella prima della barra
+probe="exists (select 1 from observations o where o.session_id=s.id and instr(o.body,'AIMEMPROBE')>0)"
+real_oc=$(q "select count(*) from sessions s where agent_kind='openclaw' and not $probe;")
+if [ "${real_oc:-0}" -gt 0 ] 2>/dev/null; then
+  q "select lower(hex(s.id))||'|'||p.name from sessions s join projects p on p.id=s.project_id where $probe;" | while IFS='|' read id proj; do
+    [ -n "$id" ] && ai-memory --data-dir "$HOME/Library/Application Support/ai-memory" purge-session --workspace default --project "$proj" \
+      --session-id "${id:0:8}-${id:8:4}-${id:12:4}-${id:16:4}-${id:20}" --confirm >/dev/null 2>&1
+  done
+fi
+bar=$("$HOME/.claude/jarvis/scripts/aimem-bar" 2>&1); rc=$?
+since=$(( ($(date +%s) - 7*86400) * 1000000 ))
+per=$(q "select group_concat(agent_kind||' '||n, ', ') from (select agent_kind, count(*) n from sessions s where started_at > $since and not $probe group by 1 order by 2 desc);")
+obs=$(q "select count(*) from observations where created_at > $since;")
+rss=$(ps -o rss= -p "$(pgrep -f 'ai-memory.*serve' | head -1)" 2>/dev/null | awk '{printf "%d MB", $1/1024}')
+if [ $rc = 0 ]; then
+  echo "Settimana di prova della memoria condivisa finita: barra verde (regola arrivata a tutti gli harness, zero messaggi di gruppo, correzioni ritrovate). Sessioni in 7 giorni: ${per:-nessuna}; $obs eventi; server ${rss:-spento}."
+else
+  ko=$(echo "$bar" | /usr/bin/grep '^KO' | head -3 | sed 's/^KO *//' | paste -sd ';' -)
+  echo "Settimana di prova della memoria condivisa finita: barra ROSSA ($ko). Sessioni in 7 giorni: ${per:-nessuna}; server ${rss:-spento}."
+fi

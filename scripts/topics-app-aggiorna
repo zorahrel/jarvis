@@ -1,0 +1,75 @@
+#!/bin/bash
+# Porta ~/Applications/Topics.app all'ultima release (o a quella data) SENZA chiuderla:
+# scarica il tarball macOS della release, verifica la firma minisign con la chiave di
+# tauri.conf.json, controlla codesign e versione, e scambia il bundle su disco con un
+# rename atomico (lo stesso che fa l'updater di Tauri prima del suo restart). Il processo
+# aperto non se ne accorge: tiene in memoria l'inode vecchio. Il rilancio lo fa poi
+# topics-app-rilancio (launchd), solo a Mac libero. Scritto il 26/10 dal Guardiano;
+# pagina: ~/.claude/jarvis/memory/tools/topics-aggiornamento.md
+#
+#   topics-app-aggiorna            ultima release pubblicata
+#   topics-app-aggiorna 2.3.40     una versione precisa
+#
+# Perche' non l'updater interno: con la finestra visibile scarica solo al clic sul toast
+# e poi riavvia SUBITO (via la finestra ad Attilio); il ramo automatico agisce solo
+# all'avvio e solo a finestra nascosta.
+set -u
+REPO=armonia/topics-app
+APP="$HOME/Applications/Topics.app"
+LABEL=com.jarvis.topics-app-rilancio
+LOG="${LOG:-$HOME/.claude/jarvis/logs/topics-aggiornamento.log}"
+say() { echo "[$(date '+%d/%m %H:%M:%S')] $*" | tee -a "$LOG"; }
+
+if [ -n "${1:-}" ]; then TAG="tauri-v${1#tauri-v}"
+else TAG=$(gh release view -R "$REPO" --json tagName -q .tagName) || { say "ABORT: release non trovata"; exit 2; }; fi
+want=${TAG#tauri-v}
+have=$(defaults read "$APP/Contents/Info.plist" CFBundleShortVersionString 2>/dev/null)
+if [ "$have" = "$want" ]; then say "app: su disco e' gia' la $want"; else
+  # stessa partizione di ~/Applications, cosi' lo scambio e' un rename
+  D=$(mktemp -d "$TMPDIR/topics-app-$want.XXXXXX")
+  gh release download "$TAG" -R "$REPO" -p 'Topics_universal.app.tar.gz' -p 'Topics_universal.app.tar.gz.sig' -D "$D" \
+    || { say "ABORT: download di $TAG fallito"; exit 3; }
+  PUB=$(gh api "repos/$REPO/contents/desktop-tauri/src-tauri/tauri.conf.json?ref=$TAG" -q .content | base64 -d | jq -r .plugins.updater.pubkey)
+  # minisign: firma Ed25519 sul BLAKE2b-512 del file ('ED'), piu' la firma del commento fidato
+  node -e '
+    const {readFileSync}=require("fs"), {createHash,createPublicKey,verify}=require("crypto");
+    const [file,sigPath,pubB64,want]=process.argv.slice(1); const dec=s=>Buffer.from(s,"base64");
+    const pub=dec(dec(pubB64).toString().split("\n")[1]); const L=dec(readFileSync(sigPath,"utf8").trim()).toString().split("\n");
+    const sig=dec(L[1]), trusted=L[2].replace(/^trusted comment: /,""), gsig=dec(L[3]);
+    const key=createPublicKey({key:Buffer.concat([Buffer.from("302a300506032b6570032100","hex"),pub.subarray(10)]),format:"der",type:"spki"});
+    const data=readFileSync(file); const msg=sig.subarray(0,2).toString()==="ED"?createHash("blake2b512").update(data).digest():data;
+    const ok=Buffer.compare(pub.subarray(2,10),sig.subarray(2,10))===0 && verify(null,msg,key,sig.subarray(10))
+      && verify(null,Buffer.concat([sig.subarray(10),Buffer.from(trusted)]),key,gsig) && trusted.includes("version:"+want);
+    process.exit(ok?0:1);' "$D/Topics_universal.app.tar.gz" "$D/Topics_universal.app.tar.gz.sig" "$PUB" "$want" \
+    || { say "ABORT: firma minisign di $TAG non valida"; exit 4; }
+  mkdir "$D/new" && tar -xzf "$D/Topics_universal.app.tar.gz" -C "$D/new" || { say "ABORT: estrazione fallita"; exit 5; }
+  N="$D/new/Topics.app"
+  codesign --verify --deep --strict "$N" || { say "ABORT: codesign del pacchetto nuovo non valido"; exit 5; }
+  [ "$(defaults read "$N/Contents/Info.plist" CFBundleShortVersionString)" = "$want" ] || { say "ABORT: il pacchetto non e' la $want"; exit 5; }
+  [ "$(codesign -dr - "$N" 2>&1 | tail -1)" = "$(codesign -dr - "$APP" 2>&1 | tail -1)" ] \
+    || say "ATTENZIONE: requisito di firma diverso dall'installata: i permessi macOS (TCC) potrebbero essere richiesti di nuovo"
+  python3 -I -c 'import ctypes,sys;l=ctypes.CDLL(None);l.renamex_np.argtypes=[ctypes.c_char_p,ctypes.c_char_p,ctypes.c_uint];sys.exit(0 if l.renamex_np(sys.argv[1].encode(),sys.argv[2].encode(),2)==0 else 1)' "$N" "$APP" \
+    || { say "ABORT: scambio atomico fallito, l'app non e' stata toccata"; exit 6; }
+  touch "$APP"
+  say "app: su disco $have -> $(defaults read "$APP/Contents/Info.plist" CFBundleShortVersionString) (la vecchia resta in $N finche' il processo aperto la usa)"
+fi
+
+# rilancio a Mac libero: il job si toglie da solo quando il processo gira la versione su disco
+P="$HOME/Library/LaunchAgents/$LABEL.plist"
+launchctl print "gui/$(id -u)/$LABEL" >/dev/null 2>&1 && { say "app: rilancio gia' in attesa di Mac libero"; exit 0; }
+cat > "$P" <<EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>$LABEL</string>
+  <key>ProgramArguments</key><array><string>/bin/bash</string><string>$HOME/.claude/jarvis/scripts/topics-app-rilancio</string></array>
+  <key>EnvironmentVariables</key><dict><key>HOME</key><string>$HOME</string><key>PATH</key><string>/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin</string></dict>
+  <key>StartInterval</key><integer>120</integer>
+  <key>RunAtLoad</key><true/>
+  <key>StandardOutPath</key><string>$HOME/.claude/jarvis/logs/topics-app-rilancio.out.log</string>
+  <key>StandardErrorPath</key><string>$HOME/.claude/jarvis/logs/topics-app-rilancio.out.log</string>
+</dict>
+</plist>
+EOF
+launchctl bootstrap "gui/$(id -u)" "$P" && say "app: rilancio schedulato ($LABEL, ogni 2 min, solo con mac-libero exit 0)"

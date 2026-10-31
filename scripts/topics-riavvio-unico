@@ -1,0 +1,76 @@
+#!/bin/bash
+# Riavvio unico di produzione su <commit> di main, scritto il 26/10 da topics-prod-update.
+# 1) backup online del DB; 2) 15 min per una finestra a zero turni con la coda ferma
+# (topics-riavvio-a-zero-turni; CI_VERDE=0 solo se l'albero e' identico a una testa di PR
+# gia' verde, e lo si dice); 3) senza finestra: checkout + cancello + /__daemon/shutdown
+# (SIGTERM pulito, le card legate ripartono da sole); 4) coda riaccesa e verificata.
+# Il passo 3 taglia i turni in volo: va lanciato solo con il mandato di chi decide
+# (Attilio o il Guardiano). Pagina: ~/.claude/jarvis/memory/tools/topics-aggiornamento.md
+set -u
+R="$HOME/Projects/topics-app"
+X=$(git -C "$R" rev-parse --verify "${1:?uso: topics-riavvio-unico <commit>}^{commit}") || exit 2
+B=https://127.0.0.1:3333
+LOG="$HOME/.claude/jarvis/logs/topics-aggiornamento.log"
+BUN=$("$R/scripts/pinned-bun.sh" 2>/dev/null || command -v bun)
+HOLD="$R/.topics-reload-hold"
+tok() { jq -r .token ~/.topics/daemon-state.json; }
+say() { echo "[$(date '+%d/%m %H:%M:%S')] riavvio-unico: $*" | tee -a "$LOG"; }
+hz_pid() { curl -sk -m10 -H "Authorization: Bearer $(tok)" $B/__daemon/healthz 2>/dev/null | jq -r '.pid // empty' 2>/dev/null; }
+auto_get() { curl -sk -m15 -H "Authorization: Bearer $(tok)" $B/api/all-boards/settings 2>/dev/null | jq -r '.autoDispatch | tostring'; }
+auto_set() { curl -sk -m15 -X PATCH -H "Authorization: Bearer $(tok)" -H 'content-type: application/json' -d "{\"autoDispatch\":$1}" $B/api/all-boards/settings 2>/dev/null | jq -r '.autoDispatch | tostring'; }
+reenable() {
+  for _ in $(seq 1 30); do
+    auto_set true >/dev/null
+    [ "$(auto_get)" = true ] && { say "coda riaccesa (GET autoDispatch=true)"; return 0; }
+    sleep 10
+  done
+  say "ATTENZIONE: coda ancora spenta dopo 5 min"; return 1
+}
+
+BK="$R/data/backups/topics-$(date +%Y-%m-%d-%H%M)-pre-${X:0:10}.db"
+sqlite3 "$R/data/topics.db" ".backup '$BK'" && say "backup online: $BK ($(du -h "$BK" | cut -f1))" || { say "ABORT: backup fallito"; exit 3; }
+
+CI_VERDE="${CI_VERDE:-1}" FERMO_DOPO_S=1 MAX_S="${MAX_S:-900}" "$HOME/.claude/jarvis/scripts/topics-riavvio-a-zero-turni" "$X"; rc=$?
+say "riavvio a zero turni: exit $rc"
+if [ "$rc" = 3 ]; then
+  # Nessuna finestra: chi lancia questo script ha il mandato di spegnere comunque.
+  [ -z "$(git -C "$R" status --porcelain)" ] || { say "ABORT: checkout sporco"; exit 4; }
+  # Lo script a zero turni guarda la CI solo dentro la sua attesa: il ripiego la
+  # rilegge, se no spegnerebbe su un commit mai visto verde.
+  if [ "${CI_VERDE:-1}" = 1 ]; then
+    ci=$(gh api "repos/armonia/topics-app/commits/$X/check-runs?per_page=100" -q '
+      [.check_runs[] | (if .status != "completed" then "attesa"
+        elif (.conclusion == "success" or .conclusion == "skipped" or .conclusion == "neutral") then "verde"
+        else "rosso" end)] | if length == 0 then "attesa" elif any(. == "rosso") then "rosso"
+        elif any(. == "attesa") then "attesa" else "verde" end' 2>/dev/null || echo attesa)
+    [ "$ci" = verde ] || { say "ABORT: CI su ${X:0:10} = $ci, niente spegnimento"; exit 10; }
+  fi
+  auto_set false >/dev/null; [ "$(auto_get)" = false ] && say "coda ferma per lo spegnimento"
+  OLD=$(hz_pid); [ -n "$OLD" ] || { say "ABORT: healthz muto"; reenable; exit 5; }
+  STREAMS=$(curl -sk -m10 -H "Authorization: Bearer $(tok)" $B/api/topics/streaming | jq -c '[.sessions[]?]')
+  say "chat in volo prima dello spegnimento: $STREAMS"
+  touch "$HOLD"
+  BASE=$(git -C "$R" rev-parse HEAD)
+  git -C "$R" reset -q --hard "$X" || { say "ABORT: reset fallito"; trash "$HOLD"; reenable; exit 6; }
+  if ! g=$(DATA_DIR="$R/data" BUN="$BUN" bash "$R/scripts/server-reload-gate.sh" "$R" 2>&1); then
+    say "ABORT: cancello rosso: $g"; git -C "$R" reset -q --hard "$BASE"; trash "$HOLD"; reenable; exit 7
+  fi
+  say "checkout ${X:0:10}, cancello verde: /__daemon/shutdown al server $OLD"
+  curl -sk -m30 -X POST -H "Authorization: Bearer $(tok)" $B/__daemon/shutdown -w ' http=%{http_code}\n' | tee -a "$LOG"
+  t0=$(date +%s)
+  while :; do
+    np=$(hz_pid)
+    [ -n "$np" ] && [ "$np" != "$OLD" ] && break
+    if [ $(( $(date +%s) - t0 )) -gt 240 ]; then
+      say "ATTENZIONE: nessun server nuovo in 240 s: riporto il WT a ${BASE:0:10}"
+      git -C "$R" reset -q --hard "$BASE"; trash "$HOLD"; exit 8
+    fi
+    sleep 2
+  done
+  say "nuovo server pid $np dopo $(( $(date +%s) - t0 ))s"
+  sleep 15; trash "$HOLD"
+  reenable
+elif [ "$rc" != 0 ]; then
+  say "riavvio non fatto (exit $rc): niente fallback automatico"; exit "$rc"
+fi
+say "FATTO: /api/version=$(curl -sk -m10 $B/api/version | jq -r .version) HEAD=$(git -C "$R" rev-parse --short HEAD)"

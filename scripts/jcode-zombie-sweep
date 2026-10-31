@@ -1,0 +1,138 @@
+#!/bin/bash
+# Il server jcode è a richiesta (25/10, decisione di Attilio): parte quando un client lo cerca, si spegne quando è
+# fermo di fatto. Questo script sa dire se è fermo, e lo spegne.
+#
+# Perché a richiesta: acceso 18 giorni per 2 sessioni a mano in 14, con 469 zombie. Gli zombie li lascia il server
+# stesso a ogni "reload" (stesso pid, exec su sé stesso): i figli MCP della sessione del reload non vengono mai
+# aspettati (jcode 0.99.1, crates/jcode-app-core/src/server/reload.rs → platform::replace_process). Restano <defunct>
+# finché il padre vive, e da fuori l'unica cura è che muoia. Spento a vuoto, ogni accensione parte pulita.
+#
+# Chi lo riaccende: il client stesso (jcode 0.99.1, letto nel sorgente): la TUI all'avvio toglie il socket stantio e
+# avvia il server (src/cli/dispatch.rs, reap_stale_socket_if_dead + spawn_server); se il server muore sotto una TUI
+# aperta, dopo 3 tentativi ne avvia un altro (tui/app/remote/reconnect.rs, respawn_dead_server, issue #1887);
+# `jcode acp` (Topics) lo avvia prima di aprire la sessione. Sempre dal canale shared-server, cioè dal lanciatore
+# ~/.jcode/signed/server-launch, che fa partire la copia firmata ~/.jcode/signed/jcode responsabile di sé per TCC
+# (~/.claude/setup/jcode/server-launch). Per questo la guardia del 16/08 (com.jarvis.jcode-server-guard) è ritirata.
+#
+# Fermo di fatto = zero client, zero sessioni, zero membri vivi dello swarm, zero task in corso (un task finito lascia il
+# suo file di stato, e jcode lo elenca per sempre), zero lavori in background, niente di programmato. Se un controllo non risponde, non è fermo (meglio un server acceso in più che un lavoro in volo perso).
+# `jcode server stop` non lo ferma (misurato 25/10): si spegne con SIGTERM al pid, mai KILL.
+#
+#   jcode-zombie-sweep                 dice com'è messo (zombie, fermo o no, da quando); non tocca niente
+#   jcode-zombie-sweep --idle-stop     launchd com.jarvis.jcode-idle-stop, ogni 5 minuti: spegne dopo
+#                                      JCODE_IDLE_MINUTES (10) minuti di fila da fermo
+#   jcode-zombie-sweep --stop-if-idle  spegne subito se è fermo (lo usa jcode-auth-sync al posto del reload)
+#                                      exit 0 spento · 1 non fermo o non verificabile · 3 nessun server acceso
+#   JCODE_BIN, JCODE_SOCKET, JCODE_IDLE_STATE per provare con un finto jcode (jcode-zombie-sweep-test.sh)
+set -u
+export PATH=/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:$HOME/.local/bin
+JCODE="${JCODE_BIN:-$HOME/.local/bin/jcode}"
+# getconf e non $TMPDIR: dentro una sessione jcode TMPDIR è ~/.jcode/scratch e guarderemmo il socket sbagliato
+SOCK="${JCODE_SOCKET:-$(getconf DARWIN_USER_TEMP_DIR)jcode.sock}"
+STATE="${JCODE_IDLE_STATE:-$HOME/.jcode/state/idle-since}"
+IDLE_MIN="${JCODE_IDLE_MINUTES:-10}"
+MODE="${1:-}"
+case "$MODE" in
+  "" | --idle-stop | --stop-if-idle) ;;
+  --restart) MODE=--stop-if-idle ;;   # il nome di stamattina: riavviare ora vuol dire spegnere
+  *) echo "uso: ${0##*/} [--idle-stop | --stop-if-idle]" >&2; exit 2 ;;
+esac
+say() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] [jcode-zombie-sweep] $*"; }
+
+# connect vero sul socket principale: il file da solo non dice niente, un server morto lo lascia sul disco
+socket_alive() {
+  /usr/bin/python3 -c 'import socket, sys
+s = socket.socket(socket.AF_UNIX); s.settimeout(2)
+try: s.connect(sys.argv[1])
+except Exception: sys.exit(1)' "$SOCK" 2>/dev/null
+}
+
+# il giro di ogni 5 minuti (era ogni minuto: 1440 giri da 0,3 s per spegnere dopo 10) non lancia jcode finché può farne a meno, perché ogni avvio scrive ~5 KB nel suo log (con una
+# TUI aperta sarebbero ~7 MB al giorno): chi ascolta e quanti client ha lo dice lsof. Nessuno tiene il socket = server
+# spento (il file stantio resta sul disco). macOS elenca le connessioni accettate col nome del socket, come l'ascolto:
+# più di una riga = almeno un client. jcode debug parte solo a server senza client, per sessioni, task e promemoria.
+if [ "$MODE" = --idle-stop ]; then
+  holder=$(lsof -t "$SOCK" 2>/dev/null | head -1)
+  [ -n "$holder" ] || { rm -f "$STATE"; exit 0; }
+  n=$(lsof -nP -a -p "$holder" -U -F n 2>/dev/null | /usr/bin/grep -cxF "n$SOCK")
+  [ "${n:-0}" -le 1 ] || { rm -f "$STATE"; exit 0; }
+fi
+
+if ! info=$("$JCODE" debug server:info 2>/dev/null); then
+  [ -n "$MODE" ] && rm -f "$STATE"
+  # il debug tace: o il server è spento, o è acceso e non si può verificare (allora non è fermo)
+  if socket_alive; then
+    [ "$MODE" = --stop-if-idle ] && { say "server acceso ma il debug non risponde: non verificabile, non lo spengo"; exit 1; }
+    [ -z "$MODE" ] && say "server acceso ma il debug non risponde: non verificabile"
+    exit 0
+  fi
+  [ "$MODE" = --idle-stop ] || say "nessun server acceso"
+  [ "$MODE" = --stop-if-idle ] && exit 3
+  exit 0
+fi
+
+# server:info non dà il pid in tutte le versioni: allora è chi tiene il socket
+pid=$(printf %s "$info" | jq -r '.pid // empty' 2>/dev/null)
+[ -n "$pid" ] || pid=$(lsof -t "$SOCK" 2>/dev/null | head -1)
+if [ -z "$pid" ]; then
+  [ -n "$MODE" ] && rm -f "$STATE"
+  say "pid del server non trovato: niente da fare"
+  [ "$MODE" = --stop-if-idle ] && exit 1
+  exit 0
+fi
+zombies=$(ps -Ao ppid=,stat= | awk -v p="$pid" '$1==p && $2 ~ /Z/' | wc -l | tr -d ' ')
+
+# ogni controllo deve rispondere E dare zero. Dei task contano solo quelli in corso: .count li conta tutti, anche i
+# finiti e falliti, il cui file di stato resta in $TMPDIR/jcode-bg-tasks (background.rs, list()), e uno solo terrebbe
+# il server acceso per sempre
+running='if (.tasks | type) == "array" then [.tasks[] | select(.status == "running")] | length else "x" end'
+busy=""
+n=$("$JCODE" debug clients 2>/dev/null | jq -r '.count // "x"' 2>/dev/null);              [ "$n" = 0 ] || busy="$busy clienti=$n"
+n=$("$JCODE" debug sessions 2>/dev/null | jq -r 'length' 2>/dev/null);                     [ "$n" = 0 ] || busy="$busy sessioni=$n"
+n=$(printf %s "$info" | jq -r '(.session_count // "x"), (.live_swarm_member_count // "x")' 2>/dev/null | tr '\n' ' ')
+[ "$n" = "0 0 " ] || busy="$busy server=$n"
+n=$("$JCODE" debug background:tasks 2>/dev/null | jq -r "$running" 2>/dev/null);           [ "$n" = 0 ] || busy="$busy task=$n"
+n=$("$JCODE" debug jobs 2>/dev/null | jq -r 'length' 2>/dev/null);                         [ "$n" = 0 ] || busy="$busy lavori=$n"
+# un promemoria programmato da una sessione (tool schedule, coda di ~/.jcode/ambient) parte solo a server acceso
+q="$HOME/.jcode/ambient/queue.json"; n=0
+[ -f "$q" ] && n=$(jq -r 'length' "$q" 2>/dev/null);                                       [ "$n" = 0 ] || busy="$busy programmati=$n"
+
+now=$(date +%s)
+since=""
+spid=""; [ -f "$STATE" ] && read -r spid since <"$STATE"
+[ "${spid:-}" = "$pid" ] || since=""   # un pid nuovo ricomincia il conto
+
+stop_server() {   # $1 = perché, finisce in una riga sola di log
+  rm -f "$STATE"
+  kill -TERM "$pid" 2>/dev/null
+  for _ in $(seq 1 15); do
+    kill -0 "$pid" 2>/dev/null || { say "pid $pid $1: spento con SIGTERM ($zombies zombie raccolti); lo riaccende il prossimo client"; return 0; }
+    sleep 1
+  done
+  say "ERRORE: pid $pid $1, ma è ancora vivo 15 s dopo il SIGTERM: non insisto"
+  return 1
+}
+
+case "$MODE" in
+  "")
+    if [ -n "$busy" ]; then say "pid $pid: $zombies zombie, non fermo ($busy )"
+    elif [ -n "$since" ]; then say "pid $pid: $zombies zombie, fermo da $(( (now - since) / 60 )) min (si spegne a $IDLE_MIN)"
+    else say "pid $pid: $zombies zombie, fermo (il conto parte al prossimo giro di com.jarvis.jcode-idle-stop)"
+    fi
+    ;;
+  --stop-if-idle)
+    if [ -n "$busy" ]; then say "pid $pid non è fermo ($busy ): non lo spengo"; exit 1; fi
+    stop_server "fermo di fatto" || exit 1
+    ;;
+  --idle-stop)
+    if [ -n "$busy" ]; then rm -f "$STATE"; exit 0; fi
+    if [ -z "$since" ]; then
+      mkdir -p "$(dirname "$STATE")" && echo "$pid $now" >"$STATE"
+      exit 0
+    fi
+    idle=$(( now - since ))
+    [ "$idle" -ge $(( IDLE_MIN * 60 )) ] || exit 0
+    stop_server "fermo da $(( idle / 60 )) min" || exit 1
+    ;;
+esac
+exit 0

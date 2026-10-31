@@ -1,0 +1,165 @@
+#!/usr/bin/env python3
+"""Sovrapposizioni: file toccati insieme da worktree di padroni diversi. Deterministico, nessun modello.
+
+Chi apre una sessione o lancia un Codex su un repo lo fa girare prima: exit 1 = c'è un incrocio,
+e il lavoro nuovo aspetta o si accorda col padrone dell'altro worktree.
+Nato il 26/10: ci.yml toccato da due rami, e il nodo PC che toccava gli stessi file dei Codex di Topics.
+
+  sovrapposizioni [--ore N] [repo ...]    default: i repo di lavoro, worktree mossi nelle ultime 24 h
+
+Un file conta per un worktree se è cambiato sul ramo e differisce ancora da origin/main (un ramo già unito
+con squash non conta più), oppure se è modificato, non committato e toccato nella finestra.
+Padrone = la sessione Claude il cui worktree o scratchpad lo contiene, o quella che ha lanciato il processo
+che ci lavora (Codex). Copie dello stesso padrone non sono un incrocio.
+Stampa anche «a rischio»: lavoro non committato sotto /private/tmp, che sparisce con la sessione o al riavvio.
+"""
+import glob, json, os, re, subprocess, sys, time
+
+HOME = os.path.expanduser("~")
+# il sito Armonia resta fuori: lo segue Attilio da sé (26/10, «faccio da solo»); si passa a mano se serve
+REPOS = [f"{HOME}/Projects/topics-app", f"{HOME}/.claude/jarvis"]
+# I repo dei clienti stanno fuori dal repo pubblico: ~/.config/jarvis/guardiano.json, {"repos": ["/percorso", ...]}. File assente: solo quelli sopra.
+_EXTRA = f"{HOME}/.config/jarvis/guardiano.json"
+if os.path.exists(_EXTRA):
+    REPOS += json.load(open(_EXTRA)).get("repos", [])
+SESSIONS = f"{HOME}/Library/Application Support/Claude/claude-code-sessions"
+CHECKOUT_IN_CORSO = 1000  # un worktree appena creato mostra tutto il repo come non committato: non è lavoro
+
+
+def git(wt, *args):
+    r = subprocess.run(["git", "-C", wt, *args], capture_output=True, text=True)
+    return r.stdout if r.returncode == 0 else ""
+
+
+def sessions():
+    out = []
+    for p in glob.glob(f"{SESSIONS}/*/*/local_*.json"):
+        try:
+            d = json.load(open(p))
+        except Exception:
+            continue
+        label = (d.get("title") or "?")[:40] + (" (archiviata)" if d.get("isArchived") else "")
+        out.append({"cwd": d.get("worktreePath") or d.get("cwd") or "", "cli": d.get("cliSessionId") or "",
+                    "label": label, "archived": bool(d.get("isArchived"))})
+    return out
+
+
+def logs_by_owner(sess):
+    # i Codex finiti non hanno più un processo: il lanciatore lascia il percorso nei suoi log (scratchpad/*.log)
+    out = []
+    for s in sess:
+        if s["archived"] or not s["cli"]:
+            continue
+        for f in glob.glob(f"/private/tmp/claude-501/*/{s['cli']}/scratchpad/*.log"):
+            try:
+                if os.path.getsize(f) < 5_000_000:
+                    out.append((open(f, errors="ignore").read(), s["label"]))
+            except OSError:
+                pass
+    return out
+
+
+def owner_of(path, sess, procs, logs=()):
+    # solo abbinamenti esatti: una cartella padre (es. ~/Projects/armonia-agency) non fa padrone
+    hits = [(s["archived"], s["label"]) for s in sess
+            if (s["cwd"] and os.path.realpath(path) == os.path.realpath(s["cwd"])) or (s["cli"] and f"/{s['cli']}/" in path)]
+    if not hits:
+        # un processo vivo che lavora nel worktree e porta nella riga di comando lo scratchpad di una sessione (run-codex.sh)
+        for args in procs:
+            if path + " " in args + " ":
+                hits += [(s["archived"], s["label"]) for s in sess if s["cli"] and f"/{s['cli']}/" in args]
+    if not hits:
+        hits = [(False, label) for text, label in logs if path + "\n" in text or path + " " in text or path + "/" in text]
+    return sorted(hits)[0][1] if hits else None
+
+
+def worktrees(repo):
+    out, cur = [], {}
+    for line in git(repo, "worktree", "list", "--porcelain").splitlines() + [""]:
+        if not line:
+            if cur.get("path") and os.path.isdir(cur["path"]):
+                out.append(cur)
+            cur = {}
+        elif line.startswith("worktree "):
+            cur["path"] = line[9:]
+        elif line.startswith("branch "):
+            cur["branch"] = line[7:].replace("refs/heads/", "")
+    return out
+
+
+def dirty(wt, since=0):
+    # un worktree sporco da giorni è fermo, non vivo: contano solo i file toccati nella finestra
+    files = []
+    for line in git(wt, "status", "--porcelain").splitlines():
+        f = line[3:].split(" -> ")[-1].strip('"')
+        try:
+            if os.path.getmtime(os.path.join(wt, f)) > since:
+                files.append(f)
+        except OSError:
+            files.append(f)  # cancellato: conta
+    return files
+
+
+def short(path):
+    return re.sub(r"/private/tmp/claude-501/[^/]+/([0-9a-f]{8})[0-9a-f-]+/scratchpad", r"<scratch \1>", path.replace(HOME, "~"))
+
+
+def main():
+    args = sys.argv[1:]
+    hours = 24
+    if "--ore" in args:
+        i = args.index("--ore")
+        hours = float(args[i + 1])
+        del args[i:i + 2]
+    since = time.time() - hours * 3600
+    sess = sessions()
+    procs = subprocess.run(["ps", "-axo", "args"], capture_output=True, text=True).stdout.splitlines()
+    logs = logs_by_owner(sess)
+    crossed = 0
+    for repo in args or REPOS:
+        # base = il più avanti fra main e origin/main (in ~/.claude/jarvis il main locale precede il push notturno)
+        has_origin = bool(git(repo, "rev-parse", "--verify", "-q", "origin/main"))
+        ahead = subprocess.run(["git", "-C", repo, "merge-base", "--is-ancestor", "origin/main", "main"]).returncode == 0
+        base = "main" if (not has_origin or ahead) else "origin/main"
+        main_wt = os.path.realpath(repo)
+        by_owner = {}  # padrone → [etichette dei worktree, insieme di file]
+        for w in worktrees(repo):
+            path = w["path"]
+            all_dirty = dirty(path)
+            if len(all_dirty) > CHECKOUT_IN_CORSO:
+                continue
+            changed = set(dirty(path, since))
+            if os.path.realpath(path) != main_wt:
+                ct = git(path, "log", "-1", "--format=%ct").strip()
+                if ct.isdigit() and int(ct) > since:
+                    mb = git(path, "merge-base", base, "HEAD").strip()
+                    on_branch = set(git(path, "diff", "--name-only", mb, "HEAD").split()) if mb else set()
+                    changed |= on_branch & set(git(path, "diff", "--name-only", base, "HEAD").split())
+            if not changed:
+                continue
+            owner = owner_of(path, sess, procs, logs)
+            tag = f"{w.get('branch', 'staccato')} @ {short(path)}"
+            entry = by_owner.setdefault(owner or path, [owner or "padrone non noto", [], set()])
+            entry[1].append(tag)
+            entry[2] |= changed
+            if path.startswith(("/private/tmp", "/tmp")) and all_dirty:
+                print(f"a rischio  {os.path.basename(repo)}: {len(all_dirty)} file non committati in {tag} [{owner or 'padrone non noto'}]")
+        # una riga per insieme di padroni, non una per file
+        groups = {}
+        for f in set().union(*(e[2] for e in by_owner.values())) if by_owner else []:
+            who = tuple(sorted(k for k, e in by_owner.items() if f in e[2]))
+            if len(who) > 1:
+                groups.setdefault(who, []).append(f)
+        for who, files in sorted(groups.items(), key=lambda g: -len(g[1])):
+            crossed += 1
+            files.sort()
+            more = f" e altri {len(files) - 4}" if len(files) > 4 else ""
+            print(f"incrocio   {os.path.basename(repo)}: {', '.join(files[:4])}{more}")
+            for k in who:
+                name, tags, _ = by_owner[k]
+                print(f"           ← [{name}] {'; '.join(tags)[:200]}")
+    sys.exit(1 if crossed else 0)
+
+
+if __name__ == "__main__":
+    main()

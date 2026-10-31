@@ -1,0 +1,36 @@
+#!/usr/bin/env bash
+# Snapshot periodico delle finestre jcode aperte, per recuperarle con `jcode restart restore`.
+# launchd com.jarvis.jcode-snapshot ogni 5 minuti, da ~/jarvis/bin/jcode-snapshot (link a questo file).
+#
+# Il punto delicato: `jcode restart save` sovrascrive restart-snapshot.json. Se girasse
+# a finestre gia' chiuse salverebbe una lista vuota e cancellerebbe l'unica cosa utile,
+# cioe' proprio lo stato di prima del disastro. Quindi qui si salva SOLO se c'e' almeno
+# una sessione viva, e si tiene una coda di copie storiche per tornare piu' indietro.
+set -uo pipefail
+
+JCODE="${JCODE_BIN:-$HOME/.local/bin/jcode}"
+SNAP="$HOME/.jcode/restart-snapshot.json"
+HIST="$HOME/.jcode/restart-snapshots"
+KEEP=30
+
+[ -x "$JCODE" ] || exit 0
+# A server spento non si chiede niente: dal 25/10 il server è a richiesta (jcode-zombie-sweep) e spento è il caso
+# normale, e `jcode debug` lanciato lì scriveva ogni 5 minuti ~5 KB e una riga ERROR nel log di jcode. Server acceso =
+# qualcuno tiene il socket principale; il file da solo resta sul disco anche a server morto. lsof non avvia niente.
+SOCK="${JCODE_SOCKET:-$(getconf DARWIN_USER_TEMP_DIR)jcode.sock}"
+/usr/sbin/lsof -t "$SOCK" >/dev/null 2>&1 || exit 0
+
+count=$("$JCODE" debug sessions 2>/dev/null | python3 -c 'import json,sys
+try: print(len(json.load(sys.stdin)))
+except Exception: print(0)')
+
+[ "${count:-0}" -gt 0 ] || exit 0
+
+"$JCODE" restart save >/dev/null 2>&1 || exit 0
+
+mkdir -p "$HIST"
+if [ -s "$SNAP" ]; then
+  cp "$SNAP" "$HIST/$(date +%Y%m%d-%H%M%S).json"
+  # shellcheck disable=SC2012
+  ls -1t "$HIST"/*.json 2>/dev/null | tail -n +$((KEEP + 1)) | while read -r old; do rm -f "$old"; done
+fi

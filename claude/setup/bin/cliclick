@@ -1,0 +1,27 @@
+#!/bin/sh
+# Guardia davanti a /opt/homebrew/bin/cliclick, che muove il mouse e clicca sul Mac vero.
+# 24/10, terza volta: un test della tray muoveva il cursore di Attilio mentre lavorava («non devi mai occuparmi il Mac
+# mentre lo sto usando»). Passa solo se:
+#   - il Mac è fermo da 5 minuti (mac-libero), oppure
+#   - continua un giro appena autorizzato (ultima chiamata da meno di 10 s) e il cursore è ancora dove l'abbiamo
+#     lasciato: se si è mosso, Attilio è tornato e ci si ferma;
+#   - oppure MAC_UI=forza, solo con l'ok di Attilio per quella sessione.
+# Exit 75 quando blocca. MAC_LIBERO_STATE e MAC_LIBERO_IDLE servono ai test.
+real=/opt/homebrew/bin/cliclick
+state=${MAC_LIBERO_STATE:-$HOME/.cache/mac-libero/cliclick.last}
+now=$(date +%s)
+allowed=no
+if [ "${MAC_UI:-}" = forza ] || "$HOME/bin/mac-libero" 300 2>/dev/null; then
+  allowed=yes
+elif [ -f "$state" ]; then
+  read -r last pos < "$state"
+  if [ $((now - ${last:-0})) -lt 10 ] && [ "$("$real" p 2>/dev/null)" = "$pos" ]; then allowed=yes; fi
+fi
+if [ "$allowed" != yes ]; then
+  rm -f "$state"
+  echo "cliclick bloccato: Attilio sta usando il Mac. Misura dentro il processo (eventi alla vista, render fuori schermo) o aspetta che mac-libero esca 0." >&2
+  exit 75
+fi
+"$real" "$@"; rc=$?
+mkdir -p "$(dirname "$state")" && echo "$(date +%s) $("$real" p 2>/dev/null)" > "$state"
+exit $rc

@@ -1,0 +1,60 @@
+#!/usr/bin/env python3
+"""csess-watch — dice cosa e' CAMBIATO dall'ultimo giro, e tace se non e' cambiato niente.
+
+Stato in un file solo: ~/.cache/jarvis/csess-state.json. Per disinstallare tutto
+bastano `rm ~/bin/csess ~/bin/csess-watch` e `rm -rf ~/.cache/jarvis` — non tocca
+launchd, non tocca il router, non lascia processi in giro.
+"""
+import json, os, subprocess, sys, time
+
+STATE = os.path.expanduser("~/.cache/jarvis/csess-state.json")
+WAIT_ALERT_S = 1800  # mezz'ora ferma ad aspettare una risposta e' abbastanza
+
+def now():
+    out = subprocess.run([os.path.expanduser("~/bin/csess"), "--json"],
+                         capture_output=True, text=True, timeout=60).stdout
+    cur = {}
+    for s in json.loads(out or "[]"):
+        if s.get("headless"): continue          # le sessioni-strumento non sono repo occupati
+        cur[s["cwd"]] = dict(status=s["status"], idle=s.get("idle_s") or 0,
+                             last=s.get("last", ""), pid=s["pid"])
+    return cur
+
+def load():
+    try: return json.load(open(STATE))
+    except Exception: return {"repos": {}, "warned": {}}
+
+def save(d):
+    os.makedirs(os.path.dirname(STATE), exist_ok=True)
+    json.dump(d, open(STATE, "w"), indent=1)
+
+def main():
+    cur, prev = now(), load()
+    old, warned, news = prev.get("repos", {}), prev.get("warned", {}), []
+
+    for cwd, o in old.items():
+        if cwd not in cur:
+            news.append(f"LIBERO   {os.path.basename(cwd)} — la sessione e' finita "
+                        f"(era: {o.get('status','?').lower()}). Ultima mossa: {o.get('last','')[:80]}")
+            warned.pop(cwd, None)
+
+    for cwd, c in cur.items():
+        name = os.path.basename(cwd)
+        o = old.get(cwd)
+        if not o:
+            news.append(f"NUOVA    {name} — sessione aperta (pid {c['pid']})")
+        elif o["status"] != c["status"]:
+            news.append(f"CAMBIA   {name} — da {o['status'].lower()} a {c['status'].lower()}")
+        # ferma ad aspettare una risposta: si avvisa una volta sola per sessione
+        if c["status"] == "ASPETTA TE" and c["idle"] > WAIT_ALERT_S and warned.get(cwd) != c["pid"]:
+            news.append(f"ATTENDE  {name} — ti aspetta da {int(c['idle']//60)} minuti: {c['last'][:80]}")
+            warned[cwd] = c["pid"]
+
+    save({"repos": cur, "warned": warned, "at": time.time()})
+    if news:
+        print("\n".join(news))
+    elif "-v" in sys.argv:
+        print("nessun cambiamento · " + ", ".join(
+            f"{os.path.basename(k)}={v['status'].lower()}" for k, v in cur.items()) or "nessuna sessione")
+
+main()

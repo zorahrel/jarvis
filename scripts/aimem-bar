@@ -1,0 +1,107 @@
+#!/bin/bash
+# aimem-bar: la barra della prova di ai-memory (memoria condivisa fra gli harness).
+# Esce 0 solo se tutte e quattro reggono (il punto 2 include la prova di comportamento del filtro sul testo girato):
+#   1. la regola canary del profilo arriva all'avvio di Claude Code, Codex e Muse, e nessuna voce
+#      raccolta dal profilo sta sotto confidenza 0,7 (entra in ogni sessione);
+#   2. nessun messaggio di gruppo, canale, estraneo o girato fra sessioni di OpenClaw sta in memoria
+#      (sessioni openclaw solo da chat dirette di Attilio, dashboard, ios, main);
+#   3. le correzioni vere di segnali.jsonl si ritrovano con la ricerca;
+#   4. server vivo, token richiesto, plugin OpenClaw con scope owner-direct.
+# --quick salta il punto 3 (che scrive pagine di prova la prima volta).
+set -u
+export PATH=/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:$HOME/.local/bin
+AIM=$HOME/.local/bin/ai-memory
+DATA="$HOME/Library/Application Support/ai-memory"
+DB="$DATA/db/memory.sqlite"
+URL=http://127.0.0.1:49374
+SEGNALI=$HOME/.claude/jarvis/private/attilio/segnali.jsonl
+WORK=$(mktemp -d "${TMPDIR:-/tmp}/aimem-bar.XXXXXX")
+trap 'rm -rf "$WORK"' EXIT
+fail=0
+ok()  { echo "ok   $*"; }
+ko()  { echo "KO   $*"; fail=1; }
+
+# 4. server, token, plugin
+[ "$(curl -s -m 3 -o /dev/null -w '%{http_code}' "$URL/healthz")" = 200 ] && ok "server vivo" || ko "server non risponde su $URL"
+[ "$(curl -s -m 3 -o /dev/null -w '%{http_code}' -X POST "$URL/mcp" -H 'Content-Type: application/json' -d '{}')" = 401 ] \
+  && ok "senza token il server rifiuta" || ko "il server accetta richieste senza token"
+scope=$(python3 -c "import json;print(json.load(open('$HOME/.openclaw/openclaw.json'))['plugins']['entries'].get('ai-memory',{}).get('config',{}).get('scope',''))" 2>/dev/null)
+[ "$scope" = owner-direct ] && ok "plugin OpenClaw scope=owner-direct" || ko "plugin OpenClaw scope='$scope'"
+plug="$DATA/openclaw-plugin/index.ts"
+n=$(/usr/bin/grep -c 'if (!sessionInScope(ctx)) return;' "$plug" 2>/dev/null || echo 0)
+[ "$n" = 7 ] && ok "7 hook su 7 del plugin filtrati" || ko "hook filtrati nel plugin: $n su 7"
+# Il testo girato fra sessioni (isUser=false) non va in memoria: prova di comportamento sul plugin installato
+# e mutazione, cioè la stessa prova su una copia senza il filtro deve cadere.
+PT=$HOME/.claude/jarvis/scripts/aimem-plugin-test.mjs
+node "$PT" "$plug" >"$WORK/plugin-test.out" 2>&1 \
+  && ok "plugin: il testo girato fra sessioni non va in memoria (a/b/c, API e server finti)" \
+  || ko "plugin: il testo girato fra sessioni arriva in memoria ($(/usr/bin/grep -c '^KO' "$WORK/plugin-test.out") casi KO)"
+mkdir -p "$WORK/mutante"
+sed 's/if (!isRelayedInterSession(prompt)) postHook(/postHook(/' "$plug" > "$WORK/mutante/index.ts" 2>/dev/null
+if cmp -s "$plug" "$WORK/mutante/index.ts"; then
+  ko "mutazione: nel plugin non c'è il filtro da togliere"
+elif node "$PT" "$WORK/mutante/index.ts" >/dev/null 2>&1; then
+  ko "mutazione: senza il filtro la prova resta verde, non misura niente"
+else
+  ok "mutazione: senza il filtro la prova cade"
+fi
+( cd "$HOME/Projects/openclaw-muse-cli" && node test/aimem-staging.test.mjs >/dev/null 2>&1 ) \
+  && ok "muse-cli: i turni OpenClaw non ereditano hook e MCP di ai-memory" || ko "muse-cli: lo staging copia hook o MCP di ai-memory nei turni OpenClaw"
+oc=$(sqlite3 "file:$DB?mode=ro" "select count(*) from sessions where agent_kind='openclaw';" 2>/dev/null)
+[ "${oc:-0}" -gt 0 ] && ok "OpenClaw cattura le chat dirette ($oc sessioni)" || ko "nessuna sessione OpenClaw in memoria: il plugin non cattura"
+
+# 1. canary a tutti gli harness
+for a in claude-code codex muse; do
+  sid=$(uuidgen | tr A-Z a-z)
+  printf '{"session_id":"%s","cwd":"%s","hook_event_name":"SessionStart","source":"startup"}' "$sid" "$HOME" \
+    | "$AIM" --data-dir "$DATA" hook --event session-start --agent "$a" --server-url "$URL" > "$WORK/$a.out" 2>/dev/null
+  /usr/bin/grep -q AIMEMCANARY-7319 "$WORK/$a.out" && ok "canary arriva a $a" || ko "canary non arriva a $a"
+  # la sessione di prova non resta in memoria: ogni giro ne lascerebbe tre vuote
+  proj=$(sqlite3 "file:$DB?mode=ro" "select p.name from sessions s join projects p on p.id=s.project_id where lower(hex(s.id))='${sid//-/}';" 2>/dev/null)
+  [ -n "$proj" ] && "$AIM" --data-dir "$DATA" purge-session --workspace default --project "$proj" --session-id "$sid" --confirm >/dev/null 2>&1
+done
+# Una voce raccolta sotto 0,7 entra in tutti i digest (29/10: un pezzo del preambolo delle side session, a 0,6, in 24
+# su 24). La soglia la tiene min_projects = 3 in config.toml; qui si guarda cosa si inietta davvero.
+low=$(awk 'FNR==1{fm=0} /^---$/{fm++; next} fm==1 && /^generated_by: profile-harvest/{h[FILENAME]=1} fm==1 && /^confidence:/{c[FILENAME]=$2+0} END{for(f in h) if(c[f]<0.7) print f}' "$DATA"/wiki/*/*/profile/*/*.md 2>/dev/null)
+[ -z "$low" ] && ok "profilo: nessuna voce raccolta sotto 0,7" || ko "profilo: voci raccolte sotto 0,7: $(echo "$low" | xargs -n1 basename | tr '\n' ' ')"
+# Quel preambolo ha poi superato anche la soglia (31/10, 4 progetti, 0,8): la soglia non basta, è testo della app e non un'abitudine.
+# Si toglie con `ai-memory profile forget`, che ne tiene la storia e ferma il raccoglitore su quel tema.
+app=$(/usr/bin/grep -l "side-session-notes" "$DATA"/wiki/*/*/profile/*/*.md 2>/dev/null)
+[ -z "$app" ] && ok "profilo: niente testo della app preso per abitudine" || ko "profilo: testo della app nel profilo: $(echo "$app" | xargs -n1 basename | tr '\n' ' ')"
+
+# 2. niente gruppi in memoria (le prove vere sono sessioni openclaw: chi legge questo script in una sessione
+#    di Claude Code ne lascia il testo fra le osservazioni di quella sessione, non è una prova entrata): ogni sessione openclaw deve avere un titolo di chat diretta
+bad=$(sqlite3 "file:$DB?mode=ro" "select count(*) from observations o join sessions s on s.id=o.session_id where s.agent_kind='openclaw' and (o.body like '%:group:%' or o.body like '%:channel:%' or o.body like '%g.us%');" 2>/dev/null)
+[ "${bad:-x}" = 0 ] && ok "nessun messaggio di gruppo nelle sessioni openclaw" || ko "messaggi di gruppo in memoria: ${bad:-db illeggibile}"
+# Il testo girato fra sessioni (anche dai sottoagenti) non è dell'utente: nessuna osservazione user-prompt di
+# una sessione openclaw lo porta, in qualunque posizione (OpenClaw può anteporre contesto all'intestazione, dove
+# il filtro non scatta; le righe del test misurano il file su disco, non ciò che il gateway ha caricato).
+# I due pezzi sono spezzati: lo script letto in una sessione di Claude Code non deve far scattare la riga da solo.
+relayed=$(sqlite3 "file:$DB?mode=ro" "select count(*) from observations o join sessions s on s.id=o.session_id where s.agent_kind='openclaw' and o.kind='user-prompt' and instr(o.body,'[Inter-session '||'message]')>0 and instr(o.body,'isUser='||'false')>0;" 2>/dev/null)
+[ "${relayed:-x}" = 0 ] && ok "nessun testo girato fra sessioni in memoria" || ko "testo girato fra sessioni in memoria: ${relayed:-db illeggibile}"
+probe=$(sqlite3 "file:$DB?mode=ro" "select count(*) from observations o join sessions s on s.id=o.session_id where s.agent_kind='openclaw' and (instr(o.body,'AIMEMPROBE-group')>0 or instr(o.body,'AIMEMPROBE-stranger')>0);" 2>/dev/null)
+[ "${probe:-x}" = 0 ] && ok "prove gruppo/estraneo assenti" || ko "prove gruppo/estraneo in memoria: $probe"
+
+# 3. correzioni vere ritrovabili (solo tema+frase breve, mai in chiaro nell'output)
+if [ "${1:-}" != --quick ]; then
+  hit=0; tot=0
+  while IFS=$'\t' read -r key q; do
+    tot=$((tot+1))
+    "$AIM" search --workspace default --project _global "$q" 2>/dev/null | /usr/bin/grep -q "correzioni/$key" && hit=$((hit+1))
+  done < <(python3 - "$SEGNALI" <<'EOF'
+import json,sys
+def slug(s):
+    out="".join(c if c.isalnum() else "-" for c in s.lower()).strip("-")
+    return "-".join(p for p in out.split("-") if p)[:60] or "varie"
+rows=[json.loads(l) for l in open(sys.argv[1]) if l.strip()]
+c=[r for r in rows if r.get('tipo')=='correzione' and r.get('perche')][-5:]
+for r in c:
+    words=[w.strip('.,;:«»()') for w in r['perche'].split() if len(w)>4][:3]
+    print(slug(r.get('tema') or 'varie')+'\t'+' '.join(words))
+EOF
+)
+  [ "$tot" -gt 0 ] && [ "$hit" = "$tot" ] && ok "correzioni ritrovate: $hit su $tot" || ko "correzioni ritrovate: $hit su $tot"
+fi
+
+[ $fail = 0 ] && echo "BARRA VERDE" || echo "BARRA ROSSA"
+exit $fail

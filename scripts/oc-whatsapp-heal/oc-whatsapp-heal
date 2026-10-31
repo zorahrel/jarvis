@@ -1,0 +1,104 @@
+#!/usr/bin/env python3
+"""Riavvia il gateway OpenClaw quando WhatsApp resta bloccato su «Another process owns this
+WhatsApp connection» con un gateway solo: il proprietario e' il gateway stesso, che non molla il
+lease finche' non riparte. Il 14/10 il canale e' rimasto muto 3 ore cosi' (20:25-23:31), con
+OpenClaw che riprovava ogni 5 minuti senza mai riuscire.
+
+  oc-whatsapp-heal            controlla e, se serve, lancia oc-restart (launchd ogni 5 min)
+  oc-whatsapp-heal --dry-run  dice cosa farebbe
+
+Scatta con almeno MIN_FAILS errori «owns» dopo l'ultimo «Listening for WhatsApp», tutti negli
+ultimi WINDOW_MIN minuti, e non piu' di una volta ogni COOLDOWN_MIN. Con due gateway vivi non
+tocca niente: li' il conflitto e' vero e un riavvio non lo risolve.
+OC_LOGDIR, OC_RESTART, OC_HEAL_STATE e OC_GATEWAYS (numero finto di gateway) servono alla prova."""
+import json, os, re, subprocess, sys, time
+from pathlib import Path
+
+LOGDIR = Path(os.environ.get("OC_LOGDIR", "/tmp/openclaw"))
+OC_RESTART = os.environ.get("OC_RESTART", str(Path.home() / "bin/oc-restart"))
+STATE = Path(os.environ.get("OC_HEAL_STATE", Path.home() / ".claude/jarvis/state/oc-whatsapp-heal.json"))
+LOG = Path.home() / ".claude/jarvis/logs/oc-whatsapp-heal.log"
+MIN_FAILS = 3          # ~8 minuti di tentativi falliti, come il 14/10
+WINDOW_MIN = 30
+COOLDOWN_MIN = 30
+TAIL_BYTES = 40 * 1024 * 1024   # i log ruotano a ~100 MB: la coda basta per mezz'ora
+
+OWNS = "Another process owns this WhatsApp connection"
+UP = "Listening for WhatsApp inbound messages"
+
+
+def log(msg):
+    line = f"{time.strftime('%Y-%m-%d %H:%M:%S')} {msg}"
+    print(line)
+    if os.environ.get("OC_LOGDIR"):
+        return  # prova: niente righe nel log vero
+    LOG.parent.mkdir(parents=True, exist_ok=True)
+    with open(LOG, "a") as f:
+        f.write(line + "\n")
+
+
+def events():
+    """(epoch, 'owns'|'up') dalla coda dei log piu' recenti, in ordine di tempo."""
+    out, budget = [], TAIL_BYTES
+    for f in sorted(LOGDIR.glob("openclaw-*.log"), key=lambda p: p.stat().st_mtime, reverse=True):
+        if budget <= 0:
+            break
+        size = f.stat().st_size
+        with open(f, "rb") as fh:
+            fh.seek(max(0, size - budget))
+            data = fh.read().decode("utf-8", "replace")
+        budget -= size
+        for line in data.splitlines():
+            kind = "owns" if OWNS in line else "up" if UP in line else None
+            if not kind:
+                continue
+            m = re.search(r'"time":"([^"]+)"', line)
+            if not m:
+                continue
+            try:
+                ts = time.mktime(time.strptime(m.group(1)[:19], "%Y-%m-%dT%H:%M:%S"))
+            except ValueError:
+                continue
+            out.append((ts, kind))
+    return sorted(out)
+
+
+def gateways():
+    if os.environ.get("OC_GATEWAYS"):
+        return int(os.environ["OC_GATEWAYS"])
+    r = subprocess.run(["pgrep", "-f", "openclaw/dist/index.js gateway"], capture_output=True, text=True)
+    return len(r.stdout.split())
+
+
+def main():
+    dry = "--dry-run" in sys.argv
+    now = time.time()
+    ev = [e for e in events() if e[0] >= now - WINDOW_MIN * 60]
+    last_up = max((t for t, k in ev if k == "up"), default=0)
+    fails = [t for t, k in ev if k == "owns" and t > last_up]
+    if len(fails) < MIN_FAILS:
+        return 0  # silenzio: e' il caso normale, ogni 5 minuti
+    n = gateways()
+    if n != 1:
+        log(f"WhatsApp bloccato ({len(fails)} errori) ma i gateway vivi sono {n}: non riavvio")
+        return 1
+    try:
+        last = json.loads(STATE.read_text()).get("healed_at", 0)
+    except (OSError, ValueError):
+        last = 0
+    if now - last < COOLDOWN_MIN * 60:
+        log(f"WhatsApp bloccato ({len(fails)} errori), ma ho gia' riavviato {int((now - last) / 60)} min fa: aspetto")
+        return 1
+    log(f"WhatsApp bloccato da {int((now - fails[0]) / 60)} min ({len(fails)} errori «owns»): oc-restart"
+        + (" [dry-run]" if dry else ""))
+    if dry:
+        return 0
+    STATE.parent.mkdir(parents=True, exist_ok=True)
+    STATE.write_text(json.dumps({"healed_at": now}))
+    r = subprocess.run([OC_RESTART, "--now"], capture_output=True, text=True, timeout=900)
+    log(f"oc-restart exit {r.returncode}: {(r.stdout or r.stderr).strip()[-300:]}")
+    return r.returncode
+
+
+if __name__ == "__main__":
+    sys.exit(main())

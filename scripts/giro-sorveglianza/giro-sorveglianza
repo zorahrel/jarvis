@@ -1,0 +1,313 @@
+#!/usr/bin/env python3
+"""giro-sorveglianza: il giro su Mac, Jarvis e quote che prima faceva a mano la sessione Regia.
+
+Deterministico, nessun modello. Pensato per un cron OpenClaw dietro `cron-clean`: stdout vuoto = nessun
+messaggio; una riga per problema, solo quando è nuovo o dopo qualche ora se dura. Cosa guarda:
+  Mac     carico per core >= 3 o swap >= 90% (sopra 3 per core il lavoro pesante va sul PC), col pc-state accanto
+  Jarvis  gateway muto, cron ricorrenti non partiti all'ora o in errore da 3 giri, lavori-watch fermo, FAIL di agents-doctor
+  Quote   nessun account Claude libero, né Muse né Codex, hub :3360 muto per 2 giri
+Di notte (23-08) si tace e si dice al mattino se dura ancora: nessuno di questi vale una vibrazione alle 3.
+
+  giro-sorveglianza [--dry-run] [--fake chiave=valore ...]
+  giro-sorveglianza --riepilogo-carico [--ore 12] [--prima "testo"]   una riga sul carico del Mac dal registro del giro
+Stato: state/giro-sorveglianza.json. Righe da tacere: state/giro-sorveglianza.accept.json [{"match": "...", "why": "..."}].
+Per le prove: GIRO_STATE, GIRO_ACCEPT, GIRO_LOG, GIRO_NOTE spostano le scritture; --fake load swap pc cron lw doctor quota
+hub gateway hour now sostituiscono le letture (load = per core, swap = rapporto 0-1).
+"""
+import argparse, json, os, re, shutil, subprocess, sys, time, urllib.request
+
+HOME = os.path.expanduser("~")
+ROOT = os.path.join(HOME, ".claude/jarvis")
+STATE = os.environ.get("GIRO_STATE") or f"{ROOT}/state/giro-sorveglianza.json"
+ACCEPT = os.environ.get("GIRO_ACCEPT") or f"{ROOT}/state/giro-sorveglianza.accept.json"
+LOG = os.environ.get("GIRO_LOG") or f"{ROOT}/logs/giro-sorveglianza.log"
+NOTE = os.environ.get("GIRO_NOTE") or f"{HOME}/.claude/jarvis/state/guardiano/note/giro.md"
+HUB = os.environ.get("GIRO_HUB") or "http://127.0.0.1:3360"
+LW_LOG = f"{HOME}/.openclaw/logs/lavori-watch.log"
+
+LOAD_PER_CORE = 3.0         # sopra, i lavori pesanti vanno sul PC o sul cloud (Attilio, 24/10)
+SWAP_FULL = 0.90
+OVERDUE_MIN = 15            # un cron ricorrente che non parte entro N minuti dall'ora è saltato (riavvii del gateway, 24/10)
+ERRORS_IN_ROW = 3           # OpenClaw avvisa da solo dopo 2; qui si guarda chi continua
+LW_MAX_MIN = 20             # lavori-watch gira ogni 5 minuti
+DOCTOR_EVERY_H = 6
+HUB_FAILS = 2               # l'hub sotto carico va in timeout ogni tanto: un giro solo non è un guasto
+QUIET = (23, 8)
+REPEAT_H = {"mac": 6, "doctor": 24}
+REPEAT_DEFAULT_H = 12
+MAX_LINE = 230
+WEEKDAYS = ["lun", "mar", "mer", "gio", "ven", "sab", "dom"]
+
+
+def run(args, timeout=60):
+    env = dict(os.environ, PATH=os.environ.get("PATH", "") + ":/opt/homebrew/bin:/usr/sbin:" + HOME + "/bin")
+    try:
+        r = subprocess.run(args, capture_output=True, text=True, timeout=timeout, env=env, errors="replace")
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    return r.stdout
+
+
+def comma(x, nd=1):
+    return f"{x:.{nd}f}".replace(".", ",")
+
+
+def when(ms):
+    t = time.localtime(ms / 1000)
+    return f"{WEEKDAYS[t.tm_wday]} {t.tm_mday:02d}/{t.tm_mon:02d} {t.tm_hour:02d}:{t.tm_min:02d}"
+
+
+class Finding:
+    def __init__(self, group, key, text):
+        self.group, self.key, self.text = group, key, text
+
+
+# --- letture -------------------------------------------------------------------------------
+
+def read_mac(F):
+    if "load" in F:
+        lpc = float(F["load"])
+    else:
+        lpc = os.getloadavg()[0] / (os.cpu_count() or 1)
+    if "swap" in F:
+        swap = float(F["swap"])
+    else:
+        m = re.search(r"total = ([\d.]+)M\s+used = ([\d.]+)M", run(["/usr/sbin/sysctl", "-n", "vm.swapusage"]) or "")
+        swap = float(m.group(2)) / float(m.group(1)) if m and float(m.group(1)) else 0.0
+    return lpc, swap
+
+
+def top_procs():
+    rows = []
+    for line in (run(["/bin/ps", "-Arco", "pcpu=,comm="]) or "").splitlines()[:3]:
+        m = re.match(r"\s*([\d.]+)\s+(.+)", line)
+        if m and float(m.group(1)) >= 30:
+            rows.append(f"{m.group(2).strip()} ({float(m.group(1)):.0f}%)")
+    return ", ".join(rows[:2])
+
+
+def pc_phrase(F):
+    state = F.get("pc")
+    if state is None:
+        try:
+            state = json.loads(run([f"{HOME}/bin/pc-state"], 20) or "{}").get("pc")
+        except ValueError:
+            state = None
+    return {
+        "dorme": " Il PC dorme: il lavoro pesante si sposta lì con offload.",
+        "chiuso": " Il PC è sveglio ma ssh è chiuso dal firewall di Windows: il lavoro non si può spostare.",
+        "acceso": " Il PC è acceso e libero: il lavoro pesante si sposta lì con offload.",
+        "lavora": " Il PC sta già lavorando.",
+    }.get(state, "")
+
+
+def check_mac(F, lpc, swap):
+    parts = []
+    if lpc >= LOAD_PER_CORE:
+        parts.append(f"carico {comma(lpc)} per core")
+    if swap >= SWAP_FULL:
+        parts.append(f"swap al {swap * 100:.0f}%")
+    if not parts:
+        return []
+    top = top_procs() if "load" not in F else F.get("top", "")
+    text = "Mac sotto sforzo: " + ", ".join(parts) + "." + (f" Pesa di più: {top}." if top else "") + pc_phrase(F)
+    return [Finding("mac", "mac", text)]
+
+
+def check_jarvis(F, state, now):
+    out = []
+    # gateway e cron: un solo `cron list` dice se il gateway risponde e quali cron ricorrenti sono in ritardo o in errore
+    overdue, failing, gateway_up = [], [], True
+    if "cron" in F:
+        gateway_up = F.get("gateway") != "down"
+        overdue = [x for x in F["cron"].split(",") if x and x != "ok" and not x.startswith("err:")]
+        failing = [x[4:] for x in F["cron"].split(",") if x.startswith("err:")]
+    else:
+        oc = shutil.which("openclaw", path=os.environ.get("PATH", "") + ":/opt/homebrew/bin")
+        raw = run([oc, "cron", "list", "--json"], 120) if oc else None
+        try:
+            d = json.loads(raw) if raw else None
+            jobs = d.get("jobs", d) if isinstance(d, dict) else d
+            gateway_up = isinstance(jobs, list)
+        except ValueError:
+            jobs, gateway_up = [], False
+        for j in jobs if gateway_up else []:
+            if not j.get("enabled"):
+                continue
+            st = j.get("state") or {}
+            nxt = j.get("nextRunAtMs") or st.get("nextRunAtMs")
+            grace = max(OVERDUE_MIN * 60, ((j.get("payload") or {}).get("timeoutSeconds") or 0) + 300) * 1000
+            if (j.get("schedule") or {}).get("kind") in ("every", "cron") and nxt and now - nxt > grace:
+                overdue.append(j.get("name") or j["id"])
+            if (st.get("consecutiveErrors") or 0) >= ERRORS_IN_ROW:
+                failing.append(j.get("name") or j["id"])
+    state["gwFails"] = 0 if gateway_up else state.get("gwFails", 0) + 1
+    if state["gwFails"] >= HUB_FAILS:
+        out.append(Finding("jarvis", "gateway", "Jarvis: il gateway di OpenClaw non risponde. Nessun cron e nessun canale gira finché non riparte."))
+
+    def names(xs):
+        xs = sorted(xs)
+        return ", ".join(xs[:3]) + (f" e altri {len(xs) - 3}" if len(xs) > 3 else "")
+    if overdue:
+        out.append(Finding("jarvis", "cron-ritardo:" + names(overdue), f"Jarvis: cron non partiti all'ora: {names(overdue)}."))
+    if failing:
+        out.append(Finding("jarvis", "cron-errore:" + names(failing), f"Jarvis: cron in errore da {ERRORS_IN_ROW} giri o più: {names(failing)}."))
+
+    # lavori-watch avvisa dei lavori muti: se lui tace perché è fermo, nessuno lo dice
+    try:
+        lw_min = float(F["lw"]) if "lw" in F else (now / 1000 - os.path.getmtime(LW_LOG)) / 60
+    except OSError:
+        lw_min = 9999
+    if lw_min > LW_MAX_MIN:
+        out.append(Finding("jarvis", "lavori-watch", f"Jarvis: lavori-watch non scrive da {lw_min:.0f} minuti, i lavori muti non vengono più segnalati."))
+
+    # agents-doctor è la barra dell'hub agenti: lento (25 s sotto carico), si guarda ogni 6 ore e si ricorda l'ultimo esito
+    if "doctor" in F:
+        state["doctorFails"], state["doctorAt"] = [x for x in F["doctor"].split("|") if x], now
+    elif now - state.get("doctorAt", 0) >= DOCTOR_EVERY_H * 3600e3:
+        raw = run([f"{HOME}/bin/agents-doctor"], 240)
+        if raw is not None:
+            state["doctorFails"] = [l.strip() for l in raw.splitlines() if l.startswith("FAIL")]
+            state["doctorAt"] = now
+    for line in state.get("doctorFails", []):
+        out.append(Finding("doctor", "doctor:" + line[:80], "Hub agenti: agents-doctor segna rosso, " + re.sub(r"^FAIL\s+", "", line)[:160]))
+    return out
+
+
+def check_quota(F, state):
+    rows, ok = [], True
+    if "quota" in F:
+        ok = F["quota"] != "hub-down"
+        rows = [{"provider": p, "status": "esaurito", "unknown": False, "account": "?", "resetsAt": None}
+                for p in {"claude-out": ["claude"], "mech-out": ["muse", "codex"]}.get(F["quota"], [])]
+        rows += [{"provider": p, "status": "ok", "unknown": False} for p in ("claude", "muse", "codex") if p not in [r["provider"] for r in rows]]
+    else:
+        try:
+            with urllib.request.urlopen(f"{HUB}/api/pace", timeout=20) as r:
+                rows = json.load(r)
+        except (OSError, ValueError):
+            ok = False
+    state["hubFails"] = 0 if ok else state.get("hubFails", 0) + 1
+    out = []
+    if state["hubFails"] >= HUB_FAILS:
+        out.append(Finding("quote", "hub", "Quote: l'hub su :3360 non risponde da due giri, il contatore delle quote è cieco."))
+    if not ok:
+        return out
+
+    def exhausted(provider):
+        rs = [r for r in rows if r["provider"] == provider and not r.get("unknown")]
+        return rs and all(r["status"] == "esaurito" for r in rs), rs
+    gone, rs = exhausted("claude")
+    if gone:
+        back = min((r["resetsAt"] for r in rs if r.get("resetsAt")), default=None)
+        out.append(Finding("quote", "quota-claude", "Quote: tutti gli account Claude sono esauriti" + (f", il primo torna {when(back)}." if back else ".")))
+    if exhausted("muse")[0] and exhausted("codex")[0]:
+        out.append(Finding("quote", "quota-meccanico", "Quote: Muse e Codex sono esauriti, il lavoro meccanico non ha dove andare."))
+    return out
+
+
+# --- stato e decisione ---------------------------------------------------------------------
+
+def load_json(path, default):
+    try:
+        with open(path) as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return default
+
+
+def save_json(path, data):
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    tmp = path + ".tmp"
+    with open(tmp, "w") as f:
+        json.dump(data, f, ensure_ascii=False, indent=1)
+    os.replace(tmp, path)
+
+
+def decide(findings, state, now, quiet):
+    reported = state.setdefault("reported", {})
+    active = {f.key for f in findings}
+    for k in [k for k in reported if k not in active]:
+        del reported[k]          # rientrato: se torna, è di nuovo una notizia
+    out = []
+    for f in findings:
+        last = reported.get(f.key)
+        if quiet:
+            continue             # di notte non si segna come detto: al mattino, se dura, parte
+        if last is None or now - last >= REPEAT_H.get(f.group, REPEAT_DEFAULT_H) * 3600e3:
+            out.append(f)
+            reported[f.key] = now
+    return out
+
+
+def log_reading(now, lpc, swap):
+    os.makedirs(os.path.dirname(LOG), exist_ok=True)
+    lines = []
+    if os.path.exists(LOG):
+        with open(LOG) as f:
+            lines = f.read().splitlines()
+    lines.append(f"{int(now)}\t{lpc:.2f}\t{swap:.2f}")
+    with open(LOG, "w") as f:
+        f.write("\n".join(lines[-3000:]) + "\n")
+
+
+def riepilogo(hours, before):
+    now = time.time() * 1000
+    rows = []
+    for line in (open(LOG).read().splitlines() if os.path.exists(LOG) else []):
+        try:
+            t, l, s = line.split("\t")
+            if now - float(t) <= hours * 3600e3:
+                rows.append((float(t), float(l), float(s)))
+        except ValueError:
+            continue
+    if not rows:
+        print("Freno del Mac: nessuna lettura del carico nelle ultime ore, il giro non ha girato.")
+        return
+    peak = max(rows, key=lambda r: r[1])
+    over = sum(1 for r in rows if r[1] >= LOAD_PER_CORE)
+    print(f"Freno del Mac, ultime {hours:g} h: carico massimo {comma(peak[1])} per core alle {time.strftime('%H:%M', time.localtime(peak[0] / 1000))}, "
+          f"{over} letture su {len(rows)} sopra {comma(LOAD_PER_CORE, 0)} per core, swap al massimo {max(r[2] for r in rows) * 100:.0f}%." +
+          (f" Prima del freno: {before}." if before else ""))
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--dry-run", action="store_true")
+    ap.add_argument("--fake", nargs="*", default=[])
+    ap.add_argument("--riepilogo-carico", action="store_true")
+    ap.add_argument("--ore", type=float, default=12)
+    ap.add_argument("--prima", default="")
+    a = ap.parse_args()
+    if a.riepilogo_carico:
+        return riepilogo(a.ore, a.prima)
+    F = dict(x.split("=", 1) for x in a.fake)
+    now = float(F["now"]) if "now" in F else time.time() * 1000
+    hour = int(F["hour"]) if "hour" in F else time.localtime(now / 1000).tm_hour
+    quiet = hour >= QUIET[0] or hour < QUIET[1]
+    state = load_json(STATE, {})
+
+    lpc, swap = read_mac(F)
+    findings = check_mac(F, lpc, swap) + check_jarvis(F, state, now) + check_quota(F, state)
+    accept = load_json(ACCEPT, [])
+    findings = [f for f in findings if not any(x["match"] in f.text for x in accept)]
+    say = decide(findings, state, now, quiet)
+
+    sys.stderr.write(f"letto: carico {comma(lpc)}/core, swap {swap * 100:.0f}%, {len(findings)} problemi attivi, {len(say)} da dire"
+                     f"{', ore silenziose' if quiet else ''}\n")
+    lines = [f"⚠️ {f.text[:MAX_LINE]}" for f in say]
+    if a.dry_run:
+        for l in lines:
+            print("[prova a secco] " + l)
+        return
+    save_json(STATE, state)
+    log_reading(now, lpc, swap)
+    if lines:
+        print("\n".join(lines)[:600])
+        os.makedirs(os.path.dirname(NOTE), exist_ok=True)
+        with open(NOTE, "w") as f:
+            f.write(f"# Giro di sorveglianza, {time.strftime('%d/%m %H:%M', time.localtime(now / 1000))}\n\n" + "\n".join(f"- {l}" for l in lines) + "\n")
+
+
+if __name__ == "__main__":
+    main()

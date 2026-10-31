@@ -1,0 +1,45 @@
+#!/bin/bash
+# Controllo dopo l'aggiornamento di macOS da 26.2 (a 26.7.1, deciso da Attilio il 25/10). Parte al login da launchd
+# (com.jarvis.dopo-aggiornamento, RunAtLoad), aspetta 5 minuti che i servizi salgano, controlla gli
+# strumenti che un aggiornamento maggiore rompe più spesso e, se qualcosa non va, lo mette in «Ti aspetta»
+# dell'hub. Gira una volta sola sulla versione nuova, poi si toglie da launchd.
+set -u
+export PATH=/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:$HOME/.local/bin:$HOME/bin
+LOG="$HOME/.claude/jarvis/logs/dopo-aggiornamento-macos.log"
+PLIST="$HOME/Library/LaunchAgents/com.jarvis.dopo-aggiornamento.plist"
+VER=$(sw_vers -productVersion)
+case "$VER" in 26.2|26.2.*) exit 0 ;; esac   # ancora sulla vecchia: si riprova al prossimo login
+[ "${1:-}" = --subito ] || sleep 300
+
+ko=()
+check() { # check <nome> <comando…>
+  local name="$1"; shift
+  if out=$("$@" 2>&1); then echo "ok   $name" >> "$LOG"; else echo "KO   $name: ${out:0:200}" >> "$LOG"; ko+=("$name"); fi
+}
+echo "== $(date '+%F %T') macOS $VER" >> "$LOG"
+check "strumenti da riga di comando" xcode-select -p
+check "git" git --version
+check "Homebrew" brew --version
+check "node" node -e 'process.exit(0)'
+check "bun" "$HOME/.topics/bun/1.4.2/bun" --version
+check "claude" claude --version
+check "python3 con ctypes" python3 -I -c 'import ctypes, sqlite3'
+check "gateway OpenClaw (:18789)" nc -z -G 3 127.0.0.1 18789
+check "hub (:3360)" curl -sf -m 10 -o /dev/null http://127.0.0.1:3360/api/automations
+check "server Topics" pgrep -f 'topics-app/server.ts'
+check "registratore fseventsd" launchctl print "gui/$(id -u)/com.jarvis.fseventsd-watch"
+check "tray" pgrep -f 'tray/ClaudeUsage'
+
+if [ ${#ko[@]} -gt 0 ]; then
+  why="Dopo l'aggiornamento a macOS $VER non funzionano: ${ko[*]}. Dettagli in ~/.claude/jarvis/logs/dopo-aggiornamento-macos.log."
+  body=$(python3 -I -c 'import json,sys; print(json.dumps({"tipo":"decisione","title":"macOS aggiornato: qualcosa da sistemare","why":sys.argv[1],"link":"#automations","from":"dopo-aggiornamento-macos"}))' "$why")
+  curl -s -m 10 -X POST http://127.0.0.1:3360/api/attesa -H 'content-type: application/json' -d "$body" >/dev/null
+  echo "esito: ${#ko[@]} da sistemare" >> "$LOG"
+else
+  echo "esito: tutto ok" >> "$LOG"
+fi
+# una volta sola: si toglie da launchd (il file resta in disabled/ per riferimento)
+mkdir -p "$HOME/Library/LaunchAgents/disabled"
+mv "$PLIST" "$HOME/Library/LaunchAgents/disabled/" 2>/dev/null
+launchctl bootout "gui/$(id -u)/com.jarvis.dopo-aggiornamento" 2>/dev/null
+exit 0

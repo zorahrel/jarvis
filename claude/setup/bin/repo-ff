@@ -1,0 +1,26 @@
+#!/bin/sh
+# Tiene i checkout principali allineati a origin/main con fast-forward, e basta.
+# Perche': gli agenti lavorano su worktree e PR, nessuno fa pull sul checkout principale;
+# il 13/10 quello di un progetto era 358 commit indietro e Jarvis ci leggeva script vecchi.
+# Non tocca niente se: non si e' su main, ci sono modifiche tracciate, c'e' un rebase/merge
+# a meta', o main ha commit locali (allora lo scrive nel log e aspetta un umano).
+# Uso: repo-ff <repo>...   (launchd com.jarvis.repo-ff, ogni 15 min)
+LOG=$HOME/.claude/jarvis/logs/repo-ff.log
+for r in "$@"; do
+  cd "$r" 2>/dev/null || { echo "$(date '+%F %T') $r: non esiste" >> "$LOG"; continue; }
+  [ "$(git branch --show-current)" = main ] || continue
+  g=$(git rev-parse --git-dir)
+  [ -d "$g/rebase-merge" ] || [ -d "$g/rebase-apply" ] || [ -f "$g/MERGE_HEAD" ] && continue
+  git diff --quiet && git diff --cached --quiet || continue
+  git fetch -q origin main 2>/dev/null || { echo "$(date '+%F %T') $r: fetch fallito" >> "$LOG"; continue; }
+  ahead=$(git rev-list --count origin/main..main)
+  behind=$(git rev-list --count main..origin/main)
+  [ "$behind" -eq 0 ] && continue
+  if [ "$ahead" -gt 0 ]; then
+    echo "$(date '+%F %T') $r: $ahead commit locali, $behind indietro: non allineo" >> "$LOG"
+  elif git merge -q --ff-only origin/main 2>/dev/null; then
+    echo "$(date '+%F %T') $r: +$behind commit" >> "$LOG"
+  else
+    echo "$(date '+%F %T') $r: ff fallito (file non tracciati in conflitto?)" >> "$LOG"
+  fi
+done

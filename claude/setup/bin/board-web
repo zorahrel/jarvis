@@ -1,0 +1,412 @@
+#!/usr/bin/env python3
+"""board-web — la board Armonia nel browser, con i messaggi in canna.
+
+La board vive SOLO nel browser: niente finestra-app, niente PNG, niente pannello
+nativo. Erano tre modi di guardare la stessa pagina, e due erano da mantenere per
+sempre in cambio di niente. Qui i messaggi
+proposti si leggono, si correggono e si mandano con un click. Nessun messaggio parte
+senza quel click: l'invio passa da `openclaw message send`, che e' la stessa strada
+di qualunque altro invio, quindi resta nei log e nei rate limit.
+
+  board-web            avvia su http://127.0.0.1:3350
+  board-web --port N   altra porta
+
+Ascolta SOLO su 127.0.0.1: la board contiene nomi, numeri e contesto interno.
+"""
+import json, os, sys, datetime, subprocess, urllib.parse
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from board_core import load, save, days, minutes, now, sync  # noqa: E402
+
+ORDER = {"bloccato": 0, "fermo": 1, "attivo": 2, "archiviato": 9}
+
+
+def age(p):
+    """da quanto e' ferma: 'dal' se l'ho scritto io, altrimenti l'ultimo segnale."""
+    if p.get("dal"):
+        return max(0, (datetime.date.today() - datetime.date.fromisoformat(p["dal"])).days)
+    dv = p.get("derived") or {}
+    v = [x for x in (days(dv.get("chat")), days(dv.get("push"))) if x is not None]
+    return min(v) if v else None
+
+
+def due(p):
+    if not p.get("scadenza"):
+        return None
+    return (datetime.date.fromisoformat(p["scadenza"]) - datetime.date.today()).days
+
+
+def state():
+    """Board + outbox in una forma che la pagina puo' disegnare senza ricalcolare niente."""
+    d = load()
+    ppl = d["people"]
+    todo = {}
+    for p in d["projects"]:
+        nx = p.get("next") or {}
+        if nx.get("cosa") and nx.get("chi"):
+            todo.setdefault(nx["chi"], []).append({
+                "id": p["id"], "cosa": nx["cosa"], "stato": p["stato"],
+                "eta": age(p), "scad": due(p), "aspetta": p.get("aspetta"),
+                "dipende": (p.get("dopo") or None),
+                "sync": minutes((p.get("derived") or {}).get("synced")),
+            })
+    # Attilio in cima (le sue sono le uniche che nessun altro puo' sbloccare), poi chi ha
+    # la scadenza piu' vicina, poi chi ha la cosa piu' vecchia ferma. La scadenza batte
+    # l'eta': una consegna fra due giorni conta piu' di una cosa ferma da tre settimane.
+    def rank(k):
+        if k == "attilio":
+            return (0, -999, 0)
+        sc = [t["scad"] for t in todo[k] if t["scad"] is not None]
+        e = [t["eta"] for t in todo[k] if t["eta"] is not None]
+        return (1, min(sc) if sc else 999, -(max(e) if e else 0))
+    # il messaggio sta con i task di chi lo riceve: un messaggio letto lontano da cio'
+    # che chiede e' un messaggio che si approva senza sapere cosa si sta approvando.
+    ob = [m for m in d.get("outbox", []) if m["stato"] != "scartato"]
+    per_persona = {m["a"]: m for m in ob}
+    gruppi = [{
+        "key": k, "nome": ppl.get(k, {}).get("nome", k),
+        "cognome": ppl.get(k, {}).get("cognome"),
+        "capo": ppl.get(ppl.get(k, {}).get("capo") or "", {}).get("nome"),
+        "esterno": bool(ppl.get(k, {}).get("esterno")),
+        "canale": ppl.get(k, {}).get("discord") and "discord" or None,
+        "msg": per_persona.get(k),
+        "pids": [t["id"] for t in todo[k]],
+        # il piu' vecchio: un gruppo e' aggiornato quanto la sua riga piu' stantia
+        "sync": (max([t["sync"] for t in todo[k] if t["sync"] is not None], default=None)),
+        "task": sorted(todo[k], key=lambda t: (t["scad"] if t["scad"] is not None else 999,
+                                               -(t["eta"] or 0))),
+    } for k in sorted(todo, key=rank)]
+    return {
+        "gruppi": gruppi,
+        "orfani": [m for m in ob if m["a"] not in todo],
+        "people": ppl,
+        "scartati": [m for m in d.get("outbox", []) if m["stato"] == "scartato"],
+        "synced": minutes(d.get("_synced")),
+        "aperte": sum(len(g["task"]) for g in gruppi),
+    }
+
+
+def send(entry):
+    """Manda davvero. Ritorna (ok, dettaglio). Il dry-run e' una env, non un flag della UI:
+    una spunta 'prova' in pagina si dimentica accesa e poi nessuno ha mandato niente."""
+    cmd = ["openclaw", "message", "send", "--channel", entry["canale"],
+           "--target", entry["target"], "-m", entry["testo"], "--json"]
+    if os.environ.get("BOARD_DRY"):
+        cmd.append("--dry-run")
+    r = subprocess.run(cmd, capture_output=True, text=True, timeout=90)
+    if r.returncode != 0:
+        return False, (r.stderr or r.stdout or "").strip()[:400]
+    try:
+        out = json.loads(r.stdout)
+        mid = out.get("messageId") or (out.get("result") or {}).get("messageId")
+    except Exception:
+        mid = None
+    return True, mid or r.stdout.strip()[:200]
+
+
+PAGE = r"""<!doctype html><html lang="it"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1"><title>Board Armonia</title><style>
+*{box-sizing:border-box}
+body{margin:0;background:#0d0e10;color:#eceef2;padding:22px 26px 60px;
+font:14px/1.4 -apple-system,"SF Pro Text",Inter,sans-serif}
+h1{font-size:20px;margin:0 0 2px;letter-spacing:-.3px}
+h2{font-size:13px;text-transform:uppercase;letter-spacing:.08em;color:#71747c;
+margin:30px 0 12px;border-bottom:1px solid #1d1f24;padding-bottom:7px}
+.sub{color:#71747c;font-size:12px;margin-bottom:18px}
+.blk{margin-bottom:12px;border-left:3px solid #2b2e36;padding-left:13px}
+.blk.me{border-left-color:#e5484d}
+.who{font-weight:680;font-size:15px;margin-bottom:3px;color:#fff}
+.who .n{color:#5f626a;font-weight:400;font-size:.8em;margin-left:6px}
+.who .ext{color:#5f626a;font-weight:400;font-size:.72em;margin-left:6px}
+table{width:100%;border-collapse:collapse;table-layout:fixed}
+td{padding:3px 0;vertical-align:top;border-top:1px solid #191b1f}
+tr:first-child td{border-top:none}
+.p{width:24%;color:#8b94a6;font-size:.88em;padding-right:8px;overflow-wrap:anywhere}
+.p .dep{display:block;color:#55585f;font-size:.85em}
+.c{color:#dcdfe6;font-size:.93em;padding-right:8px;overflow-wrap:anywhere}
+.a{width:3.4em;text-align:right;color:#55585f;font-size:.8em;font-variant-numeric:tabular-nums}
+.old{color:#f0a13f} .due{color:#8fc7ff} .due.hot{color:#ff6b6f;font-weight:700}
+.msg{border:1px solid #23262d;border-radius:9px;padding:11px 13px;margin:9px 0 4px;background:#111317}
+.msg.inviato{opacity:.5}
+.mh{display:flex;align-items:baseline;gap:9px;margin-bottom:3px}
+.mh b{font-size:14.5px}
+.mh .ch{font-size:11px;color:#71747c;border:1px solid #2b2e36;border-radius:4px;padding:1px 6px}
+.why{color:#8b94a6;font-size:12px;margin-bottom:9px}
+textarea{width:100%;background:#0d0e10;color:#eceef2;border:1px solid #24272e;border-radius:6px;
+padding:9px 11px;font:13.5px/1.45 -apple-system,"SF Pro Text",Inter,sans-serif;resize:vertical;min-height:76px;overflow:hidden}
+textarea:focus{outline:none;border-color:#3a4150}
+.act{margin-top:9px;display:flex;gap:8px;align-items:center}
+button{border:1px solid #2b2e36;background:#1a1d22;color:#dcdfe6;border-radius:6px;
+padding:6px 13px;font-size:13px;cursor:pointer}
+button:hover{background:#22262c}
+button.go{background:#1f6f43;border-color:#2a8a55;color:#fff;font-weight:600}
+button.go:hover{background:#25834f}
+button:disabled{opacity:.45;cursor:default}
+.esito{font-size:12px;color:#6fbf8a;margin-left:4px}
+.esito.err{color:#ff6b6f}
+.vuoto{color:#5f626a;font-size:13px}
+.who{display:flex;align-items:baseline;gap:6px}
+.who .sp{flex:1}
+.upd{color:#55585f;font-weight:400;font-size:11px;font-variant-numeric:tabular-nums}
+.upd.vecchio{color:#f0a13f}
+button.ref{padding:1px 7px;font-size:12px;line-height:1.5;color:#8b94a6;background:transparent}
+button.ref:hover{background:#1a1d22;color:#eceef2}
+button.ref.gira{opacity:.4}
+.scarto{margin-top:9px;display:flex;gap:8px;align-items:center}
+.scarto[hidden]{display:none}
+.scarto input{flex:1;background:#0d0e10;color:#eceef2;border:1px solid #24272e;border-radius:6px;
+padding:7px 10px;font:13px -apple-system,"SF Pro Text",Inter,sans-serif}
+.scarto input:focus{outline:none;border-color:#3a4150}
+.motivo{color:#8b94a6;font-size:12px;margin-top:7px}
+.motivo b{color:#c9cfda;font-weight:600}
+h1 .sync{font-size:12px;font-weight:400;color:#71747c;margin-left:10px}
+</style></head><body>
+<h1>Board Armonia<span class="sync" id="sync"></span></h1><div class="sub" id="sub"></div>
+<div id="board"></div>
+<div id="orfani"></div><div id="scartati"></div>
+<script>
+const E=s=>String(s??"").replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+
+function eta(t){
+  if(t.scad!==null&&t.scad!==undefined)
+    return `<span class="due${t.scad<=3?" hot":""}">${t.scad}g</span>`;
+  if(t.eta===null||t.eta===undefined) return "";
+  return `<span class="${t.eta>=14?"old":""}">${t.eta}g</span>`;
+}
+
+function fa(min){
+  if(min===null||min===undefined) return "mai";
+  if(min<1) return "ora";
+  if(min<60) return min+"m fa";
+  if(min<2880) return Math.floor(min/60)+"h fa";
+  return Math.floor(min/1440)+"g fa";
+}
+function tempo(min,cls){
+  return `<span class="upd ${cls||""}" data-min="${min===null||min===undefined?"":min}">agg. ${fa(min)}</span>`;
+}
+
+function carta(m){
+  if(!m) return "";
+  if(m.stato==="inviato")
+    return `<div class="msg inviato" data-id="${E(m.id)}">
+      <div class="why">${E(m.perche)}</div>
+      <textarea disabled>${E(m.testo)}</textarea>
+      <div class="act"><span class="esito">inviato ${
+        E((m.inviato||"").slice(0,16).replace("T"," "))}</span></div></div>`;
+  return `<div class="msg" data-id="${E(m.id)}">
+      <div class="why">${E(m.perche)}</div>
+      <textarea>${E(m.testo)}</textarea>
+      <div class="act"><button class="go">Manda su ${E(m.canale)}</button>
+        <button class="skip">Scarta</button><span class="esito"></span></div>
+      <div class="scarto" hidden>
+        <input placeholder="perche' lo scarti? (resta sulla board)">
+        <button class="conf">Scarta</button><button class="ann">Annulla</button></div></div>`;
+}
+
+function blocco(g){
+  return `<div class="blk${g.key==="attilio"?" me":""}" data-pids="${E((g.pids||[]).join(","))}">
+      <div class="who">${E(g.nome)}${g.cognome?" "+E(g.cognome):""}<span class="n">${g.task.length}</span>${
+        g.esterno?'<span class="ext">esterno</span>':""}${
+        g.capo?`<span class="ext">riporta a ${E(g.capo)}</span>`:""}
+        <span class="sp"></span>${tempo(g.sync, g.sync!==null&&g.sync>1440?"vecchio":"")}
+        <button class="ref" title="riaggiorna solo le sue righe">&#8635;</button></div>
+      <table>${g.task.map(t=>`<tr>
+        <td class="p">${E(t.id)}${t.dipende?`<span class="dep">dopo ${E(t.dipende)}</span>`:""}</td>
+        <td class="c">${E(t.cosa)}</td><td class="a">${eta(t)}</td></tr>`).join("")}</table>
+      ${carta(g.msg)}
+    </div>`;
+}
+
+function disegna(s){
+  document.getElementById("sync").innerHTML =
+    tempo(s.synced, s.synced!==null&&s.synced>1440?"vecchio":"") +
+    ' <button class="ref tutto" title="riaggiorna tutta la board">&#8635;</button>';
+  document.getElementById("sub").textContent =
+    `${s.aperte} cose aperte · ${s.gruppi.length} persone · ${
+      s.gruppi.filter(g=>g.msg&&g.msg.stato!=="inviato").length} messaggi da mandare`;
+  document.getElementById("board").innerHTML = s.gruppi.map(blocco).join("");
+  document.getElementById("orfani").innerHTML = s.orfani.length
+    ? `<h2>Senza task sulla board</h2>` + s.orfani.map(m=>`
+      <div class="blk"><div class="who">${E(s.people?.[m.a]?.nome||m.a)}</div>${carta(m)}</div>`).join("")
+    : "";
+  // scartati: restano visibili col motivo, altrimenti la stessa proposta ritorna fra un mese
+  document.getElementById("scartati").innerHTML = s.scartati.length
+    ? `<h2>Scartati</h2>` + s.scartati.map(m=>`
+      <div class="msg scartato" data-id="${E(m.id)}">
+        <div class="mh"><b>${E(s.people?.[m.a]?.nome||m.a)}</b>
+          <span class="ch">${E((m.scartato_il||"").slice(0,10))}</span></div>
+        <div class="motivo"><b>Perche' no:</b> ${E(m.motivo||"— (scartato senza motivo)")}</div>
+        <div class="act"><button class="back">Rimetti in coda</button>
+          <span class="esito"></span></div></div>`).join("")
+    : "";
+  t0 = Date.now();
+}
+
+// l'eta' scritta a schermo invecchia da sola: senza questo, "agg. ora" resta "agg. ora"
+// per un'ora e la board mente proprio sul campo che serve a fidarsi di lei.
+let t0 = Date.now();
+function invecchia(){
+  const passati = Math.floor((Date.now()-t0)/60000);
+  document.querySelectorAll("[data-min]").forEach(el=>{
+    const m = el.dataset.min===""?null:(+el.dataset.min+passati);
+    el.textContent = "agg. "+fa(m);
+    if(m!==null&&m>1440) el.classList.add("vecchio");
+  });
+}
+setInterval(invecchia, 30000);
+
+function cresci(t){ t.style.height="auto"; t.style.height=(t.scrollHeight+2)+"px"; }
+async function carica(){
+  disegna(await (await fetch("/api/state")).json());
+  document.querySelectorAll("textarea").forEach(cresci);
+}
+document.addEventListener("input", e=>{ if(e.target.tagName==="TEXTAREA") cresci(e.target); });
+
+async function outbox(card, body){
+  const esito=card.querySelector(".esito"); esito.className="esito"; esito.textContent="…";
+  const r=await fetch("/api/outbox",{method:"POST",headers:{"content-type":"application/json"},
+    body:JSON.stringify({id:card.dataset.id, ...body})});
+  const j=await r.json();
+  if(j.ok) return carica();
+  esito.className="esito err"; esito.textContent=j.errore||"non riuscito";
+  card.querySelectorAll("button").forEach(x=>x.disabled=false);
+}
+
+document.addEventListener("click", async e=>{
+  const b=e.target.closest("button"); if(!b) return;
+
+  if(b.classList.contains("ref")){                       // ↻ globale o della persona
+    const blk=b.closest(".blk");
+    const pids=blk&&blk.dataset.pids?blk.dataset.pids.split(","):null;
+    b.classList.add("gira"); b.disabled=true;
+    const r=await fetch("/api/sync",{method:"POST",headers:{"content-type":"application/json"},
+      body:JSON.stringify({pids})});
+    const j=await r.json();
+    if(!j.ok) alert("sync non riuscito: "+(j.errore||""));
+    return carica();
+  }
+
+  const card=b.closest(".msg"); if(!card) return;
+
+  if(b.classList.contains("skip")){                      // scarta: prima il motivo
+    const box=card.querySelector(".scarto");
+    box.hidden=false; box.querySelector("input").focus();
+    return;
+  }
+  if(b.classList.contains("ann")){ card.querySelector(".scarto").hidden=true; return; }
+  if(b.classList.contains("conf")){
+    const inp=card.querySelector(".scarto input");
+    const motivo=inp.value.trim();
+    if(!motivo){ inp.focus(); inp.placeholder="scrivi il motivo: e' l'unica cosa che resta"; return; }
+    card.querySelectorAll("button").forEach(x=>x.disabled=true);
+    return outbox(card,{azione:"scarta", testo:card.querySelector("textarea").value, motivo});
+  }
+  if(b.classList.contains("back")){
+    card.querySelectorAll("button").forEach(x=>x.disabled=true);
+    return outbox(card,{azione:"riprendi"});
+  }
+  if(b.classList.contains("go")){
+    if(!confirm("Mando questo messaggio adesso?")) return;
+    card.querySelectorAll("button").forEach(x=>x.disabled=true);
+    return outbox(card,{azione:"manda", testo:card.querySelector("textarea").value});
+  }
+});
+
+document.addEventListener("keydown", e=>{
+  if(e.target.matches(".scarto input")){
+    if(e.key==="Enter") e.target.parentElement.querySelector(".conf").click();
+    if(e.key==="Escape") e.target.parentElement.hidden=true;
+  }
+});
+
+carica();
+</script></body></html>"""
+
+
+class H(BaseHTTPRequestHandler):
+    def _send(self, code, body, ctype="application/json; charset=utf-8"):
+        b = body if isinstance(body, bytes) else body.encode()
+        self.send_response(code)
+        self.send_header("Content-Type", ctype)
+        self.send_header("Content-Length", str(len(b)))
+        self.end_headers()
+        self.wfile.write(b)
+
+    def do_GET(self):
+        path = urllib.parse.urlparse(self.path).path
+        if path == "/":
+            return self._send(200, PAGE, "text/html; charset=utf-8")
+        if path == "/api/state":
+            return self._send(200, json.dumps(state(), ensure_ascii=False))
+        self._send(404, '{"errore":"non c\'e\'"}')
+
+    def do_POST(self):
+        path = urllib.parse.urlparse(self.path).path
+        n = int(self.headers.get("Content-Length") or 0)
+        req = json.loads(self.rfile.read(n) or b"{}")
+        if path == "/api/sync":
+            # pids assenti = tutta la board. Con i pids si aggiorna una card sola:
+            # gh su un repo invece che su venti, e il resto della board resta com'e'.
+            try:
+                cnt, derive = sync(req.get("pids") or None)
+            except Exception as e:
+                return self._send(502, json.dumps({"ok": False, "errore": str(e)[:300]},
+                                                  ensure_ascii=False))
+            return self._send(200, json.dumps({"ok": True, "n": cnt, "derive": derive},
+                                              ensure_ascii=False))
+        if path != "/api/outbox":
+            return self._send(404, '{"errore":"non c\'e\'"}')
+        d = load()
+        m = next((x for x in d.get("outbox", []) if x["id"] == req.get("id")), None)
+        if not m:
+            return self._send(404, '{"ok":false,"errore":"messaggio sconosciuto"}')
+        if m["stato"] == "inviato":
+            return self._send(409, '{"ok":false,"errore":"gia\' inviato"}')
+        # il testo mostrato a schermo e' quello che parte: se lo ha corretto, vale la correzione
+        if req.get("testo"):
+            m["testo"] = req["testo"]
+        if req.get("azione") == "scarta":
+            # il motivo non e' burocrazia: e' cio' che impedisce di riproporre a settembre
+            # lo stesso messaggio che ad agosto era sbagliato.
+            motivo = (req.get("motivo") or "").strip()
+            if not motivo:
+                return self._send(400, json.dumps({"ok": False, "errore": "serve il motivo"},
+                                                  ensure_ascii=False))
+            m["stato"] = "scartato"
+            m["motivo"] = motivo
+            m["scartato_il"] = now()
+            save(d)
+            return self._send(200, '{"ok":true}')
+        if req.get("azione") == "riprendi":
+            m["stato"] = "proposto"
+            m["ripreso_il"] = now()
+            save(d)
+            return self._send(200, '{"ok":true}')
+        ok, det = send(m)
+        if not ok:
+            save(d)  # la correzione al testo si tiene comunque
+            return self._send(502, json.dumps({"ok": False, "errore": det}, ensure_ascii=False))
+        if os.environ.get("BOARD_DRY"):
+            # una prova che marca "inviato" e' peggio di nessuna prova: il messaggio
+            # sparirebbe dalla coda senza che nessuno l'abbia ricevuto
+            save(d)
+            return self._send(200, json.dumps({"ok": False, "errore": "dry-run: non inviato"},
+                                              ensure_ascii=False))
+        m["stato"] = "inviato"
+        m["inviato"] = datetime.datetime.now(datetime.UTC).isoformat()
+        m["messageId"] = det
+        save(d)
+        self._send(200, json.dumps({"ok": True, "messageId": det}, ensure_ascii=False))
+
+    def log_message(self, *a):
+        pass
+
+
+if __name__ == "__main__":
+    port = 3350
+    if "--port" in sys.argv:
+        port = int(sys.argv[sys.argv.index("--port") + 1])
+    srv = ThreadingHTTPServer(("127.0.0.1", port), H)
+    print(f"board-web su http://127.0.0.1:{port}" + ("  [DRY-RUN]" if os.environ.get("BOARD_DRY") else ""))
+    srv.serve_forever()

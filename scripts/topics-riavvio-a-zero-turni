@@ -1,0 +1,178 @@
+#!/bin/bash
+# Porta il checkout di produzione di Topics (~/Projects/topics-app) a un commit di main
+# e riavvia il server SOLO in una finestra a zero turni in volo. Scritto il 26/10 dal
+# Guardiano dopo il primo giro (pagina: ~/.claude/jarvis/memory/tools/topics-aggiornamento.md).
+#
+#   topics-riavvio-a-zero-turni <commit>        checkout pulito: avanza a <commit>
+#   SAVE=<ramo> topics-riavvio-a-zero-turni <c> checkout sporco gia' salvato in <ramo>:
+#                                               il WT deve essere identico al salvataggio
+#   MAX_S=21600 (default) quanto aspettare la finestra
+#   CI_VERDE=1 (default; 0 = no) non tocca niente finche' i check di GitHub sul commit
+#                non sono tutti finiti e verdi; rossi o annullati = exit 10
+#   FERMO_DOPO_S=7200 (default; 0 = mai) dopo quanto, senza finestra, spegnere la
+#                partenza automatica delle card (i turni vivi finiscono, i nuovi non
+#                partono); si riaccende da sola all'uscita, con verifica. Ok del
+#                Guardiano 26/10 su mandato di Attilio («quando serve aggiorna pure»).
+#
+# Perche' cosi':
+# - il watcher del server (TOPICS_SERVER_WATCH=1) riavvia da solo a ogni modifica sotto
+#   server/, e restart-when-idle aspetta le card senza tetto ma le chat solo 60 s: lasciato
+#   fare, un checkout taglia una chat viva. L'hold (.topics-reload-hold) lo trattiene e il
+#   riavvio lo chiede questo script quando le tre sonde leggono zero.
+# - il server ha decine di import() dinamici: checkout e riavvio stanno a pochi secondi
+#   di distanza, mai ore di codice nuovo su disco sotto un processo vecchio.
+# - se qualcosa non torna (cancello rosso, 202 mai arrivato, server giu' 180 s) il WT
+#   torna com'era e start-prod rilancia il codice vecchio.
+set -u
+R="$HOME/Projects/topics-app"
+TARGET=$(git -C "$R" rev-parse --verify "${1:?uso: topics-riavvio-a-zero-turni <commit>}^{commit}") || exit 2
+SAVE="${SAVE:-}"
+MAX_S="${MAX_S:-21600}"
+LOG="${LOG:-$HOME/.claude/jarvis/logs/topics-aggiornamento.log}"
+BUN=$("$R/scripts/pinned-bun.sh" 2>/dev/null || command -v bun)
+B=https://127.0.0.1:3333
+HOLD="$R/.topics-reload-hold"
+HELD=0
+BASE=$(git -C "$R" rev-parse HEAD)
+
+tok() { jq -r .token ~/.topics/daemon-state.json; }
+say() { echo "[$(date '+%d/%m %H:%M:%S')] $*" | tee -a "$LOG"; }
+hz_pid() { curl -sk -m10 -H "Authorization: Bearer $(tok)" $B/__daemon/healthz 2>/dev/null | jq -r '.pid // empty' 2>/dev/null; }
+# card in turno (busyCount) · stream di chat · messaggi assistant non finiti (anche broker)
+probe() {
+  local A="Authorization: Bearer $(tok)" run st part
+  run=$(curl -sk -m10 -H "$A" $B/api/system/dispatch-capacity 2>/dev/null | jq -r 'if (.running|type)=="number" then .running else "x" end' 2>/dev/null)
+  st=$(curl -sk -m10 -H "$A" $B/api/topics/streaming 2>/dev/null | jq -r 'if (.sessions|type)=="array" then (.sessions|length) else "x" end' 2>/dev/null)
+  part=$(sqlite3 -readonly "$R/data/topics.db" "select count(*) from messages where partial=1" 2>/dev/null || echo x)
+  echo "${run:-x} ${st:-x} ${part:-x}"
+}
+is_zero() { [ "$(probe)" = "0 0 0" ]; }
+release_hold() { [ "$HELD" = 1 ] && trash "$HOLD" 2>/dev/null; HELD=0; }
+FERMO_DOPO_S="${FERMO_DOPO_S:-7200}"
+PAUSED=0
+auto_get() { curl -sk -m15 -H "Authorization: Bearer $(tok)" $B/api/all-boards/settings 2>/dev/null | jq -r '.autoDispatch | tostring'; }
+auto_set() { curl -sk -m15 -X PATCH -H "Authorization: Bearer $(tok)" -H 'content-type: application/json' -d "{\"autoDispatch\":$1}" $B/api/all-boards/settings 2>/dev/null | jq -r '.autoDispatch | tostring'; }
+reenable() {
+  [ "$PAUSED" = 1 ] || return 0
+  for _ in $(seq 1 30); do
+    auto_set true >/dev/null
+    [ "$(auto_get)" = true ] && { say "partenza automatica delle card RIACCESA (verificata con GET)"; PAUSED=0; return 0; }
+    sleep 10
+  done
+  say "ATTENZIONE: partenza automatica ancora spenta dopo 5 min di tentativi: PATCH /api/all-boards/settings {\"autoDispatch\":true}"
+}
+on_exit() { release_hold; reenable; }
+trap on_exit EXIT
+# un SIGTERM deve passare dall'uscita normale, se no la trappola EXIT non riaccende la coda
+trap 'exit 143' TERM INT HUP
+CI_VERDE="${CI_VERDE:-1}"
+# verde | attesa | rosso: <nomi dei check rossi o annullati>
+ci_state() {
+  gh api "repos/armonia/topics-app/commits/$TARGET/check-runs?per_page=100" -q '
+    [.check_runs[] | {n: .name, s: (if .status != "completed" then "attesa"
+      elif (.conclusion == "success" or .conclusion == "skipped" or .conclusion == "neutral") then "verde"
+      else "rosso" end)}]
+    | if length == 0 then "attesa"
+      elif any(.s == "rosso") then "rosso: " + ([.[] | select(.s == "rosso") | .n] | join(", "))
+      elif any(.s == "attesa") then "attesa" else "verde" end' 2>/dev/null || echo attesa
+}
+CI_OK=0; [ "$CI_VERDE" = 1 ] || CI_OK=1; CI_ASKED=0
+wt_tree() { local i t; i=$(mktemp); GIT_INDEX_FILE=$i git -C "$R" read-tree HEAD && GIT_INDEX_FILE=$i git -C "$R" add -A && t=$(GIT_INDEX_FILE=$i git -C "$R" write-tree); trash "$i"; echo "${t:-x}"; }
+cards() { sqlite3 -readonly "$R/data/topics.db" "select substr(id,1,8)||':'||dispatch_state||':'||dispatch_attempts from tasks where dispatch_state in ('working','queued','starting')" 2>/dev/null | tr '\n' ' '; }
+wt_unchanged() {
+  if [ -n "$SAVE" ]; then [ "$(wt_tree)" = "$(git -C "$R" rev-parse "$SAVE^{tree}")" ]
+  else [ -z "$(git -C "$R" status --porcelain)" ] && [ "$(git -C "$R" rev-parse HEAD)" = "$BASE" ]; fi
+}
+restore() {
+  if [ -n "$SAVE" ]; then git -C "$R" reset -q --hard "$SAVE" && git -C "$R" reset -q "$BASE"
+  else git -C "$R" reset -q --hard "$BASE"; fi
+  say "WT riportato a com'era prima del checkout"
+}
+
+[ "$(git -C "$R" rev-parse --abbrev-ref HEAD)" = main ] || { say "ABORT: il checkout non e' su main"; exit 2; }
+git -C "$R" merge-base --is-ancestor "$BASE" "$TARGET" || { say "ABORT: ${TARGET:0:10} non discende da HEAD ${BASE:0:10}"; exit 2; }
+# Un commit solo locale (il merge che fa discendere main dalla produzione) GitHub non lo conosce: la sua CI
+# resta «attesa» e lo script aspettava MAX_S in silenzio (27/10, 2 h a zero turni senza riavviare).
+if [ "$CI_VERDE" = 1 ] && [ -z "$(git -C "$R" branch -r --contains "$TARGET" 2>/dev/null)" ]; then
+  say "ABORT: ${TARGET:0:10} non e' su GitHub, la CI non c'e': controlla quella del commit di main che contiene e rilancia con CI_VERDE=0"; exit 10
+fi
+if [ -n "$SAVE" ]; then
+  wt_unchanged || { say "ABORT: il WT non e' identico al salvataggio $SAVE"; exit 2; }
+elif [ -n "$(git -C "$R" status --porcelain)" ]; then
+  say "ABORT: checkout sporco. Salva prima tutto in un ramo SOLO locale (vedi la pagina) e rilancia con SAVE=<ramo>"; exit 2
+fi
+OLD_PID=$(hz_pid)
+[ -n "$OLD_PID" ] || { say "ABORT: healthz non risponde, non so qual e' il server vecchio"; exit 2; }
+say "start: server pid $OLD_PID, ${BASE:0:10} -> ${TARGET:0:10}, attendo una finestra a zero turni (max ${MAX_S}s)"
+deadline=$(( $(date +%s) + MAX_S ))
+streak=0; last=""; n=0
+while [ "$(date +%s)" -lt "$deadline" ]; do
+  p=$(probe)
+  if [ "$p" = "0 0 0" ]; then streak=$((streak + 1)); else streak=0; fi
+  n=$((n + 1))
+  if [ "$p" != "$last" ] || [ $((n % 300)) = 0 ]; then echo "[$(date '+%d/%m %H:%M:%S')] sonde card/chat/partial = $p" >> "$LOG"; last="$p"; fi
+  if [ "$PAUSED" = 0 ] && [ "$FERMO_DOPO_S" -gt 0 ] && [ $(( $(date +%s) - deadline + MAX_S )) -ge "$FERMO_DOPO_S" ] && [ "$(auto_get)" = true ]; then
+    if [ "$(auto_set false)" = false ] && [ "$(auto_get)" = false ]; then
+      PAUSED=1; say "nessuna finestra in ${FERMO_DOPO_S}s: partenza automatica delle card SPENTA, aspetto la fine dei turni vivi"
+    fi
+  fi
+  if [ "$CI_OK" = 0 ] && [ $(( $(date +%s) - CI_ASKED )) -ge 60 ]; then
+    CI_ASKED=$(date +%s); ci=$(ci_state)
+    case "$ci" in
+      verde) CI_OK=1; say "CI verde su ${TARGET:0:10}";;
+      rosso*) say "ABORT: CI non verde su ${TARGET:0:10} ($ci): niente checkout, niente riavvio"; exit 10;;
+    esac
+  fi
+  if [ "$streak" -lt 2 ] || [ "$CI_OK" = 0 ]; then sleep 2; continue; fi
+
+  touch "$HOLD"; HELD=1
+  wt_unchanged || { say "ABORT: qualcuno ha scritto nel checkout mentre aspettavo"; exit 4; }
+  is_zero || { echo "[$(date '+%d/%m %H:%M:%S')] un turno e' partito durante i controlli: riaspetto" >> "$LOG"; release_hold; streak=0; continue; }
+  git -C "$R" reset -q --hard "$TARGET" || { say "ABORT: git reset fallito"; restore; exit 5; }
+  say "checkout: HEAD=$(git -C "$R" rev-parse --short HEAD)"
+  if ! g=$(DATA_DIR="$R/data" BUN="$BUN" bash "$R/scripts/server-reload-gate.sh" "$R" 2>&1); then
+    say "ABORT: cancello di reload rosso: $g"; restore; exit 7
+  fi
+  say "cancello verde; card prima: $(cards)"
+  t1=$(date +%s)
+  until is_zero; do
+    touch "$HOLD"
+    [ $(( $(date +%s) - t1 )) -ge 600 ] && { say "10 min senza zero dopo il checkout: chiedo il riavvio lo stesso (le card si aspettano senza tetto)"; break; }
+    sleep 2
+  done
+  ok=0
+  for i in 1 2 3 4 5 6 7 8 9 10; do
+    touch "$HOLD"
+    resp=$(curl -sk -m45 -X POST -H "Authorization: Bearer $(tok)" -w ' http=%{http_code}' $B/__daemon/restart-when-idle 2>&1)
+    say "restart-when-idle #$i: $resp"
+    case "$resp" in *http=202*) ok=1; break;; esac
+    kill -0 "$OLD_PID" 2>/dev/null || { ok=1; break; }
+    sleep 10
+  done
+  [ "$ok" = 1 ] || { say "ATTENZIONE: restart-when-idle mai accettato, il server $OLD_PID resta su"; restore; exit 8; }
+  t0=$(date +%s); dead_at=""
+  while :; do
+    touch "$HOLD"
+    np=$(hz_pid)
+    if [ -n "$np" ] && [ "$np" != "$OLD_PID" ]; then break; fi
+    if ! kill -0 "$OLD_PID" 2>/dev/null; then
+      [ -n "$dead_at" ] || { dead_at=$(date +%s); say "server $OLD_PID uscito, aspetto il nuovo"; }
+      if [ $(( $(date +%s) - dead_at )) -gt 180 ]; then
+        say "ATTENZIONE: server giu' da 180 s: riporto il WT a com'era (start-prod rilancia il codice vecchio)"
+        restore; exit 9
+      fi
+    elif [ $(( $(date +%s) - t0 )) -gt 7200 ]; then
+      say "ATTENZIONE: dopo 2h il server $OLD_PID e' ancora vivo (rinvia per una card); il riavvio resta prenotato, lascio scadere l'hold"
+      HELD=0; exit 6
+    fi
+    sleep 2
+  done
+  say "nuovo server pid $np dopo $(( $(date +%s) - t0 ))s"
+  sleep 20
+  release_hold
+  say "hold tolto; card dopo: $(cards)"
+  say "FATTO: server ${OLD_PID} -> ${np} su $(git -C "$R" rev-parse --short HEAD)"
+  exit 0
+done
+say "nessuna finestra a zero turni in ${MAX_S}s: niente checkout, niente riavvio"
+exit 3

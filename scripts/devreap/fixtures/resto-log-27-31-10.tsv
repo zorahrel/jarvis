@@ -1,0 +1,25 @@
+50245	responsabile 67985 morto	/Users/zorahrel/Projects/progetto-a-wt-standard/servizio-api	ssh -f -N -o ExitOnForwardFailure=yes -o ServerAliveInterval=30 -o SetEnv=SERVIZIO=tunnel-x -L 127.0.0.1:39850:1
+6888	responsabile 67654 morto	/Users/zorahrel/.openclaw/tmp/com.agilebits.op.501	op daemon
+2444	responsabile 44746 morto	/Users/zorahrel/Projects/cartella-b/sito-b/dist/client	bash /private/tmp/claude-501/-Users-zorahrel--claude-spares-spare-ZjlbsU/917f8e76-40a2-4360-bd99-7cbcc12edc80/scratchpad
+48117	responsabile 41355 morto	/Users/zorahrel/.claude/jarvis/tools/usage-hub	node bin/usage-hub.mjs serve --demo --no-live --port 63227
+98722	responsabile 53982 morto	/Users/zorahrel/Projects/topics-app/.claude/worktrees/gc-t6-guscio-f69026	/Users/zorahrel/Projects/topics-app/.claude/worktrees/gc-t6-guscio-f69026/node_modules/node-pty/prebuilds/darwin-arm64/s
+4003	responsabile 93458 morto	/private/tmp/tq	node arch.mjs
+16609	responsabile 39632 morto	/Users/zorahrel/Projects/progetto-a-wt-sfumatura	npm exec vite --port 5199 --host 127.0.0.1      
+81850	responsabile 91324 morto	/Users/zorahrel/Projects/progetto-a-wt-annuale/servizio-api	deno run -A --quiet --import-map=/tmp/mig-X/stripe-old/import_map.json /Users/zorahrel/Projects/progetto-a-w
+81851	responsabile 91324 morto	/Users/zorahrel/Projects/progetto-a-wt-annuale/servizio-api	deno run -A --quiet --import-map=/tmp/mig-X/stripe-old/import_map.json /Users/zorahrel/Projects/progetto-a-w
+81852	responsabile 91324 morto	/Users/zorahrel/Projects/progetto-a-wt-annuale/servizio-api	deno run -A --quiet --import-map=/tmp/mig-X/stripe-old/import_map.json /Users/zorahrel/Projects/progetto-a-w
+81853	responsabile 91324 morto	/Users/zorahrel/Projects/progetto-a-wt-annuale/servizio-api	deno run -A --quiet --import-map=/tmp/mig-X/stripe-old/import_map.json /Users/zorahrel/Projects/progetto-a-w
+81854	responsabile 91324 morto	/Users/zorahrel/Projects/progetto-a-wt-annuale/servizio-api	deno run -A --quiet --import-map=/tmp/mig-X/stripe-old/import_map.json /Users/zorahrel/Projects/progetto-a-w
+81855	responsabile 91324 morto	/Users/zorahrel/Projects/progetto-a-wt-annuale/servizio-api	deno run -A --quiet --import-map=/tmp/mig-X/stripe-old/import_map.json /Users/zorahrel/Projects/progetto-a-w
+81856	responsabile 91324 morto	/Users/zorahrel/Projects/progetto-a-wt-annuale/servizio-api	deno run -A --quiet --import-map=/tmp/mig-X/stripe-old/import_map.json /Users/zorahrel/Projects/progetto-a-w
+81857	responsabile 91324 morto	/Users/zorahrel/Projects/progetto-a-wt-annuale/servizio-api	deno run -A --quiet --import-map=/tmp/mig-X/stripe-old/import_map.json /Users/zorahrel/Projects/progetto-a-w
+99784	responsabile 91324 morto	/Users/zorahrel/db-staging/mysql-data	/opt/homebrew/opt/mysql/bin/mysqld --no-defaults --datadir=/Users/zorahrel/db-staging/mysql-data --port=3307 --bind-ad
+9566	responsabile 91324 morto	/Users/zorahrel/Projects/progetto-a-wt-sfumatura	npm exec vite --port 5361 --strictPort     
+89897	responsabile 91324 morto	/Users/zorahrel/Projects/progetto-a-wt-sfumatura	npm exec vite --port 5262 --strictPort --host 127.0.0.1       
+198	responsabile 93593 morto	/Users/zorahrel/Projects/cartella-b/progetto-a-wt-hosting/servizio-api	deno run -A --no-prompt --node-modules-dir=none --import-map=/Users/zorahrel/Projects/cartella-b/progetto-a-wt-hosting-
+40973	responsabile 93593 morto	/private/tmp/pgt	/opt/homebrew/Cellar/postgresql@17/17.11/bin/postgres -D /tmp/pgt -p 54999 -k /tmp
+41928	responsabile 93593 morto	/private/tmp/annuale-live	npm exec wrangler tail servizio-api --format json      
+66956	responsabile 93593 morto	/Users/zorahrel/Projects/cartella-b/progetto-a-wt-hosting/servizio-api	/opt/homebrew/bin/deno run --allow-net --allow-env --allow-read --no-lock --import-map /Users/zorahrel/Projects/armonia-
+76482	responsabile 93593 morto	/Users/zorahrel/Projects/progetto-a-wt-annuale/servizio-api	/tmp/mig-X/stripe-mock -http-port 40100
+68313	responsabile 12244 morto	/Users/zorahrel/Projects/progetto-c/dist	/opt/homebrew/Cellar/python@3.14/3.14.7/Frameworks/Python.framework/Versions/3.14/Resources/Python.app/Contents/MacOS/Py
+68315	responsabile 12244 morto	/Users/zorahrel/Projects/progetto-c/dist-formatore	/opt/homebrew/Cellar/python@3.14/3.14.7/Frameworks/Python.framework/Versions/3.14/Resources/Python.app/Contents/MacOS/Py

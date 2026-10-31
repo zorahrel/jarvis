@@ -1,0 +1,131 @@
+#!/bin/bash
+# Lancia il brief mattutino (cron OpenClaw brief-mattutino): prompt su stdin, messaggio su stdout.
+#
+# Perche' un wrapper. Il 03/10 i 4 giri sono finiti tutti in «command timed out» dopo 900 s senza
+# una riga di output: entrambi gli account Claude avevano la quota finita fino alle 13:00 e il proxy
+# account-switcher (127.0.0.1:3336, usageCapHoldMin 1440) trattiene le richieste invece di
+# rifiutarle, quindi `claude -p` riprovava in silenzio finche' OpenClaw lo uccideva.
+# Qui (06/10: default muse, tutto OpenClaw su muse per scelta di Attilio): prima muse,
+# se non chiude entro MUSE_MAX si passa a Claude (saltato se la quota e' finita, tornera'
+# buono per i sottoagenti quando c'e' usage), poi a codex, e se fallisce tutto esce
+# comunque un messaggio che dice il perche'.
+set -u
+export PATH="$HOME/.local/bin:$HOME/bin:$HOME/.bun/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+
+MUSE_MAX=${BRIEF_MUSE_MAX:-600}
+CLAUDE_MAX=${BRIEF_CLAUDE_MAX:-600}   # un giro normale dura 60-120 s
+CODEX_MAX=${BRIEF_CODEX_MAX:-480}
+BRIEF_FILE=${BRIEF_FILE:-$HOME/.openclaw/privato/brief-mattutino.md}  # override solo per le prove
+ERRLOG="$HOME/.claude/jarvis/logs/openclaw-cron-claude.err.log"
+SYSTEM="You are a subagent. Respond ONLY to the specific task. No preambles, no personal memory, no brand. Terse, bullet-form when natural, no decorative markdown unless asked."
+
+work=$(mktemp -d /tmp/brief-mattutino.XXXXXX)
+trap 'rm -rf "$work"' EXIT
+cat > "$work/prompt"
+touch "$work/start"
+
+log() { echo "$(date '+%F %T') brief-mattutino: $*" >> "$ERRLOG"; }
+# timeout senza coreutils: alarm sopravvive a exec, SIGALRM chiude il processo
+limit() { perl -e 'alarm shift; exec @ARGV' "$@"; }
+
+reason=""
+quota=$(curl -s -m 5 http://127.0.0.1:3335/api/profiles | python3 -c '
+import json, sys
+try:
+    d = json.load(sys.stdin)
+    print(("esaurita " + str(d.get("earliestReset") or "unknown")) if d.get("allExhausted") else "ok")
+except Exception:
+    print("ignota")' 2>/dev/null)
+
+# muse non ha --append-system-prompt: il SYSTEM va in testa al prompt
+{ echo "$SYSTEM"; echo; cat "$work/prompt"; } > "$work/prompt-muse"
+# --model esplicito: il default di Muse e' contributor, che addestra sui prompt; qui passano dati Armonia (NDA)
+limit "$MUSE_MAX" muse exec --model muse-spark-1.3 --workspace "$PWD" --reasoning-effort medium --disable-sandbox \
+  --prompt-file "$work/prompt-muse" > "$work/out" 2>> "$ERRLOG"
+rc=$?
+if [[ $rc -eq 0 && -s $work/out ]]; then
+  used=muse
+else
+  reason=$([[ $rc -eq 142 ]] && echo "Muse non ha risposto entro $((MUSE_MAX / 60)) minuti" || echo "Muse è uscito con errore $rc")
+  log "muse fallito: $reason"
+fi
+
+if [[ -z ${used:-} && $quota == esaurita* ]]; then
+  reset=${quota#esaurita }
+  reason="quota Claude finita su entrambi gli account$([[ $reset != unknown ]] && echo ", torna alle $reset")"
+  log "salto claude: $reason"
+elif [[ -z ${used:-} ]]; then
+  if [[ -z ${BRIEF_FORCE_FALLBACK:-} ]]; then
+    # sonnet e non opus dal 05/10: il brief è riassunto e triage, Opus costava ~5x per lo stesso testo
+    limit "$CLAUDE_MAX" claude -p --model sonnet --effort medium --permission-mode bypassPermissions \
+      --append-system-prompt "$SYSTEM" < "$work/prompt" > "$work/out" 2>> "$ERRLOG"
+    rc=$?
+    if [[ $rc -eq 0 && -s $work/out ]]; then
+      used=claude
+    else
+      reason=$([[ $rc -eq 142 ]] && echo "Claude non ha risposto entro $((CLAUDE_MAX / 60)) minuti" || echo "Claude è uscito con errore $rc")
+      log "claude fallito: $reason"
+    fi
+  else
+    reason="fallback forzato (prova)"
+  fi
+fi
+
+# Codex solo se il pacing lo lascia passare (18/10); contatore giu' = passa, frenato (exit 10) = si salta.
+codex_ok() { node "$HOME/.claude/jarvis/tools/usage-hub/bin/usage-hub.mjs" gate massivo --provider codex >/dev/null 2>&1; [[ $? -ne 10 ]]; }
+if [[ -z ${used:-} ]] && codex_ok; then
+  # modello esplicito: col login ChatGPT i gpt-6-* danno 400 (provato 04/10), il default
+  # gpt-6.1-sol di ~/.codex/config.toml compreso; effort medio perche il default e ultra
+  limit "$CODEX_MAX" codex exec -m gpt-5.6-sol -c model_reasoning_effort=medium --skip-git-repo-check --dangerously-bypass-approvals-and-sandbox \
+    -C "$PWD" -o "$work/out" - < "$work/prompt" > /dev/null 2> "$work/codex.err"
+  rc=$?
+  if [[ $rc -eq 0 && -s $work/out ]]; then
+    used=codex
+    log "brief fatto con codex ($reason)"
+  else
+    # codex ripete il prompt su stderr: nel log va solo la coda
+    log "anche codex fallito (exit $rc): $(grep -m1 '^ERROR' "$work/codex.err" || tail -1 "$work/codex.err")"
+  fi
+fi
+
+if [[ -z ${used:-} ]]; then
+  msg="⚠️ Brief di stamattina non generato: $reason; neanche i piani B (Claude/codex) hanno risposto o codex era frenato dal pacing. Riprovo domani alle 7:30."
+  echo "$msg"
+  printf '%s\n' "$msg" > "$BRIEF_FILE"
+  exit 0
+fi
+
+[[ $used == claude ]] && printf '_(brief fatto con Claude: %s)_\n\n' "$reason"
+[[ $used == codex ]] && printf '_(brief fatto con ChatGPT: %s)_\n\n' "$reason"
+cat "$work/out"
+# Lista intera una volta al giorno, qui (Attilio 19/10); negli altri messaggi todo-recap va breve
+printf '\n'; limit 90 todo-recap --full 2>/dev/null || echo "📋 lista task non letta da Promemoria"
+# Automazioni: una riga solo se qualcosa aspetta Attilio o una sua richiesta è ancora aperta (hub :3360, scheda Automazioni)
+auto=$(curl -s -m 20 http://127.0.0.1:3360/api/automations/summary 2>/dev/null)
+open=$(curl -s -m 5 http://127.0.0.1:3360/api/feedback 2>/dev/null)
+python3 -c '
+import json, sys
+try: s = json.loads(sys.argv[1]); o = json.loads(sys.argv[2] or "{}").get("open", 0)
+except Exception: sys.exit(0)
+n, b = s.get("needsYou", 0), s.get("broken", 0)
+if n + o > 0:
+    p = []
+    if n: p.append("%d %s" % (n, "ti aspetta" if n == 1 else "ti aspettano"))
+    if b: p.append("%d %s" % (b, "rotta" if b == 1 else "rotte"))
+    if o: p.append("%d %s" % (o, "richiesta aperta agli agenti" if o == 1 else "richieste aperte agli agenti"))
+    print("\n🔁 Automazioni: " + " · ".join(p) + " → http://localhost:3360/#automations")
+' "$auto" "$open" 2>/dev/null || true
+# Giornata di ieri per progetto, dal tracciamento nel calendario «Lavoro tracciato» (Attilio 29/10:
+# tracciare le attività di lavoro per capirle e adattarle); niente righe finché giornata.py non c'è (150 s: a Mac carico il conto del giorno ha preso 65 s)
+g="$HOME/.openclaw/bin/giornata.py"
+if [ -f "$g" ]; then r=$(limit 150 /usr/bin/python3 "$g" --riepilogo "$(date -v-1d +%F)" 2>/dev/null); [ -n "$r" ] && printf '\n%s\n' "$r"; fi
+# Coda notturna della board (P07): cosa è andato avanti stanotte; niente righe se non è successo niente
+r=$(limit 30 node "$HOME/.claude/jarvis/tools/usage-hub/bin/board-notte" --resoconto 2>/dev/null); if [ -n "$r" ]; then printf '\n%s\n' "$r"; fi
+# Previsioni del giro notturno sul modello di Attilio (31/10): niente righe se stanotte non ha girato
+r=$(limit 10 /usr/bin/python3 -I "$HOME/.claude/jarvis/private/attilio/bin/giornaliero.py" --brief 2>/dev/null); if [ -n "$r" ]; then printf '\n%s\n' "$r"; fi
+# Il prompt chiede al modello di scrivere il file per le risposte al brief; se non l'ha fatto, almeno il
+# testo inviato c'e'.
+if [[ ! $BRIEF_FILE -nt $work/start ]]; then
+  log "il modello non ha scritto $BRIEF_FILE: lo scrivo dal suo output"
+  cp "$work/out" "$BRIEF_FILE"
+fi

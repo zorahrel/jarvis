@@ -1,0 +1,56 @@
+#!/bin/bash
+# topics-term — ogni terminale acceso sul Mac (Topics, tmux, Terminal.app) da shell,
+# per gli agenti che non hanno il gateway MCP (Codex, jcode, Muse). Stessa API dei
+# tool session_* di topics-board: /api/live-terminals del server Topics.
+#
+#   topics-term ls                      elenca (id, origine, programma, cartella, titolo)
+#   topics-term read <id> [righe]       lo schermo attuale (default 40 righe)
+#   topics-term send <id> "testo"       scrive e preme Invio; rifiuta su un menu a scelte
+#   topics-term send --force <id> "…"   scrive anche su un menu a scelte
+set -euo pipefail
+BASE="${TOPICS_URL:-https://127.0.0.1:3333}"
+CA="${TOPICS_CA:-$HOME/Projects/topics-app/certs/ca-cert.pem}"
+api() { curl -sS --fail-with-body --cacert "$CA" "$@"; }
+enc() { jq -rn --arg v "$1" '$v|@uri'; }
+
+cmd="${1:-ls}"; shift || true
+case "$cmd" in
+  ls)
+    api "$BASE/api/live-terminals" | jq -r '.terminals[] |
+      [ (if .source=="topics" then .sessionId[0:8] else .id end), .source, (.command // "?"),
+        ((.cwd // "") | split("/") | last // ""), (if .busy==true then "AL LAVORO" else "" end), .title ] | @tsv' | column -t -s $'\t'
+    ;;
+  read)
+    id="${1:?id}"; n="${2:-40}"
+    [[ "$id" == *:* ]] || id="$(api "$BASE/api/live-terminals" | jq -r --arg p "$id" '[.terminals[] | select(.source=="topics" and (.sessionId|startswith($p)))][0].id // empty')"
+    [ -n "$id" ] || { echo "nessun terminale con quell'id" >&2; exit 2; }
+    api "$BASE/api/live-terminals/$(enc "$id")/screen" | jq -r .text | tail -n "$n"
+    ;;
+  send)
+    force=0; [ "${1:-}" = "--force" ] && { force=1; shift; }
+    id="${1:?id}"; text="${2:?testo}"
+    [[ "$id" == *:* ]] || id="$(api "$BASE/api/live-terminals" | jq -r --arg p "$id" '[.terminals[] | select(.source=="topics" and (.sessionId|startswith($p)))][0].id // empty')"
+    [ -n "$id" ] || { echo "nessun terminale con quell'id" >&2; exit 2; }
+    # Un menu a scelte non legge testo libero, e l'Invio sceglierebbe la voce evidenziata.
+    if [ $force = 0 ] && api "$BASE/api/live-terminals/$(enc "$id")/screen" | jq -r .text | tail -c 4000 | grep -qE 'Enter to select|↑/↓ to navigate|to navigate ·'; then
+      echo "il terminale è fermo su un menu a scelte: non scrivo (usa --force sapendo che premi Invio lì)" >&2; exit 3
+    fi
+    if [[ "$id" == terminal:* ]]; then
+      # Terminal.app accetta solo testo con Invio (live-terminals.ts): un solo POST con enter:true.
+      # Il corpo di un errore (422 «accepts text only with Enter», 404) va a video: è il motivo.
+      if out="$(api -X POST -H 'content-type: application/json' -d "$(jq -n --arg t "$text" '{text:$t, enter:true}')" \
+          "$BASE/api/live-terminals/$(enc "$id")/send")"; then
+        echo "inviato a $id"
+      else
+        echo "$out" >&2; exit 1
+      fi
+    else
+      # testo e Invio separati: con enter:true la TUI di Claude Code incollava senza inviare (18/10)
+      api -X POST -H 'content-type: application/json' -d "$(jq -n --arg t "$text" '{text:$t, enter:false}')" \
+        "$BASE/api/live-terminals/$(enc "$id")/send" >/dev/null && sleep 0.5 &&
+      api -X POST -H 'content-type: application/json' -d '{"text":"\r","enter":false}' \
+        "$BASE/api/live-terminals/$(enc "$id")/send" >/dev/null && echo "inviato a $id"
+    fi
+    ;;
+  *) sed -n '2,9p' "$0"; exit 1 ;;
+esac

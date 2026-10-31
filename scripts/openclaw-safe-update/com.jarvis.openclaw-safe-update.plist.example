@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.jarvis.openclaw-safe-update</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/usr/bin/python3</string>
+    <string>/Users/zorahrel/.claude/jarvis/scripts/openclaw-safe-update/openclaw-safe-update</string>
+  </array>
+  <!-- 04:20 ora di Roma: dopo Memory Dreaming (03:00) e l'heartbeat delle 04:05, prima del brief
+       (07:30). Di solito finisce entro le 05:00 (update ~15-20 min). Caso peggiore senza guasti
+       di OpenClaw, con ogni attesa al massimo: OpenClaw fermo 45 + fotografia e backup ~5 +
+       update ~20 + attesa per il riavvio 20 + health gate 17, poi rollback: attesa 20 + update ~20
+       + attesa 20 + health gate 17 = ~3 h 10, fin verso le 07:30. Nessun riavvio parte pero' mai con
+       OpenClaw al lavoro, quindi neanche durante il brief. -->
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Hour</key>
+    <integer>4</integer>
+    <key>Minute</key>
+    <integer>20</integer>
+  </dict>
+  <key>RunAtLoad</key>
+  <false/>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <!-- node e openclaw da /opt/homebrew, agents-doctor da ~/bin, trash da /usr/bin -->
+    <key>PATH</key>
+    <string>/opt/homebrew/bin:/Users/zorahrel/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    <key>HOME</key>
+    <string>/Users/zorahrel</string>
+  </dict>
+  <!-- lo script scrive da se' logs/openclaw-safe-update.log; qui finiscono solo i traceback -->
+  <key>StandardOutPath</key>
+  <string>/dev/null</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/zorahrel/.claude/jarvis/logs/openclaw-safe-update.err.log</string>
+</dict>
+</plist>

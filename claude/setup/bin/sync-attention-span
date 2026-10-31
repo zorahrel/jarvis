@@ -1,0 +1,20 @@
+#!/bin/zsh
+# attention-span: una sola copia in ~/.agents/vendor, letta da tutti gli harness.
+#   Claude Code  ~/.claude/output-styles/*.md (symlink qui) + settings.json outputStyle
+#   hub skill    ~/.agents/skills/{attention-kind,spartan,rundown,tldr} (Claude Code, Codex, jcode, OpenClaw)
+#   Codex, jcode ~/.agents/AGENTS.md, generato da agents-build (che rigenera da solo al cambio del file)
+# Aggiornare è una scelta, non un cron: il testo finisce nel prompt di ogni agente,
+# quindi un upstream cambiato si legge prima di tirarlo.
+#   sync-attention-span.sh          mostra i commit nuovi, non tocca niente
+#   sync-attention-span.sh --apply  pull + rigenera AGENTS.md
+set -euo pipefail
+V=~/.agents/vendor/attention-span
+git -C $V fetch -q
+if [[ ${1:-} != --apply ]]; then
+  git -C $V log --oneline HEAD..origin/main
+  git -C $V diff --stat HEAD origin/main -- output-styles skills commands
+  exit 0
+fi
+git -C $V merge -q --ff-only origin/main
+~/.agents/bin/agents-build
+echo "attention-span $(cat $V/VERSION) @ $(git -C $V rev-parse --short HEAD)"

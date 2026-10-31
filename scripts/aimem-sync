@@ -1,0 +1,38 @@
+#!/bin/bash
+# aimem-sync: tiene il fork zorahrel/ai-memory (ramo owner-scope) sopra upstream.
+# Cron OpenClaw settimanale. Rebase su upstream/main, test del plugin OpenClaw sul PC (offload),
+# push del ramo. Il binario installato e il plugin vivo non si toccano da qui: un plugin rigenerato
+# dal binario di upstream perderebbe il filtro, e aimem-bar lo vede (7 hook su 7 filtrati).
+# Tutto liscio: NO_REPLY (non parte niente). Conflitto o test rosso: una riga ad Attilio,
+# il ramo resta com'era (rebase annullato) e il plugin vivo non si tocca.
+# --dry-run: dice se c'è qualcosa di nuovo e non tocca niente.
+set -u
+export PATH=$HOME/bin:$HOME/.local/bin:$HOME/.cargo/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin
+REPO=$HOME/Projects/ai-memory
+BR=owner-scope
+LOG=$HOME/.claude/jarvis/logs/aimem-sync.log
+DRY=0; [ "${1:-}" = --dry-run ] && DRY=1
+say() { echo "$(date '+%F %T') $*" >> "$LOG"; }
+cd "$REPO" || { echo "ai-memory: manca il clone del fork in $REPO"; exit 1; }
+git fetch -q upstream main --tags || exit 2
+git fetch -q origin "$BR" || exit 2
+new=$(git rev-list --count "$BR..upstream/main")
+if [ "$new" = 0 ]; then say "upstream fermo"; echo NO_REPLY; exit 0; fi
+[ $DRY = 1 ] && { echo "upstream ha $new commit nuovi sopra $BR"; exit 0; }
+git checkout -q "$BR" || exit 2
+before=$(git rev-parse HEAD)
+if ! git rebase -q upstream/main >/dev/null 2>&1; then
+  git rebase --abort
+  say "rebase in conflitto ($new commit nuovi)"
+  echo "ai-memory: il filtro dei gruppi non si applica più sopra upstream ($new commit nuovi, conflitto nel rebase). Il plugin vivo resta quello di prima, filtro attivo; serve rifare la patch."
+  exit 0
+fi
+if ! offload -- "cargo test -p ai-memory-cli --lib openclaw_plugin" >> "$LOG" 2>&1; then
+  git reset -q --hard "$before"
+  say "test rossi dopo il rebase"
+  echo "ai-memory: dopo l'aggiornamento da upstream i test del filtro gruppi falliscono. Ramo riportato com'era, plugin vivo invariato."
+  exit 0
+fi
+git push -q --force-with-lease origin "$BR" || { say "push fallito"; exit 2; }
+say "rebase ok: $new commit, test verdi, push fatto"
+echo NO_REPLY

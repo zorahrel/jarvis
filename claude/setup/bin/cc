@@ -1,0 +1,28 @@
+#!/bin/zsh
+# cc — apre una sessione Claude dentro tmux, cosi' qualcuno da fuori puo'
+# risponderle. Un `claude` lanciato nudo nel Terminale nessuno lo puo' sbloccare
+# al posto tuo: `rispondi` consegna solo dove lo stdin ce l'ha tmux.
+#
+#   cc                  qui
+#   cc ~/Projects/x     li'
+#   cc . --model opus   il resto va a claude
+#
+# Se la sessione esiste gia' ci si riattacca (-A), non se ne apre una seconda.
+#
+# Con ~/bin nel PATH questo file nasconde il compilatore `cc` di sistema: cargo,
+# rustc, make e configure chiamano `cc` e trovavano tmux (25/10, build del bridge
+# PTY di Topics fallita). Quando a chiamarlo e' un programma di build, si passa
+# al cc vero: senza terminale (tmux non partirebbe comunque) o con un file da
+# compilare/collegare fra gli argomenti.
+set -e
+if [[ ! -t 0 || ! -t 1 ]]; then exec /usr/bin/cc "$@"; fi
+for a in "$@"; do
+  case "$a" in
+    *.c|*.cc|*.cpp|*.cxx|*.m|*.mm|*.s|*.S|*.o|*.a|*.dylib|*.so|*.tbd|-Wl,*|-l*|-L*|-I*|-isysroot|-arch|-shared|-dynamiclib|-E|-print-*|--version|-v)
+      exec /usr/bin/cc "$@" ;;
+  esac
+done
+DIR="."
+if [[ $# -gt 0 && "$1" != -* ]]; then DIR="$1"; shift; fi
+DIR="$(cd "$DIR" && pwd)"
+exec tmux new-session -A -s "cc-$(basename "$DIR")" -c "$DIR" claude --dangerously-skip-permissions "$@"

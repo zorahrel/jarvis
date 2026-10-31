@@ -1,0 +1,26 @@
+#!/bin/sh
+# Prove su fseventsd malato, da root e in sola lettura, PRIMA di qualunque riavvio: il riavvio cancella proprio
+# ciò che decide la causa. Studio del 25/10: fseventsd trattiene ~55 byte per ogni evento e non li rilascia;
+# senza root non si distingue «coda di un client che non smaltisce» (lsmp: una destinazione con msgcount
+# vicino a qlimit) da «storia interna del demone» (sample: thread del logger caldo; vmmap: zona dei path).
+# Uso (una password, finestra di macOS):
+#   osascript -e 'do shell script "/bin/sh ~/.claude/jarvis/scripts/devreap/fseventsd-prove [riavvia]" with administrator privileges'
+# Con «riavvia», DOPO aver salvato le prove, manda TERM a fseventsd (launchd lo rialza): tampone dichiarato,
+# non cura. I client che avevano uno stream aperto vanno rilanciati (Topics, gateway, fswatch).
+set -u
+U=/Users/zorahrel
+OUT="$U/.claude/jarvis/logs/fseventsd-prove/$(date +%Y%m%d-%H%M%S)"
+mkdir -p "$OUT"
+P=$(pgrep -x fseventsd)
+ps -o pid,etime,time,rss -p "$P" > "$OUT/ps.txt" 2>&1
+top -l 1 -pid "$P" -stats pid,mem,cmprs,ports > "$OUT/top.txt" 2>&1
+lsmp -p "$P" > "$OUT/lsmp.txt" 2>&1
+sample "$P" 5 -file "$OUT/sample.txt" > /dev/null 2>&1
+vmmap -summary "$P" > "$OUT/vmmap.txt" 2>&1
+ls -laT /System/Volumes/Data/.fseventsd > "$OUT/pages.txt" 2>&1
+chown -R zorahrel "$OUT"
+if [ "${1:-}" = riavvia ]; then
+  killall -TERM fseventsd && echo "riavviato $(date '+%H:%M:%S')" > "$OUT/riavvio.txt"
+  chown zorahrel "$OUT/riavvio.txt"
+fi
+echo "$OUT"

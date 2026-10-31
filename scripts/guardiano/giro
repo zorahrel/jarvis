@@ -1,0 +1,136 @@
+#!/usr/bin/env python3
+"""Giro del guardiano: trova sulla board Topics le card che si stanno perdendo. Deterministico, nessun modello.
+
+Stampa una riga per card da smistare, solo quando è nuova o dopo 24 h se dura; stdout vuoto = niente da fare.
+Lo legge la sessione «Guardiano supremo sessioni» dai suoi cron, e smista le righe ai padroni.
+
+  giro [--dry-run] [--all]     --dry-run non salva lo stato, --all ristampa anche ciò che è già stato detto
+
+Cosa guarda (ognuna è un fallimento visto davvero il 26/10):
+  orfana   card aperta che rimanda a una sessione archiviata (il direttore del sito chiuso con la verifica in corsa)
+  ferma    in_progress senza movimento da 12 h, review da 24 h (34 card con un padrone che non le muoveva)
+  coda     todo che la kanban non fa partire da 6 h (pavimento di memoria, nodo assente)
+  dispatch errore di dispatch su una card viva (runtime di un modello vecchio)
+  nuova    card nata dopo l'ultimo giro senza una riga «padrone»
+  incrocio file toccati da worktree di sessioni diverse; a rischio: lavoro non committato in /private/tmp (da `sovrapposizioni`)
+  memoria  registro del Mac fermo da 20 min, o swap oltre l'85% e letta da disco per 2 ore (26/10: Topics fermo con il kernel al 53%; da `memlog --check`)
+Stato in ~/.claude/jarvis/state/guardiano/giro.json.
+"""
+import datetime as dt, glob, json, os, re, ssl, subprocess, sys, urllib.request
+
+BASE = os.environ.get("TOPICS_URL", "https://127.0.0.1:3333")
+CA = os.path.expanduser("~/Projects/topics-app/certs/ca-cert.pem")
+STATE = os.path.expanduser(os.environ.get("GIRO_GUARDIANO_STATE", "~/.claude/jarvis/state/guardiano/giro.json"))
+SESSIONS = os.path.expanduser("~/Library/Application Support/Claude/claude-code-sessions")
+BOARDS = ["attilio-mn52yh", "topics-app-ar3jt5", ".openclaw-7x1phv", "pop-demo-kqvctn", "generale-tu1hp"]
+# Le board dei clienti stanno fuori dal repo pubblico: ~/.config/jarvis/guardiano.json, {"boards": ["id", ...]}. File assente: solo quelle sopra.
+_EXTRA = os.path.expanduser("~/.config/jarvis/guardiano.json")
+if os.path.exists(_EXTRA):
+    BOARDS += json.load(open(_EXTRA)).get("boards", [])
+HOUR = 3600
+
+
+def token():
+    return subprocess.run(["security", "find-generic-password", "-s", "topics", "-a", "agent-token", "-w"],
+                          capture_output=True, text=True).stdout.strip()
+
+
+TOKEN = token()
+CTX = ssl.create_default_context(cafile=CA)
+CTX.verify_flags &= ~ssl.VERIFY_X509_STRICT  # la CA di Topics non ha keyUsage (come board-card)
+
+
+def api(path):
+    req = urllib.request.Request(BASE + path, headers={"x-agent-token": TOKEN})
+    with urllib.request.urlopen(req, context=CTX, timeout=20) as r:
+        return json.loads(r.read() or b"{}")
+
+
+def ts(s):
+    return dt.datetime.fromisoformat(s.replace("Z", "+00:00")).timestamp() if s else 0
+
+
+def sessions():
+    # metadati delle sessioni dell'app Claude: l'unico posto leggibile senza un modello che dica se una è archiviata
+    out = {}
+    for p in glob.glob(f"{SESSIONS}/*/*/local_*.json"):
+        try:
+            d = json.load(open(p))
+            out[d["sessionId"]] = d
+        except Exception:
+            pass
+    return out
+
+
+def main():
+    dry, show_all = "--dry-run" in sys.argv, "--all" in sys.argv
+    now = dt.datetime.now(dt.timezone.utc).timestamp()
+    state = json.load(open(STATE)) if os.path.exists(STATE) else {"said": {}, "last_run": 0}
+    sess = sessions()
+    # card che Attilio segue da sé (es. il sito, 26/10: «faccio da solo»): il giro non le ripropone
+    ignore_path = os.path.join(os.path.dirname(STATE), "ignora.json")
+    ignore = {x["id"] for x in json.load(open(ignore_path))} if os.path.exists(ignore_path) else set()
+    findings = []
+    for board in BOARDS:
+        try:
+            tasks = api(f"/api/boards/{board}/tasks").get("tasks", [])
+        except Exception as e:
+            findings.append((f"topics:{board}", f"topics   board {board} non risponde: {e}"))
+            continue
+        for t in tasks:
+            st = t.get("status")
+            if st == "done" or t["id"] in ignore:
+                continue
+            tid, title, upd = t["id"], (t.get("text") or "")[:70], ts(t.get("updatedAt"))
+            age_h = (now - upd) / HOUR
+            got = api(f"/api/boards/{board}/tasks/{tid}")
+            desc = (got.get("task") or {}).get("description") or ""
+            comments = " ".join(str(c.get("content", "")) for c in got.get("comments") or [])
+            link = re.search(r"epitaxy/(local_[0-9a-f-]{36})", desc)
+            if link and st in ("todo", "in_progress", "review"):
+                s = sess.get(link.group(1))
+                # niente soglia di tempo: un commento (anche del guardiano) sposta updatedAt e nasconderebbe l'orfana
+                if s and s.get("isArchived"):
+                    findings.append((f"orfana:{tid}", f"orfana   {tid[:8]} [{st}] «{title}»: la sessione «{s.get('title','?')}» è archiviata"))
+            if st == "in_progress" and age_h > 12:
+                findings.append((f"ferma:{tid}", f"ferma    {tid[:8]} [in_progress] «{title}»: nessun movimento da {age_h:.0f} h"))
+            if st == "review" and age_h > 24:
+                findings.append((f"ferma:{tid}", f"ferma    {tid[:8]} [review] «{title}»: aspetta da {age_h:.0f} h"))
+            if st == "todo" and t.get("dispatchState") in ("queued", "waiting", None) and age_h > 6:
+                q = t.get("queueReason") or {}
+                why = (q.get("params") or {}).get("reason") if isinstance(q, dict) else None
+                findings.append((f"coda:{tid}", f"coda     {tid[:8]} «{title}»: in todo da {age_h:.0f} h senza partire ({(why or t.get('waitReason') or 'motivo non detto')[:90]})"))
+            if st in ("todo", "in_progress") and t.get("dispatchError"):
+                findings.append((f"dispatch:{tid}", f"dispatch {tid[:8]} «{title}»: {t['dispatchError'][:110]}"))
+            if ts(t.get("createdAt")) > state.get("last_run", 0) and "padrone:" not in comments and state.get("last_run"):
+                findings.append((f"nuova:{tid}", f"nuova    {tid[:8]} [{st}] «{title}» (board {board}): nessun padrone scritto"))
+    # incroci fra worktree di sessioni diverse e lavoro non committato in /private/tmp (scripts/guardiano/sovrapposizioni)
+    sv = subprocess.run([os.path.join(os.path.dirname(os.path.realpath(__file__)), "sovrapposizioni")],
+                        capture_output=True, text=True)
+    for line in sv.stdout.splitlines():
+        if line.startswith("incrocio"):
+            findings.append((f"incr:{line}", line))
+        elif line.startswith("           ←") and findings and findings[-1][0].startswith("incr:"):
+            k, l = findings[-1]
+            findings[-1] = (k, l + "\n" + line)
+        elif line.startswith("a rischio"):
+            findings.append((f"rischio:{line.split(' in ', 1)[-1]}", line))
+    # memoria del Mac: registro fermo o pressione cronica (scripts/memlog, stessa regola di dedup delle altre righe)
+    mem = subprocess.run([os.path.join(os.path.dirname(os.path.realpath(__file__)), "..", "memlog", "memlog"), "--check"],
+                         capture_output=True, text=True)
+    for line in mem.stdout.splitlines():
+        findings.append(("memoria:fermo" if "registro fermo" in line else "memoria:pressione", line))
+    said = state.get("said", {})
+    live = {k for k, _ in findings}
+    for key, line in findings:
+        if show_all or key not in said or now - said[key] > 24 * HOUR:
+            print(line)
+            said[key] = now
+    state = {"said": {k: v for k, v in said.items() if k in live}, "last_run": now}
+    if not dry:
+        os.makedirs(os.path.dirname(STATE), exist_ok=True)
+        json.dump(state, open(STATE, "w"), indent=1)
+
+
+if __name__ == "__main__":
+    main()

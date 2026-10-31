@@ -1,0 +1,474 @@
+#!/usr/bin/env python3
+"""Barra di mac-health: findings() con fatti finti, ogni soglia provata da tutte e due le parti.
+Esce 0 se tutto passa. I fatti veri li prova il giro su questo Mac, non questa suite."""
+import copy
+import os
+import plistlib
+import subprocess
+import sys
+import tempfile
+import time
+from importlib.machinery import SourceFileLoader
+from pathlib import Path
+
+# MAC_HEALTH_UNDER_TEST: un mutante nella stessa cartella, per vedere la barra diventare rossa
+mh = SourceFileLoader("mh", os.environ.get("MAC_HEALTH_UNDER_TEST") or str(Path(__file__).resolve().parent / "mac-health")).load_module()
+NOW = time.time()
+DAY = 86400
+
+BASE = dict(
+    now=NOW, weekly=True, uptime_h=720, ram_mb=32768,
+    disk=dict(free_gb=200, total_gb=1000),
+    startup=[dict(id="8.com.x.ok", name="ok", type="legacy agent", enabled=True, exe="/bin/ls", plist=None, missing=None)],
+    failures=[], posture=dict(filevault=True, firewall=True, sip=True, gatekeeper=True),
+    lan={}, odd=[], net=[dict(key="/Applications/A.app", name="A", signer="A Inc")],
+    extensions=[dict(id="Chrome:aaa", browser="Chrome", name="uBlock", enabled=True, store=True)],
+    backup=dict(tm_dest=1, tm_last=NOW - DAY, private_last=NOW - 3600, icloud_docs=True, unpushed=[], noremote=[]),
+    blind=[], blind_keys=[],
+    memlog=dict(samples=2000, expected=2016, last_age_s=120, swap_hi_share=0.1, swapin_hi_share=0.05, lvl_p50=60,
+                topics_p50=10.0, top=[("OpenClaw", 3.4), ("Claude", 3.2), ("Helium", 2.2)], text="7 giorni"),
+    baseline=dict(startup=["8.com.x.ok"], ext=["Chrome:aaa"], net=["/Applications/A.app"]),
+)
+
+fails = 0
+
+
+def check(name, facts, expect_substr):
+    """expect_substr None = nessuna riga; altrimenti una riga deve contenerlo."""
+    global fails
+    lines = [x[2] for x in mh.findings(facts)]
+    ok = (not lines) if expect_substr is None else any(expect_substr in l for l in lines)
+    print(f"{'ok  ' if ok else 'FAIL'} {name}" + ("" if ok else f"  -> {lines}"))
+    fails += not ok
+
+
+ERR = []
+
+
+def safe(thunk):
+    try:
+        return thunk()
+    except Exception as e:
+        ERR.append(f"{type(e).__name__}: {e}")
+        return False
+
+
+def f(**patch):
+    x = copy.deepcopy(BASE)
+    for k, v in patch.items():
+        cur = x
+        *path, last = k.split("__")
+        for p in path:
+            cur = cur[p]
+        cur[last] = v
+    return x
+
+
+check("macchina sana: silenzio", f(), None)
+
+loop = dict(label="com.x.loop", exit=78, why="EX_CONFIG", runs=720, rate=1.0, running=True, domain="gui")
+check("crash loop a 1/ora: segnalato", f(failures=[loop]), "servizio che riparte a vuoto")
+check("0,9/ora e in esecuzione: zitto", f(failures=[dict(loop, rate=0.9)]), None)
+check("1.200 avvii a 0,5/ora: riparte a vuoto lo stesso", f(failures=[dict(loop, runs=1200, rate=0.5)]), "riparte a vuoto, 1.200 avvii")
+check("periodico con 5.000 avvii in esecuzione: zitto", f(failures=[dict(loop, runs=5000, rate=7, periodic=True)]), None)
+check("periodico fermo dopo un errore: fallito, non a vuoto",
+      f(failures=[dict(loop, runs=5000, rate=7, periodic=True, running=False, exit=1)]), "ultimo giro e' fallito")
+check("ucciso da segnali a 1/ora: «chi lo uccide e perche' riparte»", f(failures=[dict(loop, runs=2000, exit=-9)]),
+      "ucciso da un segnale e rilanciato, 2.000 avvii")
+check("ucciso da segnali a 0,9/ora: zitto", f(failures=[dict(loop, runs=2000, rate=0.9, exit=-9)]), None)
+check("periodico ucciso da un segnale: zitto", f(failures=[dict(loop, runs=5000, rate=7, periodic=True, exit=-9)]), None)
+check("fermo dopo un errore: segnalato", f(failures=[dict(loop, rate=0.1, running=False)]), "ultimo giro e' fallito")
+check("fermato da un segnale: zitto", f(failures=[dict(loop, rate=0.1, running=False, exit=-15)]), None)
+
+new_item = dict(BASE["startup"][0], id="8.com.y.new", name="new")
+check("nuovo all'avvio: segnalato", f(startup=BASE["startup"] + [new_item]), "nuovo all'avvio")
+check("senza base nessun «nuovo»", f(startup=BASE["startup"] + [new_item], baseline=None), None)
+check("nuovo ma spento: zitto", f(startup=BASE["startup"] + [dict(new_item, enabled=False)]), None)
+check("eseguibile sparito: segnalato", f(startup=[dict(BASE["startup"][0], missing="/x/venv/bin/python")]), "non esiste piu'")
+
+check("disco al 14%: segnalato", f(disk=dict(free_gb=140, total_gb=1000)), "lo swap resta senza spazio")
+check("disco al 16%: zitto", f(disk=dict(free_gb=160, total_gb=1000)), None)
+
+check("Time Machine assente", f(backup__tm_dest=0), "Time Machine non e' configurato")
+check("Time Machine di 8 giorni", f(backup__tm_last=NOW - 8 * DAY), "8 giorni fa")
+check("private fermo da 49 ore", f(backup__private_last=NOW - 49 * 3600), "fermo da 49 ore")
+check("private di 47 ore: zitto", f(backup__private_last=NOW - 47 * 3600), None)
+check("commit non spinti da 8 giorni", f(backup__unpushed=[("r", 3, NOW - 8 * DAY)]), "1 repo in ~/Projects")
+check("commit non spinti da 6 giorni: zitto", f(backup__unpushed=[("r", 3, NOW - 6 * DAY)]), None)
+check("repo senza remote", f(backup__noremote=["solo-qui"]), "solo-qui")
+
+check("estensione fuori store attiva", f(extensions=[dict(BASE["extensions"][0], store=False)]), "fuori dallo store")
+check("estensione fuori store spenta: zitto", f(extensions=[dict(BASE["extensions"][0], store=False, enabled=False)]), None)
+check("estensione nuova", f(extensions=BASE["extensions"] + [dict(BASE["extensions"][0], id="Chrome:bbb", name="Nuova")]), "estensione nuova")
+check("porta in LAN", f(lan={"jcode": ["7643"]}), "jcode ascolta sulla rete locale")
+check("nuovo in rete", f(net=BASE["net"] + [dict(key="/opt/x", name="x", signer="firma ad hoc")]), "nuovo in rete: x")
+check("binario non firmato in /tmp", f(odd=[dict(path="/tmp/x", signer="non firmato")]), "cartella temporanea")
+check("binario firmato in /tmp: zitto", f(odd=[dict(path="/tmp/x", signer="Bit4id srl")]), None)
+check("FileVault spento", f(posture__filevault=False), "FileVault spento")
+
+ag = dict(claude=dict(n=85, ok=73), topics=dict(n=20, ok=12, lost=3), orphans=0, gb=None)
+check("Topics 60% contro Claude Code 86%: segnalato", f(agents=ag), "Topics porta in fondo il 60%")
+check("Topics a 8 punti da Claude Code: zitto", f(agents=dict(ag, topics=dict(n=20, ok=16, lost=0))), None)
+check("Topics con 4 lavori: campione troppo piccolo, zitto", f(agents=dict(ag, topics=dict(n=4, ok=0, lost=4))), None)
+check("Topics illeggibile: zitto", f(agents=dict(ag, topics=None)), None)
+check("11 orfani da Topics: segnalato", f(agents=dict(ag, topics=dict(n=0, ok=0, lost=0), orphans=11)), "11 processi orfani")
+check("10 orfani: zitto", f(agents=dict(ag, topics=dict(n=0, ok=0, lost=0), orphans=10)), None)
+
+# memoria (scripts/memlog): registro fermo o a buchi, pressione cronica; 75% e' il confine
+check("registro memoria illeggibile: segnalato", f(memlog=None), "fermo o a buchi")
+check("registro fermo da 4 ore: segnalato", f(memlog__last_age_s=4 * 3600), "fermo o a buchi")
+check("registro fermo da 2 ore: zitto", f(memlog__last_age_s=2 * 3600), None)
+check("registro con 40% delle righe: segnalato", f(memlog__samples=800), "fermo o a buchi")
+check("registro con 60% delle righe: zitto", f(memlog__samples=1200), None)
+check("swap piena e letta nel 80%: memoria stretta", f(memlog__swap_hi_share=0.8, memlog__swapin_hi_share=0.8), "memoria stretta")
+check("swap piena nel 74%: zitto", f(memlog__swap_hi_share=0.74, memlog__swapin_hi_share=0.9), None)
+check("letta da disco nel 74%: zitto", f(memlog__swap_hi_share=0.9, memlog__swapin_hi_share=0.74), None)
+check("swap piena e letta nel 75%: memoria stretta", f(memlog__swap_hi_share=0.75, memlog__swapin_hi_share=0.75), "memoria stretta")
+
+proc = dict(pid=1, name="Parsec", what="firmato Parsec", avg=5.0, hours=7, fp=100, hot=True, heavy=False)
+check("CPU media 5% da 7 ore", f(weekly=False, procs=[proc]), "5% di CPU in media")
+check("memoria oltre il 5%", f(weekly=False, procs=[dict(proc, hot=False, heavy=True, fp=2000)]), "GB di memoria")
+
+st = dict(top=[], big=[], old_downloads=[("~/Downloads/x", 6 << 20, 200)], installers=[], dupes=[], trash_kb=0, logs=[])
+check("6 GB di download vecchi", f(weekly=False, storage=st), "Download piu' vecchi")
+check("4 GB di download vecchi: zitto", f(weekly=False, storage=dict(st, old_downloads=[("~/Downloads/x", 4 << 20, 200)])), None)
+check("app non usate per 3 GB", f(weekly=False, apps=[dict(name="Steam", kb=3 << 20, days=200, category="gioco")]), "Steam 3,0 GB")
+check("app non usate per 100 MB: zitto", f(weekly=False, apps=[dict(name="Mini", kb=100 << 10, days=200, category="")]), None)
+check("CPU e memoria nella stessa riga", f(weekly=False, procs=[dict(proc, heavy=True, fp=2000)]), "ore, 2,0 GB di memoria")
+
+# messaggio: tre righe per sezione, nessuna sezione sparisce
+def say(name, ok):
+    global fails
+    print(f"{'ok  ' if ok else 'FAIL'} {name}" + (f"  ({ERR[-1]})" if ERR and not ok else ""))
+    ERR.clear()
+    fails += not ok
+
+
+many = [("backup", f"backup:b{i}", "lunga " * 20, f"repo numero {i} senza remote", None) for i in range(12)] + [("app", "app:x", "x", "app-riga", None)]
+m = mh.message(many, False, Path("/x"))
+say("messaggio: 12 righe di backup non nascondono l'ultima sezione", "app-riga" in m and "+" in m)
+
+# il caso vero del 23/10: tutte le righe del mensile di oggi, in forma breve, sotto i 600 caratteri
+big = f(weekly=False,
+        failures=[dict(loop, label="com.microsoft.teams2.agent", runs=89913), dict(loop, label="com.jcode.llamacpp-3090-tunnel", runs=21412, exit=255),
+                  dict(loop, label="com.jarvis.agents-build", rate=0.1, running=False, exit=1)],
+        lan={"Spotify": ["57621"], "Sunshine": ["47984", "47989", "47990", "48010"], "bun": ["3333"], "jcode": ["7643"]},
+        net=BASE["net"] + [dict(key=f"/opt/x{i}", name=f"x{i}", signer="firma ad hoc") for i in range(3)],
+        backup__tm_dest=0, backup__unpushed=[("r", 3, NOW - 8 * DAY)] * 13, backup__noremote=["a", "b"],
+        procs=[dict(proc, name=f"proc{i}", avg=10 + i) for i in range(7)])
+keep, _ = mh.split_accepted(mh.findings(big), [])
+m = mh.message(keep, False, Path("/Users/u/.claude/jarvis/logs/mac-health/2026-11-01.md"))
+say(f"mensile con 20 righe: {len(m)} caratteri, esito in testa", len(m) <= 600 and m.startswith("Mac, mensile: 20 cose"))
+
+wide = [(sec, f"{sec}:{i}", "x", f"{sec} voce lunga numero {i} " + "z" * 30, None) for sec in mh.SECTIONS for i in range(6)]
+m = mh.message(wide, False, Path("/x"))
+say(f"sette sezioni piene: tagliato a {len(m)} caratteri, il resto e' nominato", len(m) <= 600 and "altre sezioni nel rapporto" in m)
+say("lo stato ricorda le righe dette", mh.snapshot(big, keep)["reported"] == sorted(k[1] for k in keep))
+
+# settimanale: solo cio' che non era gia' stato detto
+keys = [k[1] for k in keep]
+say("settimanale con tutto gia' detto: zitto", mh.message(keep, True, Path("/x"), keys) == "")
+m = mh.message(keep, True, Path("/x"), [k for k in keys if k != "backup:tm"])
+say("settimanale: una riga nuova, le altre contate", "Time Machine assente" in m and "1 cosa" in m and "gia' dette" in m and "jcode" not in m)
+say("mensile: ripete tutto anche se gia' detto", "jcode" in mh.message(keep, False, Path("/x"), keys))
+say("primo giro, nessun inviato: dice tutto", "jcode" in mh.message(keep, True, Path("/x"), None))
+blind = keep + [("cieco", "cieco:lsof muto", "lsof muto", "lsof muto", None)]
+say("riga [cieco] sempre detta", "lsof muto" in mh.message(blind, True, Path("/x"), keys + ["cieco:lsof muto"]))
+k1 = [k for _, k, _, _ in mh.findings(f(failures=[dict(loop, runs=720)]))]
+k2 = [k for _, k, _, _ in mh.findings(f(failures=[dict(loop, runs=99999)]))]
+say("chiave stabile: piu' avvii non e' una riga nuova", k1 == k2 == ["avvio:loop:com.x.loop"])
+
+# accettate: la riga resta nel rapporto, esce dal messaggio
+lines = mh.findings(f(lan={"Spotify": ["57621"]}))
+keep, quiet = mh.split_accepted(lines, [{"match": "Spotify ascolta", "why": "Spotify Connect"}])
+ok = not keep and quiet and quiet[0][4] == "Spotify Connect"
+print(f"{'ok  ' if ok else 'FAIL'} riga accettata: fuori dal messaggio, dentro il rapporto")
+fails += not ok
+ok = mh.message([], True, Path("/x")) == ""
+print(f"{'ok  ' if ok else 'FAIL'} niente da dire: messaggio vuoto, WhatsApp non parte")
+fails += not ok
+
+# una sonda cieca non deve azzerare la base
+x = f(net=[], blind_keys=["net"])
+ok = mh.snapshot(x, [])["net"] == ["/Applications/A.app"]
+print(f"{'ok  ' if ok else 'FAIL'} sonda cieca: la base di rete resta quella di prima")
+fails += not ok
+
+k1 = mh.net_key("/Users/u/Library/Application Support/Claude/claude-code/2.1.308/a93ded4b1b47/claude.app/Contents/MacOS/claude")
+k2 = mh.net_key("/Users/u/Library/Application Support/Claude/claude-code/2.1.310/b81f00c2aa10/claude.app/Contents/MacOS/claude")
+ok = k1 == k2 and mh.net_key("/opt/homebrew/Cellar/node/26.9.0/bin/node") == mh.net_key("/opt/homebrew/Cellar/node/27.0.1/bin/node")
+ok = ok and mh.net_name(mh.net_key("/Users/u/.local/share/claude/versions/2.1.308")) == "claude"
+print(f"{'ok  ' if ok else 'FAIL'} un aggiornamento non e' un programma nuovo in rete")
+fails += not ok
+
+H = mh.HOME
+dirs = {H + "/a": 100, H + "/a/b": 90, H + "/a/b/c": 50, H + "/a/b/d": 40, H + "/z": 30}
+top = [p for p, _, _ in mh.top_folders(dirs, 3)]
+ok = top == [H + "/a/b", H + "/z"]
+print(f"{'ok  ' if ok else 'FAIL'} cartelle: secondo livello, piu' le foglie di primo  {top if not ok else ''}")
+fails += not ok
+
+with tempfile.TemporaryDirectory() as d:
+    pl = os.path.join(d, "x.plist")
+    plistlib.dump({"Label": "x", "ProgramArguments": ["/bin/bash", d + "/sparito.sh"]}, open(pl, "wb"))
+    ok = mh.launch_target(pl, "/bin/bash") == (d + "/sparito.sh", d + "/sparito.sh")
+    plistlib.dump({"Label": "x", "ProgramArguments": ["/bin/bash", "-lc", "echo"]}, open(pl, "wb"))
+    ok = ok and mh.launch_target(pl, "/bin/bash") == ("/bin/bash", None)
+print(f"{'ok  ' if ok else 'FAIL'} plist: lo script dietro l'interprete conta, -lc no")
+fails += not ok
+
+# ---- launchctl print finto: i due casi del 23/10 e un job periodico
+TEAMS = """gui/501/com.microsoft.teams2.agent = {
+	active count = 0
+	path = /Applications/Microsoft Teams.app/Contents/Library/LaunchAgents/com.microsoft.teams2.agent.plist
+	state = not running
+	runs = 89913
+	last exit code = 78: EX_CONFIG
+	properties = keepalive | runatload | inferred program
+}"""
+TUNNEL = "gui/501/com.jcode.llamacpp-3090-tunnel = {\n\tstate = running\n\tpid = 4242\n\truns = 21412\n\tlast exit code = 255\n}"
+DEVREAP = "gui/501/com.jarvis.devreap = {\n\tstate = not running\n\truns = 5332\n\tlast exit code = 1\n\trun interval = 300 seconds\n}"
+CAL = "gui/501/com.jarvis.manutenzione = {\n\truns = 3\n\tlast exit code = 1\n\tevent triggers = {\n\t\t\tstream = com.apple.launchd.calendarinterval\n}"
+t = mh.parse_print(TEAMS)
+say("print: Teams 89.913 avvii EX_CONFIG, fermo, non periodico",
+    {k: t[k] for k in ("exit", "why", "runs", "running", "periodic")} == dict(exit=78, why="EX_CONFIG", runs=89913, running=False, periodic=False))
+say("print: tunnel in esecuzione con uscita 255", mh.parse_print(TUNNEL)["running"] and mh.parse_print(TUNNEL)["exit"] == 255)
+say("print: devreap ogni 300 s e manutenzione a calendario sono periodici",
+    mh.parse_print(DEVREAP)["periodic"] and mh.parse_print(CAL)["periodic"])
+say("print: mai uscito o uscito 0 = niente",
+    mh.parse_print("\n\truns = 0\n\tlast exit code = (never exited)\n") is None and mh.parse_print("\n\truns = 3\n\tlast exit code = 0\n") is None)
+# uscita vera di `launchctl print gui/501/com.jarvis.devbridge` del 25/10: ucciso da un segnale, niente «last exit code»
+KILLED_REAL = (Path(__file__).resolve().parent / "fixtures/launchctl-print-killed-9.txt").read_text()
+kr = safe(lambda: mh.parse_print(KILLED_REAL))
+say("print: ucciso da un segnale (output vero di launchctl) = uscita -9, in esecuzione, 7 avvii, non periodico",
+    safe(lambda: kr and (kr["exit"], kr["why"], kr["runs"], kr["running"], kr["periodic"]) == (-9, "Killed", 7, True, False)))
+for nome, num in (("Alarm clock", 14), ("Segmentation fault", 11), ("Abort trap", 6)):
+    say(f"print: {nome}: {num} = uscita -{num}",
+        safe(lambda nome=nome, num=num: mh.parse_print(KILLED_REAL.replace("Killed: 9", f"{nome}: {num}"))["exit"] == -num))
+say("print: Terminated: 15 = uscita -15",
+    safe(lambda: mh.parse_print(KILLED_REAL.replace("Killed: 9", "Terminated: 15"))["exit"] == -15))
+say("print: senza uscita ne' segnale (solo jetsam idle) = niente",
+    mh.parse_print("\n\truns = 18\n\tlast exit reason = JETSAM_REASON_MEMORY_IDLE_EXIT\n") is None)
+_run = mh.run
+mh.run = lambda args, timeout=30: ("PID\tStatus\tLabel\n70693\t-9\tcom.jarvis.devbridge\n" if args[:2] == ["launchctl", "list"]
+                                  else KILLED_REAL if args[:2] == ["launchctl", "print"] else "")
+try:
+    real_fail = safe(lambda: mh.launchd_failures(1))
+finally:
+    mh.run = _run
+check("dal launchctl vero al rapporto: un job ucciso a ripetizione compare come «ucciso da un segnale e rilanciato»",
+      f(failures=real_fail or []), "com.jarvis.devbridge: ucciso da un segnale e rilanciato, 7 avvii")
+SNAP = """gui/501/com.armonia.topics-db-snapshot = {
+	path = /Users/u/Library/LaunchAgents/com.armonia.topics-db-snapshot.plist
+	state = not running
+
+	program = /bin/sh
+	arguments = {
+		/bin/sh
+		-c
+		bun scripts/db-snapshot.ts
+	}
+
+	working directory = /Users/u/Projects/topics-app
+
+	stdout path = /Users/u/Library/Logs/snap.log
+	stderr path = /Users/u/Library/Logs/snap.err
+	environment = {
+		XPC_SERVICE_NAME => com.armonia.topics-db-snapshot
+	}
+	runs = 4
+	last exit code = 1
+}"""
+say("print: cartella, log e argomenti del job (il caso topics-db-snapshot)",
+    safe(lambda: (lambda s: s["wd"] == "/Users/u/Projects/topics-app" and s["out"] == "/Users/u/Library/Logs/snap.log"
+                  and s["err"] == "/Users/u/Library/Logs/snap.err" and s["args"] == ["/bin/sh", "-c", "bun scripts/db-snapshot.ts"])
+         (mh.parse_print(SNAP))))
+say("print: senza arguments resta il program", safe(lambda: mh.parse_print(TUNNEL.replace("\tpid", "\tprogram = /usr/bin/ssh\n\tpid"))["args"] == ["/usr/bin/ssh"]))
+with tempfile.TemporaryDirectory() as d:
+    d = os.path.realpath(d)
+    repo = os.path.join(d, "repo")
+    os.makedirs(repo + "/scripts")
+    subprocess.run(["git", "init", "-q", repo], check=True)
+    sh = repo + "/scripts/job.sh"
+    open(sh, "w").write("exit 1\n")
+    logp = os.path.join(d, "job.log")
+    open(logp, "w").write("x" * 5000 + "\ninizio\nRED: no off-disk copy\n\n")
+    say("job: senza WorkingDirectory la cartella e' il repo dello script dietro l'interprete, con l'ultima riga del log",
+        safe(lambda: mh.job_context(dict(args=["/bin/bash", sh], err=logp, out=logp, wd=None)) == dict(dir=repo, log_tail="RED: no off-disk copy", gone=None)))
+    say("job: la WorkingDirectory vince; log assente = nessuna riga",
+        safe(lambda: mh.job_context(dict(args=["/bin/bash", sh], err=d + "/manca.log", out=None, wd=d)) == dict(dir=d, log_tail=None, gone=None)))
+    say("job: WorkingDirectory cancellata = niente cartella, e dice quale",
+        safe(lambda: mh.job_context(dict(args=["/bin/bash", sh], err=None, out=None, wd=d + "/sparita")) == dict(dir=None, log_tail=None, gone=d + "/sparita")))
+    old, new = os.path.join(d, "old.err"), os.path.join(d, "new.out")
+    open(old, "w").write("errore di ieri\n")
+    open(new, "w").write("uscita di oggi\n")
+    os.utime(old, (NOW - 7200, NOW - 7200))
+    os.utime(new, (NOW, NOW))
+    say("job: stderr vecchio e stdout recente = la riga dello stdout",
+        safe(lambda: mh.job_context(dict(args=[], err=old, out=new, wd=d))["log_tail"] == "uscita di oggi"))
+    os.utime(old, (NOW + 60, NOW + 60))
+    say("job: stderr recente e stdout vecchio = la riga dello stderr",
+        safe(lambda: mh.job_context(dict(args=[], err=old, out=new, wd=d))["log_tail"] == "errore di ieri"))
+PD = ('\tdisabled services = {\n\t\t"com.x.on" => enabled\n\t\t"com.x.off" => disabled\n'
+      '\t\t"com.x.old" => true\n\t\t"com.x.oldon" => false\n\t}\n')
+say("print-disabled: spenti «disabled» e «true», accesi no", safe(lambda: mh.parse_disabled(PD) == {"com.x.off", "com.x.old"}))
+teams = dict(t, label="com.microsoft.teams2.agent", domain="gui", rate=89913 / 720)
+dr = dict(mh.parse_print(DEVREAP), label="com.jarvis.devreap", domain="gui", rate=5332 / 720)
+lines = [x[2] for x in mh.findings(f(failures=[teams, dr]))]
+say("Teams riparte a vuoto, devreap periodico e fallito: fermo, non a vuoto",
+    any("teams2.agent: servizio che riparte a vuoto" in l for l in lines)
+    and any("devreap: fermo" in l for l in lines) and not any("devreap: servizio" in l for l in lines))
+
+# ---- plist finti: il demone di un'app tolta
+with tempfile.TemporaryDirectory() as d:
+    def put(name, data):
+        plistlib.dump(data, open(os.path.join(d, name), "wb"))
+    put("com.omnara.daemon.plist", {"Label": "com.omnara.daemon", "ProgramArguments": [d + "/Omnara.app/Contents/MacOS/omnara", "daemon"]})
+    put("com.x.vivo.plist", {"Label": "com.x.vivo", "ProgramArguments": ["/bin/ls"]})
+    put("com.x.spento.plist", {"Label": "com.x.spento", "Program": d + "/via", "Disabled": True})
+    put("com.x.override.plist", {"Label": "com.x.override", "Program": d + "/via"})
+    put("com.google.keystone.agent.plist", {})  # Google spegne cosi': nessun eseguibile, niente da dire
+    # «--» in un commento: plistlib rifiuta, launchd e plutil no (com.armonia.topics-db-snapshot, 25/10)
+    open(os.path.join(d, "com.x.commento.plist"), "w").write(
+        '<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" '
+        '"http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n<plist version="1.0">\n<!-- prova: bun x.ts --print -->\n'
+        f'<dict><key>Label</key><string>com.x.commento</string><key>Program</key><string>{d}/sparito</string></dict></plist>\n')
+    orph = mh.orphan_plists([d], disabled={"com.x.override"})
+    say("plist: trovati Omnara e quello col commento, non i vivi, gli spenti, i vuoti",
+        sorted(o["label"] for o in orph) == ["com.omnara.daemon", "com.x.commento"] and not any(o["system"] for o in orph))
+    app = os.path.join(d, "Fake.app/Contents/Library/LaunchAgents")
+    os.makedirs(app)
+    plistlib.dump({"Label": "com.fake.helper", "BundleProgram": "Contents/MacOS/helper"}, open(app + "/h.plist", "wb"))
+    say("plist: BundleProgram si cerca dentro il bundle che lo contiene",
+        mh.launch_target(app + "/h.plist", None)[1] == d + "/Fake.app/Contents/MacOS/helper")
+    om = next(o for o in orph if o["label"] == "com.omnara.daemon")
+    btm_same = dict(BASE["startup"][0], id="8.com.omnara.daemon", plist=om["plist"], missing=om["missing"])
+    lines = [x[2] for x in mh.findings(f(orphans=[om], startup=BASE["startup"] + [btm_same], baseline__startup=["8.com.x.ok", "8.com.omnara.daemon"]))]
+    say("demone di un'app tolta (Omnara), una riga sola anche se lo vede pure sfltool",
+        len(lines) == 1 and "com.omnara.daemon: demone di un'app tolta (Omnara)" in lines[0])
+
+# ---- card: cosa va agli agenti e cosa resta ad Attilio
+root_orph = dict(om, label="com.x.root", plist="/Library/LaunchDaemons/com.x.root.plist", system=True)
+root_loop = dict(teams, label="com.x.rootloop", domain="system")
+tunnel = dict(mh.parse_print(TUNNEL), label="com.jcode.llamacpp-3090-tunnel", domain="gui", rate=21412 / 720)
+snap = dict(loop, label="com.armonia.topics-db-snapshot", exit=1, why="", runs=4, rate=4 / 720, running=False, periodic=True,
+            dir="/Users/u/Projects/topics-app", log_tail="RED: no off-disk copy (configure ~/.topics/backup-offsite.json)")
+other = dict(snap, label="com.x.other", dir="/Users/u/Projects/other", log_tail="RED: no off-disk copy (altro)")
+gone = dict(snap, label="com.jarvis.gone", dir=None, gone="/Users/u/Projects/sparita", log_tail="cd: no such directory")
+manut = dict(snap, label="com.jarvis.manutenzione", dir="/Users/u/.claude/jarvis", log_tail="Alarm clock: 14")
+root_fail = dict(snap, label="com.x.rootfail", domain="system")
+killed = dict(loop, label="com.x.killed", exit=-9, runs=2000, rate=2.7)
+item = lambda i, pl: dict(BASE["startup"][0], id=f"8.{i}", name=i, plist=pl, missing="/x/sparito")
+items = [item("com.x.login", None), item("com.x.agent", H + "/Library/LaunchAgents/com.x.agent.plist"),
+         item("com.x.rootitem", "/Library/LaunchDaemons/com.x.rootitem.plist")]
+facts = f(failures=[teams, root_loop, tunnel, snap, other, gone, manut, root_fail, killed], orphans=[om, root_orph], lan={"bun": ["8777"]},
+          backup__private_last=NOW - 60 * 3600, startup=BASE["startup"] + items,
+          baseline__startup=["8.com.x.ok"] + [i["id"] for i in items], blind=["sfltool non ha risposto: elementi d'avvio NON controllati"],
+          resti=[dict(line=f"resto pid={i} albero=1 fp=60MB eta=200m  cartella cancellata  -> osservo: si chiuderebbe ora", mb=60.0, verdict="osservo: si chiuderebbe ora")
+                 for i in range(6)], seconds=1)
+keep, _ = mh.split_accepted(mh.findings(facts), [])
+todo = mh.cards(facts, keep, Path("/x/r.md"))
+by = {c["key"]: c for c in todo}
+say("card: quelle degli agenti; sicurezza e root (job, demone, elemento in /Library/LaunchDaemons) no",
+    sorted(by) == sorted("mac-health:" + k for k in (
+        "avvio:loop:com.microsoft.teams2.agent", "avvio:loop:com.jcode.llamacpp-3090-tunnel", "avvio:failed:com.x.other", "avvio:failed:com.jarvis.gone",
+        "avvio:failed:com.jarvis.manutenzione", "avvio:killed:com.x.killed", "avvio:orphan:com.omnara.daemon",
+        "avvio:missing:8.com.x.login", "avvio:missing:8.com.x.agent", "backup:private", "processi:resti", "cieco:sfltool")))
+say("card: job di sistema fallito ed elemento d'avvio in /Library/LaunchDaemons restano ad Attilio",
+    "mac-health:avvio:failed:com.x.rootfail" not in by and "mac-health:avvio:missing:8.com.x.rootitem" not in by
+    and {"avvio:failed:com.x.rootfail", "avvio:missing:8.com.x.rootitem"} <= {k[1] for k in keep})
+card = lambda k: by["mac-health:" + k]
+say("card: servizio vivo che riparte a vuoto va di giorno, non nella coda notturna",
+    safe(lambda: not card("avvio:loop:com.jcode.llamacpp-3090-tunnel")["notte"] and "E' vivo adesso" in card("avvio:loop:com.jcode.llamacpp-3090-tunnel")["desc"]))
+say("card: servizio fermo che riparte a vuoto di notte, ma solo diagnosi",
+    safe(lambda: card("avvio:loop:com.microsoft.teams2.agent")["notte"] and "Di notte solo diagnosi" in card("avvio:loop:com.microsoft.teams2.agent")["desc"]))
+say("card: job fallito d'altri: di giorno, nella sua cartella, con l'ultima riga del log",
+    safe(lambda: (lambda c: not c["notte"] and c["dir"] == "/Users/u/Projects/other" and "RED: no off-disk copy (altro)" in c["desc"]
+                  and "Cartella: /Users/u/Projects/other" in c["desc"])(card("avvio:failed:com.x.other"))))
+say("card: topics-db-snapshot (una scelta di Attilio) NON diventa card e resta nel messaggio, con la cura che lo dice",
+    safe(lambda: not any("topics-db-snapshot" in k for k in by)
+         and any("topics-db-snapshot" in k[2] and "una tua scelta" in k[2] and "~/.topics/backup-offsite.json" in k[2] and "RED: no off-disk copy" in k[2]
+                 for k in mh.for_attilio(keep, todo, {c["key"]: "id" for c in todo}))))
+say("card: cartella di lavoro cancellata = niente --notte e la card lo dice",
+    safe(lambda: (lambda c: not c["notte"] and "non esiste piu'" in c["desc"] and "Projects/sparita" in c["desc"]
+                  and "non e' nella coda notturna" in c["desc"])(card("avvio:failed:com.jarvis.gone"))))
+say("card: job di Jarvis fallito: di notte, nella sua cartella",
+    safe(lambda: (lambda c: c["notte"] and c["dir"] == "/Users/u/.claude/jarvis" and "Alarm clock" in c["desc"])(card("avvio:failed:com.jarvis.manutenzione"))))
+say("card: ucciso e rilanciato: «chi lo uccide», di giorno", safe(lambda: not card("avvio:killed:com.x.killed")["notte"]))
+say("card: elemento di login senza plist di giorno; la cura notturna non usa osascript",
+    safe(lambda: not card("avvio:missing:8.com.x.login")["notte"] and card("avvio:missing:8.com.x.agent")["notte"]
+         and not any("osascript" in c["desc"] for c in todo if c["notte"])))
+say("card: sfltool muto diventa una card di giorno per gli agenti", safe(lambda: not card("cieco:sfltool")["notte"]))
+c = by["mac-health:avvio:loop:com.microsoft.teams2.agent"]
+say("card: il titolo dice il lavoro, la descrizione ha prova, cura e barra",
+    c["title"] == "[Jarvis] Fermare com.microsoft.teams2.agent, che riparte a vuoto" and "89.913 avvii" in c["desc"]
+    and "launchctl disable gui/" in c["desc"] and "Barra:" in c["desc"] and c["notte"])
+say("card: i resti non vanno alla coda notturna (decidere chi e' vivo vuole il giorno)", not by["mac-health:processi:resti"]["notte"])
+rc = by["mac-health:processi:resti"]
+say("card: i resti sono diagnosi, non chiedono di chiudere niente (classe in sola osservazione, DEVREAP_RESTO_KILL=0)",
+    safe(lambda: "Chiudere" not in rc["title"] and "solo diagnosi" in rc["title"] and "DEVREAP_RESTO_KILL=0" in rc["desc"]
+         and "nessun processo chiuso" in rc["desc"] and "senza righe" not in rc["desc"] and "il prossimo mac-health non lo riporta" not in rc["desc"]
+         and not any(w in rc["desc"].lower() for w in ("kill ", "chiudere i ", "chiudere quelli", "chiudere solo"))))
+
+with tempfile.TemporaryDirectory() as d:
+    calls = os.path.join(d, "calls")
+    fake = os.path.join(d, "board-card")
+    # finto board-card: registra gli argomenti, Topics «giu'» per la chiave del backup
+    open(fake, "w").write(f'#!/bin/sh\nprintf "%s|" "$@" | tr "\\n" " " >> {calls}; echo >> {calls}\n'
+                          'case "$*" in *backup:private*) echo "Topics non risponde" >&2; exit 2;; esac\necho card-1\n')
+    os.chmod(fake, 0o755)
+    os.environ["MAC_HEALTH_BOARD_CARD"] = fake
+    ids = mh.open_cards(todo)
+    del os.environ["MAC_HEALTH_BOARD_CARD"]
+    rows = open(calls).read().splitlines()
+    say("board-card: una chiamata per card, --notte con --dir solo dove serve",
+        len(rows) == len(todo) == 12 and all("--key|mac-health:" in r for r in rows)
+        and sum("--notte|--dir|" in r for r in rows) == 5 and not any("--notte" in r and ("processi:resti" in r or "com.jarvis.gone" in r) for r in rows))
+    say("board-card: la coda notturna lavora nella cartella del job",
+        any("com.jarvis.manutenzione" in r and "--notte|--dir|/Users/u/.claude/jarvis|" in r for r in rows))
+    say("board-card: Topics giu' = nessun id", ids["mac-health:backup:private"] is None and ids["mac-health:avvio:orphan:com.omnara.daemon"] == "card-1")
+    left = {k[1] for k in mh.for_attilio(keep, todo, ids)}
+    say("card nata: la riga esce dal messaggio; root, sicurezza e card mancate restano",
+        "avvio:loop:com.microsoft.teams2.agent" not in left and "avvio:orphan:com.omnara.daemon" not in left
+        and {"avvio:loop:com.x.rootloop", "avvio:orphan:com.x.root", "sicurezza:lan:bun", "backup:private"} <= left)
+    m = mh.message(mh.for_attilio(keep, todo, ids), True, Path("/x/r.md"))
+    say("WhatsApp: niente Teams ne' Omnara, si' il backup rimasto senza card", "teams2" not in m and "omnara" not in m and "jarvis-private" in m)
+    say("WhatsApp: la riga [cieco] di sfltool diventata card non parte", "sfltool" not in m and "cieco:sfltool" not in left)
+    r = mh.report_md(facts, keep, [], todo, ids)
+    say("rapporto: sezione card e sezione resti", "## Card per gli agenti" in r and "card non creata" in r and "## Resti senza padrone" in r)
+only = f(failures=[teams], orphans=[om])
+k2, _ = mh.split_accepted(mh.findings(only), [])
+t2 = mh.cards(only, k2, Path("/x"))
+say("tutto curabile e curato dagli agenti: messaggio vuoto, WhatsApp non parte",
+    len(k2) == 2 and mh.message(mh.for_attilio(k2, t2, {c["key"]: "id" for c in t2}), False, Path("/x")) == "")
+
+# ---- devreap --list finto: la classe «resto» c'e' o non c'e'
+# contratto con devreap: «  resto pid=<pid> albero=<n> fp=<MB>MB eta=<min>m <motivo> -> <verdetto>»
+LIST = ("swap usato 96.9%  (gate a 85.0%)\n\n  root=90915  porte=18789 conn=19   2532MB  in uso\n"
+        "  resto pid=81637 albero=2 fp=99MB eta=2000m  responsabile 4242 morto, http.server aperto sulla rete  -> si chiude ora\n"
+        "        ~/x :: python3 -m http.server\n"
+        "  resto pid=5727 albero=1 fp=154MB eta=43000m  cartella cancellata  -> aspetta (passate 1/3, ferma da 30m su 120m)\n"
+        "  resto pid=5800 albero=3 fp=400MB eta=300m  sessione Claude abcd1234 chiusa  -> osservo: si chiuderebbe ora\n"
+        "  resto pid=5801 albero=1 fp=50MB eta=300m  sessione Claude abcd1234 chiusa  -> osservo: aspetta (passate 2/3, ferma da 60m su 120m)\n"
+        "  resto pid=5900 albero=3 fp=900MB eta=300m  sessione Claude abcd1234 chiusa  -> in uso, il conto riparte\n"
+        "  resto pid=6000 albero=1 fp=700MB eta=300m  scratchpad chiusa  -> aspetta (lsof non risponde, passata non contata)\n"
+        "  resto pid=6001 albero=1 fp=800MB eta=300m  scratchpad chiusa  -> osservo: aspetta (lsof non risponde, passata non contata)\n"
+        "  usa e getta pid=7 porte=- eta=90m  /tmp/claude-501/x\n")
+r = mh.resti(LIST)
+say("resti: contano «si chiude ora», «aspetta (passate…)» e «osservo: …» (703 MB); «in uso», lsof muto (anche con «osservo: ») e il gateway no",
+    len(r) == 4 and sum(x["mb"] for x in r) == 703)
+say("resti: solo le righe con lsof muto, vecchie o nuove: nessun resto",
+    mh.resti("  resto pid=1 albero=1 fp=900MB eta=300m  x  -> aspetta (lsof non risponde, passata non contata)\n"
+             "  resto pid=2 albero=1 fp=900MB eta=300m  x  -> osservo: aspetta (lsof non risponde, passata non contata)\n") == [])
+say("resti: classe assente = nessuna riga, devreap muto = None", mh.resti("swap usato 3%\nnessun dev server attivo\n") == [] and mh.resti(None) is None)
+in_use = mh.resti("".join(f"  resto pid={1000 + i} albero=3 fp=80MB eta=300m  sessione Claude abcd1234 chiusa  -> in uso, il conto riparte\n"
+                          for i in range(5)))
+check("5 resti in uso (il caso del verificatore): zitto, nessuna card verso processi vivi", f(resti=in_use), None)
+check("4 resti per 703 MB: segnalati, sopra i 500 MB", f(resti=r), "4 resti senza padrone ancora vivi (703 MB)")
+check("2 resti per 253 MB: zitto", f(resti=r[:2]), None)
+check("5 resti con lsof muto (il caso del 25/10): zitto", f(resti=mh.resti("".join(f"  resto pid={i} albero=1 fp=300MB eta=300m  x  -> osservo: aspetta (lsof non risponde, passata non contata)\n" for i in range(5)))), None)
+check("un resto da 1,3 GB: segnalato", f(resti=[dict(line="resto astro", mb=1300.0)]), "resti senza padrone ancora vivi (1,3 GB)")
+check("devreap senza classe «resto»: zitto", f(resti=[]), None)
+
+print(f"\n{'tutto verde' if not fails else f'{fails} rossi'}")
+sys.exit(1 if fails else 0)

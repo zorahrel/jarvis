@@ -1,0 +1,431 @@
+#!/usr/bin/env bash
+# offload: fa girare un comando dove costa meno. Mac libero -> qui; Mac carico -> sul PC Windows
+# (lo sveglia se dorme), con una copia dei file del repo senza segreti, e riporta exit code e file.
+#
+#   offload [opzioni] -- <comando>     il comando (sul PC gira in cmd.exe: scrivilo per Windows)
+#   offload status                     carico del Mac, stato e carico del PC
+#
+#   -C <dir>       cartella da portare (default: radice git della cartella corrente)
+#   --pc|--local   forza dove (default: decide il carico)
+#   --get <path>   dopo il giro riporta <path> (relativo alla cartella) qui; ripetibile
+#   --mac-cmd <c>  comando da usare se gira sul Mac, quando quello per Windows è diverso
+#   --cosa <testo> il lavoro in parole («i test della dashboard»): lo mostra la tray al posto del comando
+#
+# Soglie: OFFLOAD_MAX_MAC (carico per core oltre il quale si va sul PC, default 1.5),
+# OFFLOAD_MAX_PC (CPU % del PC oltre la quale resta qui, default 60). Sul PC non vanno MAI segreti
+# (PC bonificato l'11/10): .env, .dev.vars, chiavi e credenziali restano fuori dalla copia.
+# La copia sul PC (E:\offload\<repo>_<hash>) e' UNA per repository (non per cartella): tutti i worktree dello
+# stesso repo la condividono, quindi node_modules resta tra un giro e l'altro anche cambiando worktree.
+# Chiave = nome e URL di origin (o, senza origin, la git common dir): `offload key [-C dir]` la stampa.
+# La copia ha anche git (senza token): un bundle dei soli commit che mancano (HEAD e origin/main) + indice
+# riallineato, cosi' `git ls-files`, `git diff origin/main`, `git status` sul PC vedono quello del Mac,
+# modifiche non committate comprese. I file tolti sul Mac spariscono anche dalla copia.
+# Due giri insieme sullo stesso repo: il secondo aspetta OFFLOAD_LOCK_WAIT s (default 15) la copia condivisa;
+# se resta occupata lavora su una copia sua (<chiave>_r<pid>) che toglie a fine giro.
+#   offload key [-C dir]               la cartella-copia sul PC (diagnosi)
+#   offload clean [--days N] [--apply] elenca le copie sul PC; con --apply toglie quelle ferme da N giorni (7)
+#
+# Schermo del PC: ogni giro sul PC scrive C:\winfleet\schermo\lavoro-<pid>.json {progetto,cosa,chi,da}
+# e a fine comando fine-<pid>.json {rc}; wf-autosleep li trasforma in stato.js ed esiti.jsonl (ultime 50).
+# Nessuna ssh in più: il lavoro viaggia nella ssh della copia, la fine nella stessa ssh del comando.
+# OFFLOAD_PROGETTO / OFFLOAD_WHO cambiano le etichette (prove, wrapper).
+set -uo pipefail
+# Dati del PC: solo da ~/.config/winfleet/config.env (fuori da ogni repo). Se il file o la variabile
+# mancano si esce con 3 e un messaggio, invece di proseguire con un host vuoto.
+wfconf() {
+  local v; v="$(set +eu; . "$HOME/.config/winfleet/config.env" >/dev/null 2>&1; printf '%s' "${!1:-}")"
+  [ -n "$v" ] || { echo "${0##*/}: manca $1 in ~/.config/winfleet/config.env" >&2; return 3; }
+  printf '%s' "$v"
+}
+HOST="${OFFLOAD_HOST:-$(wfconf HOST_SSH)}" || exit 3
+MAX_MAC="${OFFLOAD_MAX_MAC:-1.5}"
+MAX_PC="${OFFLOAD_MAX_PC:-60}"
+ROOT_PC="${OFFLOAD_ROOT_PC:-E:/offload}"; ROOT_WIN=${ROOT_PC//\//\\}
+SSH=(ssh -o ConnectTimeout=5 -o BatchMode=yes -o ServerAliveInterval=30 -o ServerAliveCountMax=4)
+# 25/10: anche token di npm e git, .envrc, .netrc/.pgpass, cookie e storageState di Playwright (.auth/): il PC ha avuto un virus
+SECRET_RE='(^|/)(\.env(\..*)?|\.envrc|\.dev\.vars.*|\.npmrc|\.netrc|\.pgpass|\.git-credentials|.*\.(pem|key|p12|pfx|keystore)|id_(rsa|ed25519|ecdsa).*|credentials(\..*)?|secrets?(\..*)?|.*\.secret|\.auth/.*|.*cookies?.*\.json|.*storage-?state.*\.json)$'
+
+say() { echo "offload: $*" >&2; }
+
+mac_load() {  # carico a 1 minuto per core, 2 decimali; vuoto se non si legge
+  # sysctl dentro la sandbox di Codex da "Operation not permitted": uptime e getconf sì
+  local l n; l=$(uptime 2>/dev/null | sed 's/.*load averages*: *//' | awk '{print $1}'); n=$(getconf _NPROCESSORS_ONLN 2>/dev/null)
+  awk -v l="$l" -v n="$n" 'BEGIN{ if (l ~ /^[0-9]/ && n+0 > 0) printf "%.2f", l/n }'
+}
+pc_up() { "${SSH[@]}" -o ConnectTimeout=3 "$HOST" exit 2>/dev/null; }
+pc_cpu() {
+  "${SSH[@]}" "$HOST" "powershell -NoProfile -Command \"[int](Get-CimInstance Win32_Processor | Measure-Object LoadPercentage -Average).Average\"" 2>/dev/null | tr -dc '0-9'
+}
+
+# --- una copia per repository -----------------------------------------------------------------
+# Nome della copia sul PC: <repo>_<hash>. Con origin conta l'URL (cloni e worktree dello stesso repo
+# condividono la copia); senza origin conta la git common dir, che e' la stessa per tutti i worktree.
+repo_key() {  # cartella -> nome della copia
+  local d="$1" common origin base id top
+  common=$(git -C "$d" rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || common=""
+  if [ -n "$common" ]; then
+    origin=$(git -C "$d" config --get remote.origin.url 2>/dev/null || true)
+    if [ -n "$origin" ]; then base=${origin%/}; base=${base##*[/:]}; id=$origin
+    else base=${common%/}; [ "${base##*/}" = .git ] && base=${base%/*}; base=${base##*/}; id=$common; fi
+    base=${base%.git}
+  else base=${d##*/}; id=$d; fi
+  top=$(git -C "$d" rev-parse --show-toplevel 2>/dev/null || true)
+  [ -n "$top" ] && [ "$top" != "$d" ] && { id="$id:${d#"$top"}"; base="$base-${d##*/}"; }
+  printf '%s_%s' "$(printf %s "$base" | tr -c 'A-Za-z0-9_-' '_')" "$(printf %s "$id" | shasum | cut -c1-6)"
+}
+# Lock sulla Mac (tutti i giri partono da qui): una cartella per copia con dentro il pid. Un lock il cui
+# pid non esiste piu' (crash, SIGKILL) si toglie. `ps -p` e non `kill -0`: nella gabbia dei segnali kill -0 da EPERM.
+LOCKS=~/.cache/offload/locks
+lock_take() {  # nome attesa-s -> 0 preso, 1 ancora occupato dopo l'attesa
+  local l="$LOCKS/$1.lock" t=$SECONDS p told=""
+  mkdir -p "$LOCKS"
+  while :; do
+    if mkdir "$l" 2>/dev/null; then echo $$ > "$l/pid"; return 0; fi
+    p=$(cat "$l/pid" 2>/dev/null || true)
+    if { [ -n "$p" ] && ! ps -p "$p" >/dev/null 2>&1; } || { [ -z "$p" ] && [ -n "$(find "$l" -maxdepth 0 -mmin +1 2>/dev/null)" ]; }; then rm -rf "$l"; continue; fi
+    [ $((SECONDS - t)) -ge "$2" ] && return 1
+    [ -z "$told" ] && { say "la copia $1 e' in uso da un altro giro (pid ${p:-?}): aspetto fino a $2 s"; told=1; }
+    sleep 1
+  done
+}
+
+# Script che gira SUL PC dopo l'estrazione dei file (ASCII puro: PowerShell 5.1 legge senza BOM come ANSI).
+# 1) toglie dalla copia i file che il giro prima c'erano e ora sul Mac non ci sono piu' (manifest vecchio meno nuovo);
+# 2) porta git al passo del Mac: oggetti dal bundle, HEAD e origin/main, indice = HEAD piu' i path in stage sul Mac.
+#    Il working tree non si tocca: e' quello arrivato col tar, modifiche non committate comprese. Nessun token: il
+#    bundle e' un file, il PC non parla mai con GitHub. Errori di git = avviso su stderr, il giro continua.
+emit_sync_ps1() {
+  cat <<'PS'
+$ErrorActionPreference = 'Continue'
+$meta = $PSScriptRoot
+$root = Split-Path (Split-Path $meta)
+Set-Location -LiteralPath $root
+$warn = New-Object System.Collections.ArrayList
+$script:out = ''
+function G { $script:out = (& git @args 2>&1 | Out-String); return $LASTEXITCODE }
+function Warn($m) { [void]$warn.Add($m.Trim()) }
+
+$old = Join-Path $meta 'manifest'
+$new = Join-Path $meta 'manifest.new'
+if (Test-Path -LiteralPath $new) {
+  if (Test-Path -LiteralPath $old) {
+    $keep = New-Object 'System.Collections.Generic.HashSet[string]'
+    foreach ($p in [System.IO.File]::ReadAllLines($new)) { [void]$keep.Add($p) }
+    foreach ($p in [System.IO.File]::ReadAllLines($old)) {
+      if ($p -and -not $keep.Contains($p) -and $p -notmatch '(^|/)\.\.(/|$)|^[/\\]|:') {
+        Remove-Item -LiteralPath (Join-Path $root $p) -Force -ErrorAction SilentlyContinue
+      }
+    }
+  }
+  Move-Item -LiteralPath $new -Destination $old -Force
+}
+Set-Content -LiteralPath (Join-Path $meta 'last-run') -Value (Get-Date -Format s)
+
+if (-not (Test-Path -LiteralPath (Join-Path $meta 'nogit'))) {
+  if (-not (Test-Path -LiteralPath (Join-Path $root '.git\HEAD'))) { [void](G init -q) }
+  foreach ($kv in @(@('core.autocrlf','false'), @('core.safecrlf','false'), @('core.filemode','false'), @('core.longpaths','true'))) { [void](G config $kv[0] $kv[1]) }
+  $bundle = Join-Path $meta 'repo.bundle'
+  if (Test-Path -LiteralPath $bundle) {
+    if ((G bundle unbundle $bundle) -ne 0) { Warn "bundle: $script:out" }
+    Remove-Item -LiteralPath $bundle -Force
+  }
+  $sha = $null
+  foreach ($l in [System.IO.File]::ReadAllLines((Join-Path $meta 'refs.txt'))) {
+    $f = $l.Split(' ')
+    if ($f.Count -ne 2) { continue }
+    if ($f[1] -eq 'HEAD') { $sha = $f[0] }
+    elseif ((G update-ref $f[1] $f[0]) -ne 0) { Warn "update-ref $($f[1]): $script:out" }
+  }
+  $br = [System.IO.File]::ReadAllText((Join-Path $meta 'branch')).Trim()
+  if ($sha) {
+    if ($br) {
+      [void](G symbolic-ref HEAD "refs/heads/$br")
+      if ((G update-ref "refs/heads/$br" $sha) -ne 0) { Warn "update-ref HEAD: $script:out" }
+    } elseif ((G update-ref --no-deref HEAD $sha) -ne 0) { Warn "update-ref HEAD: $script:out" }
+    if ((G reset -q) -ne 0) { Warn "reset: $script:out" }
+  }
+  $st = Join-Path $meta 'staged'
+  if ((Test-Path -LiteralPath $st) -and ((Get-Item -LiteralPath $st).Length -gt 0)) {
+    if ((G --literal-pathspecs add -A "--pathspec-from-file=$st" --pathspec-file-nul) -ne 0) { Warn "add: $script:out" }
+  }
+}
+if ($warn.Count -gt 0) { [Console]::Error.WriteLine('offload: ATTENZIONE git sul PC non allineato: ' + ($warn -join ' | ')) }
+exit 0
+PS
+}
+
+# Metadati per la copia git: bundle dei soli commit che il PC non ha (BASIS = commit gia' sul PC), refs, branch,
+# path in stage sulla Mac. Senza HEAD (repo vuoto), fuori da un repo o in una sua sottocartella: niente git sul PC.
+build_meta() {
+  mkdir -p "$META"; cp "$LIST" "$META/manifest.new"; emit_sync_ps1 > "$META/sync.ps1"
+  if [ -n "$SUBDIR" ] || ! git -C "$DIR" rev-parse -q --verify 'HEAD^{commit}' >/dev/null 2>&1; then : > "$META/nogit"; return 0; fi
+  local br r s tips=(HEAD) not=()
+  br=$(git -C "$DIR" symbolic-ref -q --short HEAD 2>/dev/null || true); [[ $br =~ ^[A-Za-z0-9._/-]+$ ]] || br=""
+  printf '%s' "$br" > "$META/branch"
+  printf '%s HEAD\n' "$(git -C "$DIR" rev-parse HEAD)" > "$META/refs.txt"
+  for r in refs/remotes/origin/main refs/remotes/origin/master; do
+    if s=$(git -C "$DIR" rev-parse -q --verify "$r^{commit}" 2>/dev/null); then printf '%s %s\n' "$s" "$r" >> "$META/refs.txt"; tips+=("$r"); fi
+  done
+  if [ -n "$BASIS" ]; then not=(--not); while IFS= read -r s; do not+=("$s"); done <<< "$BASIS"; fi
+  if [ -n "$(git -C "$DIR" rev-list -n1 "${tips[@]}" ${not[@]+"${not[@]}"} 2>/dev/null)" ]; then
+    git -C "$DIR" bundle create "$META/repo.bundle" "${tips[@]}" ${not[@]+"${not[@]}"} >/dev/null 2>&1 \
+      || say "ATTENZIONE: bundle non creato, git sul PC puo' restare indietro"
+  fi
+  git -C "$DIR" diff --cached --name-only -z 2>/dev/null | tr '\0' '\n' | grep -Eiv "$SECRET_RE" | tr '\n' '\0' > "$META/staged" || true
+}
+
+# --- etichette per lo schermo del PC -------------------------------------------------------
+# (solo builtin di bash dove si puo': queste funzioni girano a ogni giro e ogni fork pesa col Mac carico)
+SCH_W='C:\winfleet\schermo'
+# progetto in parole: i worktree w4xx e token-fixes sono Topics; per gli altri, la radice del repo
+project_name() {
+  local d="$1" b common
+  b=${d##*/}
+  case "$b" in w[0-9]*|token-fixes|[Tt]opics*) echo Topics; return ;; esac
+  common=$(git -C "$d" rev-parse --path-format=absolute --git-common-dir 2>/dev/null) && [ -n "$common" ] && { common=${common%/*}; b=${common##*/}; }
+  b=${b#.}; b=${b//[_-]/ }
+  printf '%s%s\n' "$(printf %s "${b:0:1}" | tr '[:lower:]' '[:upper:]')" "${b:1}"
+}
+# il comando in italiano semplice: «bun test» -> «test», «tsc» -> «controllo dei tipi»
+cosa_from_cmd() {
+  local c; c=$(printf %s "$1" | tr '[:upper:]' '[:lower:]'); local p=() n i out
+  local re_dep='((npm|pnpm|yarn|bun)( run)? (i|ci|install)|pip install|cargo fetch)([^a-z]|$)'
+  local re_tipi='(^|[^a-z])(tsc|typecheck|type-check|check-types|svelte-check|vue-tsc)([^a-z]|$)'
+  local re_lint='(^|[^a-z])(eslint|lint|biome|stylelint)([^a-z]|$)'
+  local re_build='(^|[^a-z])(build|bundle)([^a-z]|$)'
+  local re_browser='(^|[^a-z])(playwright|cypress|e2e|webkit)([^a-z]|$)'
+  local re_test='(^|[^a-z])(test|tests|vitest|jest|pytest|mocha)([^a-z]|$)|[.]test[.]'
+  [[ $c =~ $re_dep ]] && p+=("preparazione delle dipendenze")
+  [[ $c =~ $re_tipi ]] && p+=("controllo dei tipi")
+  [[ $c =~ $re_lint ]] && p+=("controllo dello stile del codice")
+  [[ $c =~ $re_build ]] && p+=("build")
+  if [[ $c =~ $re_browser ]]; then p+=("test nel browser"); elif [[ $c =~ $re_test ]]; then p+=("test"); fi
+  n=${#p[@]}
+  if [ "$n" = 0 ]; then out=${1%% *}; printf 'un comando: %s\n' "${out##*[/\\]}"; return; fi
+  out="${p[0]}"
+  for ((i=1; i<n; i++)); do if [ $i = $((n-1)) ]; then out="$out e ${p[i]}"; else out="$out, ${p[i]}"; fi; done
+  printf '%s\n' "$out"
+}
+who_agent() {
+  if [ -n "${OFFLOAD_WHO:-}" ]; then echo "$OFFLOAD_WHO"
+  elif compgen -v OPENCLAW_ >/dev/null; then echo Jarvis
+  elif [ -n "${CLAUDECODE:-}" ]; then echo "Claude Code"
+  elif compgen -v CODEX_ >/dev/null; then echo Codex
+  elif compgen -v MUSE >/dev/null; then echo Muse
+  elif compgen -v JCODE >/dev/null; then echo jcode
+  else echo terminale; fi
+}
+# JSON del lavoro, già pronto per `echo` di cmd.exe: niente & | < > ^ % ! " \ ` $ nei valori, niente
+# non-ASCII (jq -a li scrive \uXXXX), così nessun carattere speciale arriva alla riga di comando del PC.
+lavoro_json() {  # progetto cosa chi da pid
+  local p="$1" c="$2" w="$3"
+  p=${p//[&|<>^%!\"\\\`\$$'\r\n']/}; c=${c//[&|<>^%!\"\\\`\$$'\r\n']/}; w=${w//[&|<>^%!\"\\\`\$$'\r\n']/}
+  jq -cna --arg p "${p:0:60}" --arg c "${c:0:120}" --arg w "${w:0:40}" --arg d "$4" --argjson pid "$5" '{progetto:$p,cosa:$c,chi:$w,da:$d,pid:$pid}'
+}
+
+if [ "${1:-}" = key ]; then
+  shift; D="$PWD"; [ "${1:-}" = -C ] && D="$2"
+  D=$(cd "$D" && { git rev-parse --show-toplevel 2>/dev/null || pwd; }) || exit 66
+  repo_key "$D"; echo; exit 0
+fi
+
+# offload clean: elenco delle copie sul PC; --apply toglie solo quelle ferme da piu' di N giorni e non in uso.
+# "Ferma" = niente tocca la cartella (data piu' recente fra cartella, file in radice, marcatore dell'ultimo giro
+# e ultimo giro registrato in runs.jsonl per quel nome). "In uso" = un processo sul PC ha il suo percorso nella
+# riga di comando, o un lock vivo sulla Mac. Ogni rimozione finisce in ~/.cache/offload/clean.log.
+if [ "${1:-}" = clean ]; then
+  shift; DAYS=7; APPLY=""
+  while [ $# -gt 0 ]; do case "$1" in --days) DAYS="$2"; shift 2 ;; --apply) APPLY=1; shift ;; *) say "clean: opzione sconosciuta $1"; exit 64 ;; esac; done
+  pc_up || { say "PC non raggiungibile"; exit 69; }
+  ROOT_WIN=${ROOT_PC//\//\\}
+  # script via -EncodedCommand (UTF-16LE in base64): da stdin PowerShell non chiude i blocchi su piu' righe e tace
+  PSCLEAN=$(cat <<PS
+\$root = '$ROOT_WIN'
+\$procs = @(Get-CimInstance Win32_Process | Where-Object { \$_.CommandLine } | ForEach-Object { \$_.CommandLine })
+function E(\$d) { [int64](([datetimeoffset]\$d).ToUnixTimeSeconds()) }
+\$rows = @(Get-ChildItem -LiteralPath \$root -Directory | ForEach-Object {
+  \$p = \$_.FullName; \$newest = \$_.LastWriteTime
+  Get-ChildItem -LiteralPath \$p -Force -File -ErrorAction SilentlyContinue | ForEach-Object { if (\$_.LastWriteTime -gt \$newest) { \$newest = \$_.LastWriteTime } }
+  \$lr = Join-Path \$p '.git\\offload-meta\\last-run'; \$last = 0
+  if (Test-Path -LiteralPath \$lr) { \$last = E (Get-Item -LiteralPath \$lr).LastWriteTime }
+  \$use = \$false; foreach (\$c in \$procs) { if (\$c.IndexOf(\$p, [StringComparison]::OrdinalIgnoreCase) -ge 0) { \$use = \$true; break } }
+  [pscustomobject]@{ name = \$_.Name; touched = (E \$newest); lastRun = \$last; inUse = \$use }
+})
+ConvertTo-Json -InputObject \$rows -Compress
+PS
+)
+  LISTJ=$("${SSH[@]}" "$HOST" "powershell -NoProfile -NonInteractive -EncodedCommand $(printf '%s' "$PSCLEAN" | iconv -f UTF-8 -t UTF-16LE | base64 | tr -d '\n')" </dev/null 2>/dev/null | tr -d '\r')
+  [ -n "$LISTJ" ] || { say "clean: il PC non ha risposto con l'elenco"; exit 70; }
+  mkdir -p ~/.cache/offload; CLOG=~/.cache/offload/clean.log; NOW=$(date +%s); CUT=$((NOW - DAYS * 86400)); TOTAL=0; DEL=()
+  while IFS=$'\t' read -r name touched lastrun inuse; do
+    TOTAL=$((TOTAL + 1))
+    base=$(printf %s "$name" | sed -E 's/__?[0-9a-f]{6}$//')
+    # ultimo giro registrato dalla Mac per questo nome (copie vecchie: nome della cartella; nuove: marcatore sul PC)
+    ran=$(jq -rs --arg b "$base" '[.[] | select((.dir | gsub("[^A-Za-z0-9_-]"; "_")) == $b) | .at] | (max // 0) / 1000 | floor' ~/.cache/offload/runs.jsonl 2>/dev/null || echo 0)
+    last=$touched; [ "$lastrun" -gt "$last" ] && last=$lastrun; [ "${ran:-0}" -gt "$last" ] && last=$ran
+    lockpid=$(cat "$LOCKS/$name.lock/pid" 2>/dev/null || true)
+    if [ -n "$lockpid" ] && ps -p "$lockpid" >/dev/null 2>&1; then inuse=true; fi
+    age=$(( (NOW - last) / 86400 ))
+    if [ "$inuse" = true ]; then verdict="in uso"
+    elif [ "$last" -gt "$CUT" ]; then verdict="recente"
+    elif [[ ! $name =~ ^[A-Za-z0-9_.-]+$ ]]; then verdict="nome anomalo, resta"
+    else verdict="da togliere"; DEL+=("$name"); fi
+    printf '%-48s %4s gg  %s\n' "$name" "$age" "$verdict"
+  done < <(printf '%s' "$LISTJ" | jq -r '.[] | [.name, .touched, .lastRun, .inUse] | @tsv')
+  say "clean: $TOTAL copie sul PC, ${#DEL[@]} ferme da piu' di $DAYS giorni e non in uso"
+  if [ -n "$APPLY" ] && [ ${#DEL[@]} -gt 0 ]; then
+    cmd=""
+    for n in "${DEL[@]}"; do
+      cmd="${cmd:+$cmd& }rmdir /s /q \"$ROOT_WIN\\$n\" "
+      printf '%s remove %s (ferma da oltre %s giorni)\n' "$(date +%Y-%m-%dT%H:%M:%S%z)" "$n" "$DAYS" >> "$CLOG"
+    done
+    "${SSH[@]}" "$HOST" "$cmd" >/dev/null 2>&1 && say "clean: tolte ${#DEL[@]} copie (registro $CLOG)" || { say "clean: rimozione con errori, controlla l'elenco"; exit 70; }
+  elif [ -z "$APPLY" ]; then say "clean: prova a secco, niente tolto (--apply per togliere)"; fi
+  exit 0
+fi
+
+if [ "${1:-}" = status ]; then
+  echo "Mac: $(mac_load) per core ($(getconf _NPROCESSORS_ONLN) core), soglia $MAX_MAC"
+  if pc_up; then echo "PC: acceso ($HOST), CPU $(pc_cpu)%, soglia $MAX_PC%"; else echo "PC: non risponde ($HOST); si sveglia con winwake al primo giro"; fi
+  # lavori sul PC adesso (un file per giro, scritto qui sotto; pid morto = avanzo di un kill -9)
+  for f in ~/.cache/offload/running/*.json; do
+    [ -f "$f" ] || continue
+    kill -0 "$(jq -r .pid "$f")" 2>/dev/null || continue
+    jq -r '"sul PC ora: \(.cmd) (\(.dir), \(.who), da \(((now*1000 - .at)/1000|floor))s)"' "$f"
+  done
+  exit 0
+fi
+
+DIR=""; WHERE=auto; FORCED=""; GETS=(); MAC_CMD=""; WHAT="${OFFLOAD_COSA:-}"
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -C) DIR="$2"; shift 2 ;;
+    --pc) [ "$WHERE" = local ] && { say "--pc e --local insieme"; exit 64; }; WHERE=pc; FORCED=1; shift ;;
+    --local) [ -n "$FORCED" ] && { say "--pc e --local insieme"; exit 64; }; WHERE=local; shift ;;
+    --get) GETS+=("$2"); shift 2 ;;
+    --mac-cmd) MAC_CMD="$2"; shift 2 ;;
+    --cosa) WHAT="$2"; shift 2 ;;
+    --) shift; break ;;
+    -h|--help) sed -n 2,18p "$0"; exit 0 ;;
+    *) break ;;
+  esac
+done
+[ $# -gt 0 ] || { sed -n 2,18p "$0" >&2; exit 64; }
+CMD="$*"
+DIR="${DIR:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}"
+DIR="$(cd "$DIR" && pwd)" || exit 66
+
+run_local() { say "Mac ($1)"; cd "$DIR" && exec bash -c "${MAC_CMD:-$CMD}"; }
+
+# decisione
+LOAD=$(mac_load)
+if [ "$WHERE" = auto ]; then
+  # carico illeggibile = non so se il Mac e' scarico: va sul PC, che resta qui se non risponde.
+  # Prima andava qui in silenzio (con l vuoto awk lo dava "<= soglia"): la prova Codex del 23/10 e' girata sul Mac.
+  if [ -n "$LOAD" ] && awk -v l="$LOAD" -v m="$MAX_MAC" 'BEGIN{exit !(l <= m)}'; then run_local "carico $LOAD per core"; fi
+  [ -n "$LOAD" ] || say "carico del Mac non leggibile: provo il PC"
+  WHERE=pc
+fi
+[ "$WHERE" = local ] && run_local "forzato"
+
+# Una cartella fuori da git con piu' di OFFLOAD_MAX_FILES file non e' un progetto e non si copia: il 27/10 un
+# `offload -- node --version` lanciato da jcode nella home ha impacchettato per 9 ore 980 mila file, 115 GB, in
+# E:\offload, tenendo sveglio il PC e il tar al 20% sul Mac. find | head si ferma al primo file di troppo.
+MAXF="${OFFLOAD_MAX_FILES:-20000}"
+if ! git -C "$DIR" rev-parse --is-inside-work-tree >/dev/null 2>&1 \
+  && [ "$(cd "$DIR" && find . -type f -not -path '*/node_modules/*' -not -path '*/.git/*' 2>/dev/null | head -n $((MAXF + 1)) | wc -l | tr -d ' ')" -gt "$MAXF" ]; then
+  [ -n "$FORCED" ] && { say "non copio $DIR: fuori da git e con piu' di $MAXF file. Lancia da un progetto o con -C <cartella>"; exit 64; }
+  run_local "non copio $DIR: fuori da git e con piu' di $MAXF file"
+fi
+
+if ! pc_up; then
+  say "PC spento, lo sveglio"
+  ~/.local/bin/winwake >&2 || true
+  if ! pc_up; then
+    [ "${OFFLOAD_STRICT:-}" = 1 ] && { say "PC non raggiungibile"; exit 69; }
+    # --pc non parte mai sul Mac: la regola di Codex che lo lascia uscire dalla sandbox vale solo per questo
+    [ -n "$FORCED" ] && { say "PC non raggiungibile e --pc: non gira sul Mac"; exit 69; }
+    run_local "PC non raggiungibile, resto qui"
+  fi
+fi
+CPU=$(pc_cpu); CPU=${CPU:-0}
+if [ "$CPU" -gt "$MAX_PC" ] && [ -z "$FORCED" ] && [ "${OFFLOAD_STRICT:-}" != 1 ]; then run_local "PC occupato ($CPU%)"; fi
+
+# copia: file del repo (tracciati + nuovi non ignorati), segreti esclusi
+NAME=$(repo_key "$DIR"); LOCKNAME=$NAME; LOCKED=""; PRIVATE=""; STAGE=""
+SUBDIR=""; [ -n "$(git -C "$DIR" rev-parse --show-prefix 2>/dev/null)" ] && SUBDIR=1
+LIST=$(mktemp); RUNF=""; SCH_STARTED=""; SCH_DONE=""
+# A fine giro, anche su errore o Ctrl-C: se il PC non ha scritto da solo fine-<pid>.json (ssh caduta,
+# copia fallita, interruzione) lo scrive questa ssh, l'unica in più e solo nei giri andati male.
+on_exit() {
+  local rc=$?
+  if [ -n "$SCH_STARTED" ] && [ -z "$SCH_DONE" ]; then
+    SCH_DONE=1
+    "${SSH[@]}" -o ConnectTimeout=3 "$HOST" "echo {\"rc\":$rc}>\"$SCH_W\\fine-$$.json\" & start \"\" /b schtasks /run /tn wf-autosleep <nul >nul 2>&1" </dev/null >/dev/null 2>&1 || true
+  fi
+  # copia privata (il giro gemello teneva quella condivisa): via anche dal PC, in coda, cosi' non si aspetta node_modules
+  # (ssh staccata in coda: `start /b` sul PC muore con la sessione)
+  [ -n "$PRIVATE" ] && ( nohup "${SSH[@]}" -o ConnectTimeout=3 "$HOST" "rmdir /s /q $ROOT_WIN\\$NAME" </dev/null >/dev/null 2>&1 & )
+  [ -n "$LOCKED" ] && rm -rf "$LOCKS/$LOCKNAME.lock"
+  rm -rf ${STAGE:+"$STAGE"}
+  rm -f "$LIST" ${RUNF:+"$RUNF"}
+}
+trap on_exit EXIT; trap 'exit 130' INT; trap 'exit 143' TERM
+# Una copia per repository: due giri sullo stesso repo non possono scrivere insieme nella stessa cartella (file e
+# node_modules a meta'). Il secondo aspetta; se non si libera lavora su una copia sua. Lock sulla Mac, vedi lock_take.
+if lock_take "$LOCKNAME" "${OFFLOAD_LOCK_WAIT:-15}"; then LOCKED=1
+else PRIVATE=1; NAME="${NAME}_r$$"; say "copia condivisa ancora occupata: lavoro su una copia mia ($NAME), la tolgo a fine giro"; fi
+( cd "$DIR"
+  if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then git -c core.quotepath=false ls-files -co --exclude-standard
+  else find . -type f -not -path '*/node_modules/*' -not -path '*/.git/*' | sed 's|^\./||'; fi
+) | while IFS= read -r f; do [ -f "$DIR/$f" ] && printf '%s\n' "$f"; done | grep -Eiv "$SECRET_RE" > "$LIST"
+SKIPPED=$( cd "$DIR"; (git -c core.quotepath=false ls-files -co --exclude-standard 2>/dev/null || true) | grep -Eic "$SECRET_RE" || true)
+say "PC (Mac $LOAD per core, PC $CPU%): copio $(wc -l < "$LIST" | tr -d ' ') file in $ROOT_PC/$NAME${SKIPPED:+, $SKIPPED segreti esclusi}"
+# lavoro in corso per lo schermo del PC: scritto nella stessa ssh della copia (zero connessioni in più),
+# poi un colpo a wf-autosleep perché aggiorni stato.js subito invece che al minuto
+WHO=$(who_agent)
+PROGETTO="${OFFLOAD_PROGETTO:-$(project_name "$DIR")}"
+COSA="${WHAT:-$(cosa_from_cmd "$CMD")}"
+T_START=$(date +%s)
+DA_ISO=$(date -r "$T_START" +%Y-%m-%dT%H:%M:%S%z); DA_ISO="${DA_ISO%??}:${DA_ISO: -2}"
+LAVORO=$(lavoro_json "$PROGETTO" "$COSA" "$WHO" "$DA_ISO" $$)
+# git sul PC: i commit che ha gia' non viaggiano (un bundle di topics-app intero sono 120 MB)
+BASIS=$("${SSH[@]}" "$HOST" "git -C \"$ROOT_PC/$NAME\" rev-parse --all 2>nul" </dev/null 2>/dev/null | tr -d '\r' | grep -E '^[0-9a-f]{40,64}$' || true)
+[ -n "$BASIS" ] && BASIS=$(printf '%s\n' "$BASIS" | git -C "$DIR" cat-file --batch-check='%(objectname) %(objecttype)' 2>/dev/null | awk '$2=="commit"{print $1}')
+STAGE=$(mktemp -d); META="$STAGE/.git/offload-meta"
+build_meta
+SCH_STARTED=1
+( cd "$DIR" && COPYFILE_DISABLE=1 tar -czf - -T "$LIST" ) \
+  | "${SSH[@]}" "$HOST" "mkdir \"$SCH_W\" 2>nul & echo $LAVORO>\"$SCH_W\\lavoro-$$.json\" & start \"\" /b schtasks /run /tn wf-autosleep <nul >nul 2>&1 & mkdir \"${ROOT_PC//\//\\}\\$NAME\" 2>nul & tar -xzf - -C \"$ROOT_PC/$NAME\"" \
+  || { say "copia fallita"; exit 70; }
+# (mkdir senza if: `if cond mkdir X & tar` lega & dentro l'if e a cartella
+#  esistente non gira nemmeno tar (copia muta); le parentesi inghiottono il
+#  resto della riga via ssh. L'errore di mkdir esistente va in nul. 16/10/26)
+# metadati e allineamento git/file tolti: seconda ssh, dopo l'estrazione (tar -T e -C insieme non si compongono)
+( COPYFILE_DISABLE=1 tar -czf - -C "$STAGE" .git ) \
+  | "${SSH[@]}" "$HOST" "tar -xzf - -C \"$ROOT_PC/$NAME\" && powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File \"$ROOT_WIN\\$NAME\\.git\\offload-meta\\sync.ps1\"" \
+  || say "ATTENZIONE: git e file tolti sul PC non allineati"
+
+# esecuzione: output in diretta, exit code del comando
+T0=$(date +%s)
+# lavoro in corso, letto dall'hub (:3360/api/machines) per la tray: cosa, da quando, per chi.
+# Il file sparisce a fine giro; uno rimasto da un kill -9 lo scarta l'hub (pid morto).
+RUNF=~/.cache/offload/running/$$.json
+mkdir -p ~/.cache/offload/running && jq -cn --argjson pid $$ --argjson at "$((T0 * 1000))" --arg dir "$(basename "$DIR")" --arg cmd "${CMD:0:120}" \
+  --arg who "$WHO" --arg session "${CLAUDE_CODE_SESSION_ID:-}" --arg what "$WHAT" '{pid:$pid,at:$at,dir:$dir,cmd:$cmd,who:$who,session:$session} + (if $what == "" then {} else {what:$what} end)' > "$RUNF" 2>/dev/null || true
+# Dopo il comando il PC scrive da solo fine-<pid>.json con l'exit code (call set/%^ rimanda l'espansione
+# di errorlevel a dopo il comando, e l'exit code del giro resta quello del comando).
+"${SSH[@]}" "$HOST" "cd /d \"${ROOT_PC//\//\\}\\$NAME\" && $CMD& call set RC=%^errorlevel%& call echo {\"rc\":%^RC%}>\"$SCH_W\\fine-$$.json\"& start \"\" /b schtasks /run /tn wf-autosleep <nul >nul 2>&1& call exit %^RC%"
+RC=$?
+[ "$RC" != 255 ] && SCH_DONE=1
+# una riga per giro sul PC: il riepilogo del freno del Mac (usage-hub) dice quanti lavori pesanti sono andati di la'
+mkdir -p ~/.cache/offload && jq -cn --argjson at "$((T0 * 1000))" --argjson s "$(( $(date +%s) - T0 ))" --arg dir "$(basename "$DIR")" --arg cmd "${CMD:0:80}" --argjson rc "$RC" \
+  '{at:$at,dir:$dir,cmd:$cmd,rc:$rc,seconds:$s}' >> ~/.cache/offload/runs.jsonl 2>/dev/null || true
+
+# ritorno dei file chiesti
+for g in "${GETS[@]+"${GETS[@]}"}"; do
+  if "${SSH[@]}" "$HOST" "tar -czf - -C \"$ROOT_PC/$NAME\" \"$g\"" | ( cd "$DIR" && tar -xzf - ); then say "riportato $g"
+  else say "non riesco a riportare $g"; fi
+done
+say "fine sul PC, exit $RC"
+exit $RC

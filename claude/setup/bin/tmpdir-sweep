@@ -1,0 +1,101 @@
+#!/usr/bin/env python3
+"""tmpdir-sweep: porta nel Cestino (mai rm) le voci vecchie di $TMPDIR.
+
+  tmpdir-sweep [--days 3] [--dry-run]
+
+Una voce parte solo se: è tua, non è socket/fifo, né una cache o un servizio vivo; nessun file al suo
+interno è stato toccato negli ultimi N giorni; nessun processo la tiene aperta (un lsof solo, che vede
+anche cwd e mmap). Il Cestino non lo svuota nessuno qui: lo fa Attilio.
+
+Non è la cura delle perdite (quella sta in chi crea il temporaneo: trap/finally/atexit e un $TMPDIR
+suo nei test, vedi tmp-leak-test.sh). Serve per il vecchio che non ha un padrone: script lanciati a
+mano, Playwright, browser uccisi.
+"""
+import collections, datetime, os, stat, subprocess, sys, time
+
+T = os.environ.get("TMPDIR") or subprocess.check_output(["getconf", "DARWIN_USER_TEMP_DIR"], text=True).strip()
+T = T.rstrip("/")
+DAYS = float(sys.argv[sys.argv.index("--days") + 1]) if "--days" in sys.argv else 3.0
+DRY = "--dry-run" in sys.argv
+LOG = os.path.expanduser("~/.claude/jarvis/logs/tmpdir-sweep.log")
+PROTECT = ("node-compile-cache", "com.apple.", ".com.apple.", "TemporaryItems", "jcode.", "jcode-daemon", "jcode-debug",
+           "jcode-await", "jcode-bg", "jcode-swarm", "ai-bridge")
+
+now = time.time()
+cut = now - DAYS * 86400
+uid = os.getuid()
+
+# 1. voci con qualcosa di recente al loro interno (un find solo)
+recent = set()
+find = ["find", T, "-mindepth", "2", "-newermt", "@%d" % cut, "-print0"]
+for path in subprocess.run(find, capture_output=True).stdout.split(b"\0"):
+    if path:
+        recent.add(os.fsdecode(path)[len(T) + 1:].split("/", 1)[0])
+
+# 2. voci tenute aperte da un processo (aperto, cwd, mmap): un lsof solo
+opened = set()
+for line in subprocess.run(["lsof", "-nP", "-F", "n"], capture_output=True).stdout.split(b"\n"):
+    if line.startswith(b"n"):
+        name = os.fsdecode(line[1:])
+        for pre in (T + "/", "/private" + T + "/"):
+            if name.startswith(pre):
+                opened.add(name[len(pre):].split("/", 1)[0].split(" ")[0])
+
+# 3. candidati
+keep, cand = collections.Counter(), []
+for e in os.scandir(T):
+    n = e.name
+    try:
+        st = e.stat(follow_symlinks=False)
+    except OSError:
+        keep["illeggibile"] += 1; continue
+    if st.st_uid != uid:
+        keep["di altri"] += 1
+    elif stat.S_ISSOCK(st.st_mode) or stat.S_ISFIFO(st.st_mode):
+        keep["socket/fifo"] += 1
+    elif n.startswith(PROTECT):
+        keep["cache o servizio vivo"] += 1
+    elif max(st.st_ctime, st.st_mtime) > cut or n in recent:
+        keep["recente"] += 1
+    elif n in opened:
+        keep["tenuta aperta"] += 1
+    else:
+        cand.append(os.path.join(T, n))
+
+# 4. Cestino a blocchi. Il peso si misura sul totale di $TMPDIR prima e dopo: sommare du voce per voce
+# su migliaia di argomenti ha dato 1,37 GB dove il calo reale era circa 0,5 (misurato, 23/10).
+def totale_kb():
+    out = subprocess.run(["du", "-sk", T], capture_output=True, text=True).stdout
+    return int(out.split()[0]) if out.strip() else 0
+
+prima = totale_kb() if not DRY else 0
+def carico_per_core():
+    return os.getloadavg()[0] / (os.cpu_count() or 1)
+
+if not DRY:
+    for i in range(0, len(cand), 2000):
+        # a blocchi con una pausa: ogni voce spostata fa lavorare Finder e fseventsd (23/10: carico 85 su 12 core).
+        # Sopra 3 per core si ferma: il resto resta in $TMPDIR e lo prende il giro dopo.
+        if carico_per_core() > 3:
+            print(f"carico {carico_per_core():.1f} per core: mi fermo, il resto aspetta il prossimo giro")
+            break
+        # trash va avanti anche se il sistema protegge una voce (errore 513): resta dov'è, e il conto lo dice
+        subprocess.run(["/usr/bin/trash", *cand[i:i + 2000]], stderr=subprocess.DEVNULL)
+        time.sleep(10)
+moved = sum(1 for c in cand if not os.path.lexists(c))
+tenute = ", ".join(f"{k} {v}" for k, v in keep.most_common())
+if DRY:
+    line = (f"{datetime.datetime.now():%Y-%m-%d %H:%M} prova: {len(cand)} voci vecchie di oltre {DAYS:g} giorni; "
+            f"tenute: {tenute}")
+else:
+    dopo = totale_kb()
+    rimaste = len(cand) - moved
+    line = (f"{datetime.datetime.now():%Y-%m-%d %H:%M} nel Cestino: {moved} voci"
+            + (f" ({rimaste} non spostate: protette dal sistema o rimaste per lo stop del carico)" if rimaste else "")
+            + f"; $TMPDIR {prima / 1048576:.2f} → {dopo / 1048576:.2f} GB (il calo include ciò che nel frattempo è stato scritto); "
+            f"tenute: {tenute}")
+print(line)
+if not DRY:
+    os.makedirs(os.path.dirname(LOG), exist_ok=True)
+    with open(LOG, "a") as f:
+        f.write(line + "\n")

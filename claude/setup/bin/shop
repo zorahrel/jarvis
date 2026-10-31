@@ -1,0 +1,31 @@
+#!/bin/sh
+# shop — CLI confronto prezzi (shopping-mcp via mcporter).
+# Gira da ~/.local/share/shop-cli, che ha node_modules proprio: la risoluzione
+# dalla cache globale di bun falliva a caso su @modelcontextprotocol/client/_shims.
+D="$HOME/.local/share/shop-cli"
+
+# Un Chrome ucciso a meta' lascia SingletonLock nel profilo: ogni lancio
+# successivo muore con "ProcessSingleton ... already in use". Il lock e' un
+# symlink "host-PID": si risolve il pid invece di fidarsi di pgrep, che di
+# fianco a un Chrome in chiusura dice "occupato" e blocca la pulizia.
+P=/tmp/shopping-mcp-profile
+if [ -L "$P/SingletonLock" ]; then
+  pid=$(readlink "$P/SingletonLock" | sed 's/.*-//')
+  # Il Chrome precedente puo' essere ancora in chiusura: gli si danno 10s.
+  n=0
+  while [ "$n" -lt 10 ] && kill -0 "$pid" 2>/dev/null; do sleep 1; n=$((n+1)); done
+  # Ancora vivo dopo 10s e nessun shop.ts in giro = orfano, si abbatte.
+  if kill -0 "$pid" 2>/dev/null && ! pgrep -f "shop-cli/shop.ts" >/dev/null 2>&1; then
+    pkill -9 -f "shopping-mcp-profile"; sleep 1
+  fi
+  kill -0 "$pid" 2>/dev/null || rm -f "$P/SingletonLock" "$P/SingletonCookie" "$P/SingletonSocket"
+fi
+
+for i in 1 2 3; do
+  out=$(cd "$D" && bun run "$D/shop.ts" "$@" 2>&1); rc=$?
+  case "$out" in
+    *"Cannot find module '@modelcontextprotocol"*) sleep 2; continue ;;
+  esac
+  printf '%s\n' "$out"; exit $rc
+done
+printf '%s\n' "$out" >&2; exit 1

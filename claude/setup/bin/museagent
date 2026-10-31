@@ -1,0 +1,64 @@
+#!/bin/bash
+# Subagent su Muse Spark 1.3 (Meta): prima l'abbonamento Muse (`muse exec`, account Meta), poi il canale
+# gratuito di OpenCode Zen come riserva, se l'abbonamento non parte (login scaduto, limite).
+# Zen gratis da solo non regge: al limite di richieste OpenCode riprova per minuti e poi esce, anche a
+# meta' di un task di ore (08/10, chat Prince of Persia: 2 ore e mezza perse, poi 6 minuti a vuoto).
+# Zen gratis vale solo da dentro OpenCode (via HTTP risponde FreeTierError), quindi si passa da `opencode run`.
+# Uso: freeagent [-m modello] [-C dir] "task"   (-m provider/modello = solo OpenCode, senza abbonamento)
+# Env MUSE_MODEL: modello per questa chiamata, default muse-spark-1.3 (bench 12/10: Wonder Full max non rende
+# di piu' e consuma quota fino al 429). MUSE_MODEL=muse-wonder-1.0 per Wonder; mai la variante full (Attilio 13/10).
+# Env FREEAGENT_EXTRA: flag aggiuntive per 'muse exec' (es. "--disable-reminders").
+# Il modello vede la cartella in cui gira e la puo' modificare: lancialo nella dir giusta.
+# shellcheck disable=SC2206
+extra=(${FREEAGENT_EXTRA:-})
+extra+=(--model "${MUSE_MODEL:-muse-spark-1.3}")
+model=
+dir="$PWD"
+while [ $# -gt 1 ]; do
+  case "$1" in
+    -m) model="$2"; shift 2 ;;
+    -C) dir="$2"; shift 2 ;;
+    *) break ;;
+  esac
+done
+[ -z "$1" ] && { echo "uso: museagent [-m modello] [-C dir] \"task\"" >&2; exit 2; }
+cd "$dir" || exit 2
+zen() { exec /opt/homebrew/bin/opencode run -m "${model:-opencode/muse-spark-1.3-contributor-free}" "$1" </dev/null; }
+[ -n "$model" ] && zen "$1"
+
+# Freno del pacing (18/10): se l'abbonamento Muse corre oltre il ritmo, si va diretti su Zen gratis.
+# Contatore giu' = il gate lascia passare (exit 0). Lanciato da delegate (DELEGATE=1): il hub ha gia' deciso.
+if [ -z "$DELEGATE" ] && verdict=$(node "$HOME/.claude/jarvis/tools/usage-hub/bin/usage-hub.mjs" gate massivo --provider muse 2>&1); [ $? -eq 10 ]; then
+  echo "freeagent: Muse frenato ($verdict), passo a Zen gratuito." >&2
+  zen "$1"
+fi
+
+start=$SECONDS
+seen=$(mktemp -t museagent); trap 'trash "$seen" 2>/dev/null || /bin/rm -f "$seen"' EXIT
+# --yolo: niente sandbox ne' approvazioni, come OpenCode in headless (shell, rete, ssh verso il PC).
+# --json + jq: il log mostra comandi e output mentre lavora; senza, stampa solo la risposta finale.
+"$HOME/.local/bin/muse" exec --yolo --json "${extra[@]}" "$1" </dev/null | /opt/homebrew/bin/jq -R -j --unbuffered '
+  fromjson? | .payload as $p |
+  if .payload_type == "run.output.delta" then $p.text
+  elif .payload_type == "tool.result" then
+    ($p.text | fromjson? // null) as $s |
+    if ($s | type) == "object" and $s.command then
+      "\n$ \($s.command)\n\($s.output // "")\(if ($s.exit_code // 0) != 0 then "\n[exit \($s.exit_code)]" else "" end)\n"
+    else "\n\($p.text)\n" end
+  elif (.payload_type | startswith("run.terminal.")) then
+    "\n" + (if $p.terminal == "completed" then "" else "[muse: \($p.terminal) \($p.reason // "")]\n" end)
+  else empty end' | tee "$seen"
+rc=${PIPESTATUS[0]}
+# 429 «quota esaurita»: lo si dice al hub fino al reset dichiarato, così delegate smette di sceglierlo (25/10: tre lavori
+# di fila mandati su Muse al 99% come usa-o-perdi, morti tutti sul 429), e il compito passa a Zen anche dopo il primo minuto.
+if [ "$rc" -ne 0 ] && grep -q 'Subscription quota exhausted' "$seen"; then
+  until=$(grep -o 'resets at [0-9T:.Z-]*' "$seen" | head -1 | cut -d' ' -f3)
+  [ -n "$until" ] && curl -s --max-time 5 -X POST http://127.0.0.1:3360/api/exhausted -H 'Content-Type: application/json' \
+    -d "{\"provider\":\"muse\",\"until\":\"$until\",\"reason\":\"quota esaurita fino a $until\"}" >/dev/null 2>&1
+  echo "freeagent: quota Muse esaurita fino a ${until:-?}, segnata nel hub; passo a Zen gratuito." >&2
+  zen "$1"
+fi
+# Fallito nel primo minuto = l'abbonamento non e' partito. Dopo, ha gia' lavorato: si esce col suo codice.
+if [ "$rc" -eq 0 ] || [ $((SECONDS - start)) -ge 60 ]; then exit "$rc"; fi
+echo "freeagent: l'abbonamento Muse non e' partito (exit $rc), passo a Zen gratuito." >&2
+zen "$1"

@@ -1,0 +1,1363 @@
+#!/usr/bin/env python3
+"""mac-health — salute del Mac: non chiude ne' cancella niente, ma cio' che un agente sa curare diventa una card.
+
+    mac-health                 controllo mensile completo
+    mac-health --weekly        solo avvio, sicurezza, backup e disco libero (pochi secondi)
+    mac-health --all           stampa il riepilogo anche quando e' tutto a posto
+    mac-health --report FILE   dove scrivere il rapporto completo
+    mac-health --dry-run       prova: nessuna card, stato non toccato, dice le card che aprirebbe
+
+Stampa SOLO le righe che aspettano Attilio: e' il testo che il cron OpenClaw manda
+su WhatsApp, e se non stampa niente il messaggio non parte. Le righe che un agente
+sa curare (servizi che ripartono a vuoto, demoni di app tolte, job falliti, backup
+notturno fermo, resti senza padrone) non vanno su WhatsApp: diventano una card
+con board-card, una per chiave, che si chiude con la prova. Il 23/10 Teams e il
+tunnel erano gia' nel messaggio e nessuno ha agito (25/10: 112.131 e 31.483 avvii).
+Il rapporto completo, con gli inventari, va sempre in logs/mac-health/. La
+decisione su cosa chiudere, cancellare o disinstallare resta ad Attilio.
+
+Nato il 23/10/2026 dai sette prompt «Claude Prompts» (processi, avvio, disco,
+app non usate, sicurezza, backup, rapporto mensile) trasformati in soglie.
+Riusa psj (nomi dei processi) e memhog (footprint vero: ps rss mente 30x su Bun).
+Una riga che resta per scelta va in state/mac-health.accept.json
+([{"match": "...", "why": "..."}]), come cron-health: non si toglie il controllo.
+"""
+import datetime
+import glob
+import hashlib
+import json
+import os
+import plistlib
+import re
+import subprocess
+import sys
+import time
+import urllib.parse
+from importlib.machinery import SourceFileLoader
+from pathlib import Path
+
+HOME = str(Path.home())
+JARVIS = Path(__file__).resolve().parent.parent.parent
+psj = SourceFileLoader("psj", str(JARVIS / "scripts/psj/psj")).load_module()  # mette anche /usr/sbin nel PATH (lsof)
+memhog = SourceFileLoader("memhog", str(JARVIS / "scripts/devreap/memhog")).load_module()
+
+STATE = JARVIS / "state/mac-health.json"
+ACCEPT = JARVIS / "state/mac-health.accept.json"
+LOGDIR = JARVIS / "logs/mac-health"
+
+DAY = 86400
+CPU_AVG_PCT = 5.0      # soglia del documento, ma come media sulla vita del processo: un picco non rallenta il Mac
+CPU_MIN_HOURS = 6      # sotto e' una build o un test
+MEM_PCT = 5.0          # della RAM, sul footprint
+LOOP_PER_HOUR = 1.0    # riavvii/ora con uscita != 0: teams2.agent ne faceva 124, il tunnel llamacpp 30 (23/10)
+RESPAWN_RUNS = 1000    # oltre, anche lento e' un servizio che riparte a vuoto: la media sull'uptime lo diluisce
+RESTI_N = 5            # resti senza padrone visti da devreap: il 25/10 erano 36 per 2,1 GB
+RESTI_MB = 500
+# contratto con devreap --list (resto_decide/resto_line): il verdetto e' «si chiude ora», «aspetta (passate…)»,
+# «in uso, il conto riparte», «aspetta (lsof non risponde…)»; con DEVREAP_RESTO_KILL=0 prende il prefisso «osservo: »
+# («osservo: si chiuderebbe ora», «osservo: aspetta (…)»). «in uso» e «lsof non risponde» non sono resti contati:
+# il primo e' un processo con client vivi, il secondo e' una passata cieca di devreap.
+RESTO_OBSERVE = "osservo: "
+RESTO_COUNTED = ("si chiude ora", "si chiuderebbe ora", "aspetta")
+RESTO_BLIND = "lsof non risponde"
+# job che falliscono per una scelta di Attilio, non per un guasto: niente card per gli agenti, la riga resta a lui
+ATTILIO_CHOICES = {
+    "com.armonia.topics-db-snapshot": "dove tenere la copia fuori disco del DB di Topics (~/.topics/backup-offsite.json)",
+}
+BLIND_SFL = "sfltool non ha risposto: elementi d'avvio NON controllati"
+PLIST_DIRS = (HOME + "/Library/LaunchAgents", "/Library/LaunchAgents", "/Library/LaunchDaemons")
+DISK_FREE_PCT = 15     # lo swap vive sullo stesso disco: senza spazio non cresce e il Mac si pianta
+UNUSED_DAYS = 180
+OLD_DOWNLOAD_DAYS = 90
+OLD_DOWNLOADS_GB = 5
+INSTALLERS_GB = 2
+DUPES_GB = 2
+BIG_LOG_GB = 1
+UNUSED_APPS_GB = 1     # sette app da 100 MB in tutto non valgono un messaggio
+MEMLOG_STALE_H = 3     # il registro della memoria scrive ogni 5 min: 3 ore senza righe e' fermo, non in ritardo
+MEMLOG_MIN_COVER = 0.5 # meno della meta' delle righe attese in 7 giorni = a buchi (Mac spento a parte, che qui non conta)
+MEMLOG_SWAP_SHARE = 0.75  # swap oltre l'85% E letta da disco in almeno 3 campioni su 4: pressione cronica, non un picco
+PRIVATE_MAX_H = 48     # private/sync.sh gira ogni notte alle 04:32
+UNPUSHED_DAYS = 7      # senza Time Machine un commit non spinto esiste solo su questo disco
+TM_MAX_DAYS = 7
+# Lavori lunghi degli agenti: Topics contro Claude Code (claude -p lanciato da OpenClaw).
+# Nato il 24/10 dalla domanda «Topics e' meglio, e lo resta?»: la riga c'e' sempre nel
+# rapporto, il messaggio parte solo se Topics peggiora.
+AGENTS_DAYS = 7
+AGENTS_LONG_MIN = 15    # sotto e' una risposta, non un lavoro
+AGENTS_MIN_N = 5        # con meno lavori la percentuale non dice niente
+AGENTS_GAP_PTS = 10     # Topics che arriva in fondo 10 punti meno di Claude Code
+TOPICS_ORPHANS_MAX = 10 # il 24/10 erano 37, 27 server statici lasciati da un agente
+OPENCLAW_DB = Path(HOME) / ".openclaw/state/openclaw.sqlite"
+TOPICS_DB = Path(HOME) / "Projects/topics-app/data/topics.db"
+
+# Dove un eseguibile non firmato non ha motivo di stare. Le cartelle nascoste
+# della home no: qui ci vivono jcode, bun, uv, tutti firmati ad hoc e legittimi.
+ODD_DIRS = ("/tmp/", "/private/tmp/", "/var/folders/", "/private/var/folders/",
+            HOME + "/Downloads/", "/Users/Shared/", HOME + "/.Trash/")
+
+# I processi di sistema che salgono in cima: il loro nome non dice niente.
+APPLE_WHAT = {
+    "WindowServer": "disegna lo schermo: sale con piu' monitor e animazioni",
+    "ReportCrash": "raccoglie i crash: se lavora sempre, qualcosa va in crash di continuo",
+    "coresymbolicationd": "decodifica i crash per ReportCrash",
+    "mds_stores": "Spotlight che indicizza", "mds": "Spotlight", "mdworker_shared": "Spotlight che legge i file",
+    "com.apple.WebKit.GPU": "grafica delle pagine web nelle app WebKit (Safari, app web, Playwright)",
+    "com.apple.WebKit.WebContent": "una pagina web aperta in un'app WebKit",
+    "coreaudiod": "audio di sistema", "kernel_task": "il sistema stesso, anche freno termico",
+    "backupd": "Time Machine", "photoanalysisd": "analisi delle foto", "mediaanalysisd": "analisi di foto e video",
+    "bird": "iCloud Drive che sincronizza", "cloudd": "iCloud che sincronizza", "fileproviderd": "iCloud Drive",
+}
+
+CATEGORY = {"games": "gioco", "developer-tools": "sviluppo", "productivity": "produttivita'", "utilities": "utility",
+            "video": "video", "music": "musica", "photography": "foto", "graphics-design": "grafica",
+            "social-networking": "social", "business": "lavoro", "entertainment": "intrattenimento"}
+
+
+def run(args, timeout=30):
+    """stdout+stderr: codesign e tmutil parlano su stderr."""
+    try:
+        p = subprocess.run(args, capture_output=True, text=True, errors="replace", timeout=timeout)
+        return p.stdout + p.stderr
+    except Exception:
+        return ""
+
+
+def short(p):
+    return str(p).replace(HOME, "~")
+
+
+def gb(kb):
+    if kb < 1048576:
+        return f"{max(kb // 1024, 1)} MB"
+    return f"{kb / 1048576:.1f} GB".replace(".", ",")
+
+
+def num(n):
+    return f"{n:,}".replace(",", ".")
+
+
+def secs(t):
+    """etime/time di ps: [[dd-]hh:]mm:ss[.cc]"""
+    d = 0
+    if "-" in t:
+        d, t = t.split("-")
+        d = int(d)
+    p = [float(x) for x in t.split(":")]
+    while len(p) < 3:
+        p.insert(0, 0)
+    return d * DAY + p[0] * 3600 + p[1] * 60 + p[2]
+
+
+def is_apple_path(p):
+    return p.startswith(psj.SYSTEM_PREFIXES) or "/System/Library/" in p
+
+
+_signers = {}
+
+
+def signer(path):
+    """Chi ha firmato l'eseguibile. Solo su processi in esecuzione: codesign legge
+    il binario e gli aggiorna l'atime, che e' proprio l'indizio delle app non usate."""
+    if path in _signers:
+        return _signers[path]
+    out = run(["codesign", "-dvv", path], 20)
+    if "not signed at all" in out:
+        s = "non firmato"
+    elif "Signature=adhoc" in out:
+        s = "firma ad hoc"
+    else:
+        a = re.search(r"Authority=(.+)", out)
+        a = a.group(1).strip() if a else ""
+        if a == "Software Signing":
+            s = "Apple"
+        elif a.startswith("Apple Mac OS Application Signing"):
+            s = "App Store"
+        elif a.startswith("Developer ID Application: "):
+            s = re.sub(r"\s*\([A-Z0-9]+\)$", "", a[len("Developer ID Application: "):])
+        else:
+            s = a or "firma illeggibile"
+    _signers[path] = s
+    return s
+
+
+def trusted(sig):
+    return sig not in ("non firmato", "firma ad hoc", "firma illeggibile")
+
+
+# ---------------------------------------------------------------- raccolta
+
+def ps_rows():
+    rows = []
+    for line in run(["ps", "-Ao", "pid=,ppid=,user=,pcpu=,time=,etime=,rss=,command="]).splitlines():
+        f = line.split(None, 7)
+        if len(f) < 8:
+            continue
+        try:
+            e, c = secs(f[5]), secs(f[4])
+            rows.append(dict(pid=int(f[0]), ppid=int(f[1]), user=f[2], cpu=float(f[3]), etime=e,
+                             avg=100 * c / e if e else 0.0, rss=int(f[6]) / 1024, cmd=f[7]))
+        except ValueError:
+            continue
+    # comm da' il percorso dell'eseguibile anche quando contiene spazi (Beeper Desktop.app)
+    exe = {}
+    for line in run(["ps", "-Ao", "pid=,comm="]).splitlines():
+        f = line.strip().split(None, 1)
+        if len(f) == 2 and f[0].isdigit():
+            exe[int(f[0])] = f[1]
+    for r in rows:
+        r["exe"] = exe.get(r["pid"], r["cmd"].split()[0])
+    return rows
+
+
+def describe(p, labels, cwds):
+    name, proj = psj.name_for(p, cwds.get(p["pid"]), labels.get(p["pid"]))
+    base = os.path.basename(p["exe"])
+    what = next((v for k, v in APPLE_WHAT.items() if base == k or base.startswith(k + ".")), None)
+    if not what:
+        bits = []
+        if is_apple_path(p["exe"]):
+            bits.append("di macOS")
+        else:
+            sig = signer(p["exe"]) if os.path.exists(p["exe"]) else "eseguibile sparito"
+            bits.append(sig if not trusted(sig) or sig == "eseguibile sparito" else f"firmato {sig}")
+        if proj:
+            bits.append(f"progetto {proj}")
+        what = ", ".join(bits)
+    return name, what
+
+
+def processes(rows, ram_mb):
+    labels = psj.launchd_labels()
+    hot = [p for p in rows if p["etime"] >= CPU_MIN_HOURS * 3600 and p["avg"] >= CPU_AVG_PCT]
+    # footprint solo sulla testa per RSS, come memhog: misurarli tutti costerebbe minuti
+    for p in sorted(rows, key=lambda r: -r["rss"])[:30]:
+        p["fp"] = memhog.footprint_mb(p["pid"])
+    heavy = [p for p in rows if (p.get("fp") or 0) >= ram_mb * MEM_PCT / 100]
+    top = sorted((p for p in rows if p.get("fp")), key=lambda r: -r["fp"])[:15]
+    pick = {p["pid"]: p for p in hot + heavy + top}
+    cwds = psj.cwds(list(pick)) if pick else {}
+    out = []
+    for p in pick.values():
+        name, what = describe(p, labels, cwds)
+        out.append(dict(pid=p["pid"], name=name, what=what, avg=p["avg"], hours=p["etime"] / 3600,
+                        fp=p.get("fp"), hot=p in hot, heavy=p in heavy))
+    return out
+
+
+def btm_items():
+    """Elementi d'avvio come li vede macOS (Impostazioni > Elementi di login), senza sudo."""
+    items, uid, cur = [], None, None
+    # sotto carico (load 35, 23/10) dal gateway non ha risposto in 60 s; a riposo ne bastano 4.
+    # Un tentativo solo: il settimanale ha 300 s (cron 20fb44a9) e con backgroundtaskmanagementd
+    # appeso (dal 24/10) due da 180 s lo facevano uccidere prima di stampare. I demoni senza
+    # eseguibile li trova comunque orphan_plists(), che legge i plist dal disco.
+    raw = run(["sfltool", "dumpbtm"], 120)
+    for line in raw.splitlines():
+        m = re.match(r"\s*Records for UID (-?\d+)", line)
+        if m:
+            uid = int(m.group(1))
+            continue
+        if re.match(r"^ #\d+:\s*$", line):
+            cur = {"uid": uid}
+            items.append(cur)
+            continue
+        m = re.match(r"^\s+([A-Za-z ]+): (.*)$", line)
+        if cur is not None and m:
+            cur.setdefault(m.group(1).strip(), m.group(2).strip())
+    keep = []
+    for it in items:
+        typ = re.sub(r"\s*\(0x[0-9a-f]+\)$", "", it.get("Type", ""))
+        if it["uid"] not in (os.getuid(), 0, -2) or typ not in ("login item", "legacy agent", "legacy daemon", "daemon", "agent"):
+            continue
+        url = it.get("URL", "(null)")
+        plist = urllib.parse.unquote(url[7:]) if url.startswith("file://") else None
+        target, missing = launch_target(plist, it.get("Executable Path"))
+        keep.append(dict(id=it.get("Identifier", "?"), name=it.get("Name", "?"), type=typ,
+                         enabled="[enabled" in it.get("Disposition", ""), exe=target or plist,
+                         plist=plist, missing=missing))
+    return keep
+
+
+INTERP = re.compile(r"(^|/)(sh|bash|zsh|python[\d.]*|node|bun|osascript|perl|ruby)$")
+
+
+def launch_target(plist, exe):
+    """Cosa lancia davvero il plist (lo script, non /bin/bash) e se non c'e' piu': OMEGA
+    girava da 6 giorni col venv gia' cancellato e al primo riavvio sarebbe morto in silenzio."""
+    args = []
+    if plist and plist.endswith(".plist") and os.path.exists(plist):
+        d = load_plist(plist)
+        if not isinstance(d, dict):
+            return exe, None
+        args = d.get("ProgramArguments") or []
+        if d.get("Program"):
+            args = [d["Program"]] + args[1:]
+        # SMAppService: BundleProgram e' relativo al bundle che contiene il plist
+        bundle = re.match(r"(.+?\.app)/Contents/Library/", plist)
+        if not args and d.get("BundleProgram") and bundle:
+            args = [f"{bundle.group(1)}/{d['BundleProgram']}"]
+    elif plist and plist.endswith(".plist"):
+        return exe, plist
+    if not args and exe and exe != "(null)":
+        args = [exe]
+    paths = args[:1]
+    if args and INTERP.search(args[0]) and len(args) > 1 and args[1].startswith("/"):
+        paths.append(args[1])
+    return (paths[-1] if paths else exe), next((p for p in paths if p.startswith("/") and not os.path.exists(p)), None)
+
+
+def load_plist(path):
+    """plistlib, e plutil quando plistlib rifiuta: launchd carica anche plist che plistlib no
+    (com.armonia.topics-db-snapshot ha «--» dentro un commento XML, 25/10)."""
+    try:
+        return plistlib.load(open(path, "rb"))
+    except Exception:
+        try:
+            out = subprocess.run(["plutil", "-convert", "xml1", "-o", "-", path], capture_output=True, timeout=10).stdout
+            return plistlib.loads(out)
+        except Exception:
+            return None
+
+
+def parse_disabled(text):
+    """Le etichette spente in `launchctl print-disabled`: «=> disabled», o «=> true» nelle versioni vecchie."""
+    return set(re.findall(r'"([^"]+)" => (?:disabled|true)\b', text))
+
+
+def disabled_labels():
+    """Gli override di `launchctl disable`: reggono ai riavvii, e un job spento cosi' e' gia' curato."""
+    out = set()
+    for dom in (f"gui/{os.getuid()}", "system"):
+        out |= parse_disabled(run(["launchctl", "print-disabled", dom]))
+    return out
+
+
+def orphan_plists(dirs=PLIST_DIRS, disabled=None):
+    """Plist il cui eseguibile non c'e' piu': il demone di un'app tolta. Letti dal disco e non da
+    sfltool, che si appende. Il riordino del 12/10 ha cestinato le app e lasciato i loro plist."""
+    disabled = disabled_labels() if disabled is None else disabled
+    out = []
+    for d in dirs:
+        for pl in sorted(glob.glob(d + "/*.plist")):
+            data = load_plist(pl)
+            if not isinstance(data, dict):
+                continue
+            label = data.get("Label") or os.path.basename(pl)[:-6]
+            if data.get("Disabled") is True or label in disabled:
+                continue
+            _, missing = launch_target(pl, None)
+            if missing:
+                # in /Library/LaunchDaemons gira come root: toglierlo vuole la password di Attilio
+                out.append(dict(label=label, plist=pl, missing=missing, system=d.startswith("/Library/LaunchDaemons")))
+    return out
+
+
+def parse_print(info):
+    """Una voce di `launchctl print`. None se non e' mai uscito o l'ultima uscita e' 0."""
+    ex = re.search(r"\n\s+last exit code = (-?\d+)(?::\s*(\S+))?", info)
+    if ex:
+        code, why = int(ex.group(1)), ex.group(2) or ""
+    else:
+        # ucciso da un segnale: launchctl print scrive «last terminating signal = Killed: 9» e NON «last exit code»
+        # (visto su com.jarvis.devbridge, 25/10). Per il resto del programma un segnale e' l'uscita negativa.
+        sg = re.search(r"\n\s+last terminating signal = ([^\n]+?): (\d+)", info)  # anche «Alarm clock: 14», «Segmentation fault: 11»
+        if not sg:
+            return None
+        code, why = -int(sg.group(2)), sg.group(1)
+    if code == 0:
+        return None
+    runs = re.search(r"\n\s+runs = (\d+)", info)
+    # campi di primo livello (un tab solo): dove gira e dove scrive, per dare alla card cartella e causa
+    top = lambda k: (re.search(rf"\n\t{k} = (.+)", info) or [None, None])[1]
+    args = re.search(r"\n\targuments = \{\n(.*?)\n\t\}", info, re.S)
+    return dict(exit=code, why=why, runs=int(runs.group(1)) if runs else 0,
+                running=bool(re.search(r"\n\s+pid = \d+", info)),
+                # a intervallo o a calendario tanti avvii sono il suo mestiere: devreap ne fa 5.000, ogni 5 minuti
+                periodic=bool(re.search(r"\n\s+run interval = \d+|com\.apple\.launchd\.calendarinterval", info)),
+                wd=top("working directory"), out=top("stdout path"), err=top("stderr path"),
+                args=[a.strip() for a in args.group(1).splitlines()] if args else [x for x in [top("program")] if x])
+
+
+def job_context(x):
+    """Cartella e ultima riga del log di un job: la card deve dire la causa e lavorare nel repo giusto
+    (com.armonia.topics-db-snapshot gira in ~/Projects/topics-app e chiede un backup esterno, 25/10)."""
+    d = x.get("wd")
+    gone = None
+    if d and not os.path.isdir(d):
+        # cartella di lavoro cancellata: board-notte scarterebbe la card ogni notte, quindi niente cartella e niente notte
+        d, gone = None, d
+    elif not d:  # senza WorkingDirectory: il repo dello script lanciato (dietro l'interprete)
+        prog = next((a for a in x.get("args") or [] if a.startswith("/") and not INTERP.search(a) and os.path.isfile(a)), None)
+        top = run(["git", "-C", os.path.dirname(prog), "rev-parse", "--show-toplevel"], 10).strip() if prog else ""
+        d = top if top.startswith("/") else None
+    # l'ultima riga del log piu' recente fra stderr e stdout: un errore vecchio non deve coprire l'uscita di oggi
+    tails = []
+    for p in dict.fromkeys(filter(None, (x.get("err"), x.get("out")))):
+        try:
+            with open(p, "rb") as fh:
+                fh.seek(max(0, os.path.getsize(p) - 4096))
+                lines = [l.strip() for l in fh.read().decode(errors="replace").splitlines() if l.strip()]
+            if lines:
+                tails.append((os.path.getmtime(p), lines[-1][-200:]))
+        except OSError:
+            continue
+    return dict(dir=d, log_tail=max(tails, key=lambda t: t[0])[1] if tails else None, gone=gone)
+
+
+def launchd_failures(uptime_h):
+    out = []
+    targets = []
+    for line in run(["launchctl", "list"]).splitlines()[1:]:
+        f = line.split("\t")
+        if len(f) == 3 and not f[2].startswith("com.apple.") and f[1] not in ("0", "-"):
+            targets.append(f"gui/{os.getuid()}/{f[2]}")
+    for pl in glob.glob("/Library/LaunchDaemons/*.plist"):
+        try:
+            targets.append("system/" + load_plist(pl)["Label"])
+        except Exception:
+            pass
+    for t in targets:
+        x = parse_print(run(["launchctl", "print", t]))
+        if x:
+            out.append(dict(x, label=t.split("/")[-1], domain=t.split("/")[0], rate=x["runs"] / max(uptime_h, 1), **job_context(x)))
+    return out
+
+
+def devreap_list():
+    """L'uscita di `devreap --list`, None se non risponde. Sola lettura: --list non uccide."""
+    try:
+        p = subprocess.run([sys.executable, str(JARVIS / "scripts/devreap/devreap"), "--list"],
+                           capture_output=True, text=True, errors="replace", timeout=60)
+        return p.stdout if p.returncode == 0 else None
+    except Exception:
+        return None
+
+
+def memlog_report():
+    """La sintesi dei 7 giorni di scripts/memlog (registro della memoria, una riga ogni 5 min), None se non risponde.
+    Sola lettura: --report non scrive."""
+    try:
+        p = subprocess.run([sys.executable, str(JARVIS / "scripts/memlog/memlog"), "--report", "--days", "7", "--json"],
+                           capture_output=True, text=True, timeout=30)
+        return json.loads(p.stdout) if p.returncode == 0 else None
+    except Exception:
+        return None
+
+
+def resti(text):
+    """Le righe «resto» di devreap --list: processi il cui padrone (sessione, agente, test) e' sparito.
+    Contratto con devreap (25/10): «  resto pid=<pid> albero=<n> fp=<MB>MB eta=<min>m <motivo> -> <verdetto>».
+    Contano solo i verdetti di RESTO_COUNTED, col prefisso «osservo: » tolto: le righe «in uso» contate davano una card
+    verso processi vivi, e «aspetta (lsof non risponde…)» e' una passata cieca, non un resto."""
+    if text is None:
+        return None
+    out = []
+    for line in text.splitlines():
+        if not re.match(r"\s*resto pid=\d+", line):
+            continue
+        verdict = line.rpartition("->")[2].strip()
+        observed = verdict.startswith(RESTO_OBSERVE)
+        bare = verdict[len(RESTO_OBSERVE):] if observed else verdict
+        if bare.startswith(RESTO_COUNTED) and RESTO_BLIND not in bare:
+            fp = re.search(r"\bfp=(\d+(?:\.\d+)?)MB", line)
+            out.append(dict(line=line.strip(), mb=float(fp.group(1)) if fp else 0.0, verdict=verdict))
+    return out
+
+
+PROTECTED = ("Desktop", "Documents", "Downloads")
+
+
+def readable(path):
+    """Scrivania, Documenti e Download li protegge macOS: dal gateway OpenClaw (node sotto
+    launchd) la prima lettura puo' aprire una richiesta di permesso e restare appesa. Si prova
+    in un processo a parte con un tempo massimo: il controllo non si pianta e dice cosa non ha visto."""
+    try:
+        return subprocess.run(["ls", path], capture_output=True, timeout=10).returncode == 0
+    except Exception:
+        return False
+
+
+def du_scan(roots):
+    """Una passata sola di du: cartelle fino a 3 livelli sotto la home e file oltre 500 MB a ogni
+    profondita'. Mobile Documents e' iCloud: file solo in cloud o doppioni di Scrivania e Documenti."""
+    dirs, big = {}, []
+    depth0 = HOME.count("/")
+    p = subprocess.Popen(["nice", "-n", "15", "du", "-axk", "-I", "Mobile Documents"] + roots, stdout=subprocess.PIPE,
+                         stderr=subprocess.DEVNULL, text=True, errors="replace")
+    for line in p.stdout:
+        kb, _, path = line.rstrip("\n").partition("\t")
+        try:
+            kb = int(kb)
+        except ValueError:
+            continue
+        if path.count("/") - depth0 <= 3:
+            dirs[path] = kb
+        if kb >= 512000:
+            big.append((path, kb))
+    p.wait()
+    files = [(pth, kb) for pth, kb in big if os.path.isfile(pth)]
+    return {k: v for k, v in dirs.items() if not os.path.isfile(k)}, sorted(files, key=lambda x: -x[1])
+
+
+def top_folders(dirs, n=20):
+    """Le cartelle a due livelli dalla home (~/Projects/x, ~/Library/y), come le si apre a mano,
+    piu' le cartelle di primo livello senza sottocartelle. Col figlio piu' grosso quando pesa
+    almeno il 40%: «Application Support» da sola non dice niente, «di cui BeeperTexts» si'."""
+    d0 = HOME.count("/")
+    kids = {}
+    for p in dirs:
+        kids.setdefault(os.path.dirname(p), []).append(p)
+    cand = [p for p in dirs if p.count("/") - d0 == 2 or (p.count("/") - d0 == 1 and p not in kids)]
+    out = []
+    for p in sorted(cand, key=lambda p: -dirs[p])[:n]:
+        k = max(kids.get(p, []), key=lambda c: dirs[c], default=None)
+        out.append((p, dirs[p], (k, dirs[k]) if k and dirs[k] >= 0.4 * dirs[p] else None))
+    return out
+
+
+SF_DATALESS = 0x40000000  # file iCloud scaricato solo a richiesta: leggerlo lo scaricherebbe
+
+
+def walk_files(roots, min_bytes=0, max_depth=None):
+    for root in roots:
+        d0 = root.rstrip("/").count("/")
+        for dp, dn, fn in os.walk(root):
+            dn[:] = [d for d in dn if not d.startswith(".") and d != "node_modules" and not d.endswith((".photoslibrary", ".app"))
+                     and (max_depth is None or dp.count("/") - d0 < max_depth)]
+            for f in fn:
+                fp = os.path.join(dp, f)
+                try:
+                    st = os.lstat(fp)
+                except OSError:
+                    continue
+                if st.st_size >= min_bytes and not (getattr(st, "st_flags", 0) & SF_DATALESS) and os.path.isfile(fp):
+                    yield fp, st
+
+
+def storage(dirs, big, open_dirs):
+    now = time.time()
+    dl = HOME + "/Downloads"
+    old = []
+    for e in os.scandir(dl) if "Downloads" in open_dirs else []:
+        try:
+            st = e.stat(follow_symlinks=False)
+        except OSError:
+            continue
+        if now - st.st_mtime > OLD_DOWNLOAD_DAYS * DAY:
+            old.append((e.path, dirs.get(e.path, st.st_blocks // 2), int((now - st.st_mtime) / DAY)))
+    old.sort(key=lambda x: -x[1])
+    docs = [f"{HOME}/{d}" for d in open_dirs]
+    inst = sorted(((fp, st.st_blocks // 2) for fp, st in walk_files(docs, 0, 3)
+                   if fp.lower().endswith((".dmg", ".pkg", ".mpkg", ".iso", ".xip"))), key=lambda x: -x[1])
+    # doppioni: stessa dimensione, poi primo e ultimo MB. Basta per segnalare; chi cancella guarda prima.
+    by_size = {}
+    for fp, st in walk_files(docs + [HOME + "/Pictures", HOME + "/Movies"], 10 << 20):
+        by_size.setdefault(st.st_size, []).append(fp)
+    dupes = []
+    for size, fps in by_size.items():
+        if len(fps) < 2:
+            continue
+        by_hash = {}
+        for fp in fps:
+            try:
+                with open(fp, "rb") as fh:
+                    h = hashlib.sha256(fh.read(1 << 20))
+                    fh.seek(max(size - (1 << 20), 0))
+                    h.update(fh.read(1 << 20))
+                by_hash.setdefault(h.hexdigest(), []).append(fp)
+            except OSError:
+                continue
+        for group in by_hash.values():
+            if len(group) > 1:
+                dupes.append((size * (len(group) - 1) // 1024, sorted(group)))
+    dupes.sort(key=lambda x: -x[0])
+    t = run(["du", "-sk", HOME + "/.Trash"], 120)
+    m = re.match(r"(\d+)\t", t)
+    logs = [(p, kb) for p, kb in big if re.search(r"\.(log|out|err)(\.\d+)?$", p)]
+    return dict(top=top_folders(dirs), big=big[:20], old_downloads=old, installers=inst, dupes=dupes,
+                trash_kb=int(m.group(1)) if m and "not permitted" not in t else None, logs=logs)
+
+
+def unused_apps(running_exes):
+    """Ultimo uso = il piu' recente fra Spotlight e l'atime del binario. Spotlight qui non
+    indicizza /Applications (101 app su 102 senza data, 23/10); l'atime si', e sbaglia solo
+    per difetto: chi lo scansiona lo aggiorna, ma nessuno lo azzera."""
+    now = time.time()
+    apps = sorted(set(glob.glob("/Applications/*.app") + glob.glob("/Applications/*/*.app")
+                      + glob.glob(HOME + "/Applications/*.app")))
+    out = []
+    for a in apps:
+        try:
+            info = plistlib.load(open(a + "/Contents/Info.plist", "rb"))
+        except Exception:
+            continue
+        exe = f"{a}/Contents/MacOS/{info.get('CFBundleExecutable', '')}"
+        if any(x.startswith(a + "/") for x in running_exes):
+            continue
+        last = os.stat(exe).st_atime if os.path.exists(exe) else 0
+        md = run(["mdls", "-name", "kMDItemLastUsedDate", "-raw", a], 10).strip()
+        try:
+            last = max(last, datetime.datetime.strptime(md, "%Y-%m-%d %H:%M:%S %z").timestamp())
+        except ValueError:
+            pass
+        days = int((now - last) / DAY) if last else None
+        if days is None or days >= UNUSED_DAYS:
+            kb = run(["du", "-sk", a], 60).split("\t")[0]
+            cat = (info.get("LSApplicationCategoryType") or "").split(".")[-1]
+            out.append(dict(name=os.path.basename(a)[:-4], path=a, days=days,
+                            kb=int(kb) if kb.isdigit() else 0, category=CATEGORY.get(cat, "")))
+    return sorted(out, key=lambda x: -x["kb"])
+
+
+def posture():
+    return dict(
+        filevault="FileVault is On" in run(["fdesetup", "status"]),
+        firewall="enabled" in run(["/usr/libexec/ApplicationFirewall/socketfilterfw", "--getglobalstate"]),
+        sip="enabled" in run(["csrutil", "status"]),
+        gatekeeper="assessments enabled" in run(["spctl", "--status"]),
+    )
+
+
+def net_key(exe):
+    """Una chiave stabile fra un aggiornamento e l'altro: il bundle esterno, senza versioni ne' hash."""
+    exe = os.path.realpath(exe)  # /opt/homebrew/bin/node e opt/node/bin/node sono lo stesso Cellar
+    k = exe[: exe.index(".app/") + 4] if ".app/" in exe else exe
+    k = re.sub(r"/\d+(\.\d+)+(?=/|$)", "/*", k)
+    return re.sub(r"/([0-9a-f]{8,}|[A-Za-z0-9_-]{16,})(?=/)", "/*", k)
+
+
+def net_name(key):
+    b = os.path.basename(key)
+    if b.endswith(".app"):
+        return b[:-4]
+    parts = [x for x in key.split("/") if x and x not in ("*", "versions", "bin")]
+    return parts[-1] if b == "*" and parts else b  # ~/.local/share/claude/versions/* -> claude
+
+
+PRIVATE_NET = re.compile(r"^(127\.|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|169\.254\.|\[::1\]|\[fe80|\[fd|localhost)")
+
+
+# Indirizzi della tailnet: ci si arriva solo dai dispositivi di Attilio, ed e' la strada
+# d'accesso remoto prevista (tailscale serve, mai la porta in LAN).
+TAILNET = re.compile(r"^(100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\.|\[fd7a:115c:a1e0:)")
+
+
+def network(rows):
+    est = run(["lsof", "-nP", "-i", "-sTCP:ESTABLISHED"], 60)
+    lis = run(["lsof", "-nP", "-iTCP", "-sTCP:LISTEN"], 60)
+    if not est.strip() or not lis.strip():
+        return None
+    exe = {r["pid"]: r["exe"] for r in rows}
+    def owner(f):
+        e = exe.get(int(f[1]), "") if f[1].isdigit() else ""
+        return e if e.startswith("/") and not is_apple_path(e) else None
+    talkers = {}
+    for line in est.splitlines()[1:]:
+        f = line.split()
+        m = re.search(r"->(\S+):\d+$", f[-2] if f[-1].startswith("(") else f[-1])
+        e = owner(f) if len(f) > 2 else None
+        if m and e and not PRIVATE_NET.match(m.group(1)):
+            talkers.setdefault(net_key(e), e)
+    out = [dict(key=k, name=net_name(k), signer=signer(e)) for k, e in sorted(talkers.items())]
+    lan = {}
+    for line in lis.splitlines()[1:]:
+        f = line.split()
+        e = owner(f) if len(f) > 2 else None
+        host, _, port = (f[-2] if f[-1] == "(LISTEN)" else f[-1]).rpartition(":")
+        # anche Tailscale stesso ascolta su *: e' la VPN, non un servizio esposto
+        if not e or "/Tailscale.app/" in e or host.startswith(("127.", "[::1]", "localhost")) or TAILNET.match(host):
+            continue
+        lan.setdefault(net_name(net_key(e)), set()).add(port)
+    return out, {k: sorted(v, key=int) for k, v in lan.items()}
+
+
+def locale_name(ext_dir, man):
+    n = man.get("name", "?")
+    m = re.match(r"__MSG_(.+)__$", n)
+    if not m:
+        return n
+    for loc in (man.get("default_locale", "en"), "en", "en_US", "it"):
+        try:
+            msgs = json.load(open(f"{ext_dir}/_locales/{loc}/messages.json"))
+            for k, v in msgs.items():
+                if k.lower() == m.group(1).lower():
+                    return v.get("message", n)
+        except Exception:
+            continue
+    return n
+
+
+def extensions():
+    """Estensioni dei browser Chromium lette dai file del profilo, senza aprire il browser.
+    Safari e Firefox qui non ne hanno (pluginkit vuoto, nessun profilo Firefox, 23/10)."""
+    base = HOME + "/Library/Application Support"
+    out = []
+    for ext in glob.glob(base + "/*/*/Extensions") + glob.glob(base + "/*/*/*/Extensions"):
+        prof = os.path.dirname(ext)
+        if not os.path.exists(prof + "/Preferences"):
+            continue
+        sett = {}
+        for f in ("Preferences", "Secure Preferences"):
+            try:
+                sett.update(json.load(open(f"{prof}/{f}")).get("extensions", {}).get("settings", {}))
+            except Exception:
+                pass
+        browser = short(prof).replace("~/Library/Application Support/", "")
+        for i in sorted(os.listdir(ext)):
+            s = sett.get(i, {})
+            if len(i) != 32 or s.get("location") in (5, 10):  # 5 e 10: componenti del browser stesso
+                continue
+            if "disable_reasons" in s:
+                on = not s["disable_reasons"]
+            else:
+                on = s.get("state", 1) == 1
+            vers = sorted(os.listdir(f"{ext}/{i}")) if os.path.isdir(f"{ext}/{i}") else []
+            name = "?"
+            if vers:
+                try:
+                    name = locale_name(f"{ext}/{i}/{vers[-1]}", json.load(open(f"{ext}/{i}/{vers[-1]}/manifest.json")))
+                except Exception:
+                    pass
+            out.append(dict(id=f"{browser}:{i}", browser=browser, name=name, enabled=on,
+                            store=bool(s.get("from_webstore")) and s.get("location") not in (4, 8)))
+    return out
+
+
+def git_ts(repo, *args):
+    out = run(["git", "-C", repo, "log", "--format=%ct"] + list(args), 20).split()
+    return [int(x) for x in out if x.isdigit()]
+
+
+def icloud_docs():
+    """Scrivania e Documenti su iCloud? None se non si puo' guardare: meglio tacere che dire «no» a torto."""
+    try:
+        p = subprocess.run(["ls", "-d", HOME + "/Library/Mobile Documents/com~apple~CloudDocs/Documents"],
+                           capture_output=True, text=True, timeout=10)
+    except Exception:
+        return None
+    return True if p.returncode == 0 else (False if "No such file" in p.stderr else None)
+
+
+def backup():
+    dest = run(["tmutil", "destinationinfo"])
+    tm_dest = len(re.findall(r"^Name\s*:", dest, re.M))
+    tm_last = None
+    if tm_dest:
+        m = re.search(r"(\d{4}-\d{2}-\d{2}-\d{6})", run(["tmutil", "latestbackup"], 60))
+        if m:
+            tm_last = datetime.datetime.strptime(m.group(1), "%Y-%m-%d-%H%M%S").timestamp()
+    priv = git_ts(str(JARVIS / "private"), "-1", "@{u}")
+    unpushed, noremote = [], []
+    for g in glob.glob(HOME + "/Projects/*/.git"):
+        repo = os.path.dirname(g)
+        if not run(["git", "-C", repo, "remote"], 10).strip():
+            noremote.append(os.path.basename(repo))
+            continue
+        ts = git_ts(repo, "@{u}..HEAD")
+        if ts and "fatal" not in run(["git", "-C", repo, "rev-parse", "@{u}"], 10):
+            unpushed.append((os.path.basename(repo), len(ts), min(ts)))
+    return dict(tm_dest=tm_dest, tm_last=tm_last, private_last=priv[0] if priv else None,
+                icloud_docs=icloud_docs(),
+                unpushed=sorted(unpushed, key=lambda x: -x[1]), noremote=sorted(noremote))
+
+
+def read_facts(weekly):
+    t0 = time.time()
+    rows = ps_rows()
+    ram_mb = int(run(["sysctl", "-n", "hw.memsize"]).strip() or 0) / 1048576
+    boot = re.search(r"sec = (\d+)", run(["sysctl", "-n", "kern.boottime"]))
+    uptime_h = (time.time() - int(boot.group(1))) / 3600 if boot else 1
+    st = os.statvfs(HOME)
+    f = dict(now=time.time(), weekly=weekly, ram_mb=ram_mb, uptime_h=uptime_h,
+             disk=dict(free_gb=st.f_bavail * st.f_frsize / 1e9, total_gb=st.f_blocks * st.f_frsize / 1e9),
+             startup=btm_items(), failures=launchd_failures(uptime_h), orphans=orphan_plists(),
+             resti=resti(devreap_list()), memlog=memlog_report(), posture=posture(),
+             extensions=extensions(), backup=backup(), agents=agents(time.time()), blind=[], blind_keys=[])
+    net = network(rows)
+    if net is None:
+        f["blind"].append("lsof non ha risposto: connessioni e porte in LAN NON controllate")
+        f["blind_keys"].append("net")
+        net = ([], {})
+    f["net"], f["lan"] = net
+    if not f["startup"]:
+        f["blind"].append(BLIND_SFL)
+        f["blind_keys"].append("startup")
+    f["odd"] = [dict(path=r["exe"], signer=signer(r["exe"])) for r in rows
+                if r["exe"].startswith(ODD_DIRS) and os.path.exists(r["exe"])]
+    if not weekly:
+        f["procs"] = processes(rows, ram_mb)
+        open_dirs = [d for d in PROTECTED if readable(f"{HOME}/{d}")]
+        shut = [d for d in PROTECTED if d not in open_dirs]
+        if shut:
+            f["blind"].append(f"{', '.join(shut)} non leggibili da qui (permesso File e cartelle di macOS): "
+                              "spazio, installer e doppioni li' dentro NON controllati")
+        dirs, big = du_scan(sorted(e.path for e in os.scandir(HOME) if e.name not in shut))
+        f["storage"] = storage(dirs, big, open_dirs)
+        f["apps"] = unused_apps({r["exe"] for r in rows})
+    f["seconds"] = round(time.time() - t0)
+    try:
+        f["baseline"] = json.load(open(STATE))
+    except Exception:
+        f["baseline"] = None
+    try:
+        f["accepted"] = json.load(open(ACCEPT))
+    except Exception:
+        f["accepted"] = []
+    return f
+
+
+def _ro(path):
+    import sqlite3
+    return sqlite3.connect(f"file:{path}?mode=ro", uri=True, timeout=5)
+
+
+def _iso(t):
+    try:
+        return datetime.datetime.fromisoformat(t.replace("Z", "+00:00")).timestamp() if t else None
+    except ValueError:
+        return None
+
+
+def agents(now):
+    """Lavori lunghi degli ultimi AGENTS_DAYS: quanti, quanti arrivati in fondo. None = fonte illeggibile."""
+    since, long_s = now - AGENTS_DAYS * DAY, AGENTS_LONG_MIN * 60
+    out = dict(claude=None, topics=None, orphans=None, gb=None)
+    try:  # claude -p da OpenClaw: modello anthropic/*, runtime claude-cli
+        n = ok = 0
+        for pj, in _ro(OPENCLAW_DB).execute("SELECT payload_json FROM subagent_runs WHERE created_at >= ?", (since * 1000,)):
+            r = json.loads(pj)
+            if not str(r.get("model") or "").startswith("anthropic/"):
+                continue
+            ex = r.get("execution") or {}
+            a, b, st = ex.get("startedAt"), ex.get("endedAt"), (ex.get("outcome") or {}).get("status")
+            if b is None and a and now - a / 1000 < 2 * 3600:
+                continue  # ancora vivo: non e' ne' finito ne' perso
+            if b is not None and a and (b - a) / 1000 < long_s and st != "timeout":
+                continue
+            n += 1
+            ok += b is not None and st == "ok"
+        out["claude"] = dict(n=n, ok=ok)
+    except Exception:
+        pass
+    try:  # Topics: sotto-agenti (spawn_agent) e tentativi delle card
+        n = ok = lost = 0
+        db = _ro(TOPICS_DB)
+        rows = [(s_, a, b, s_ == "retired", s_ == "lost") for s_, a, b in
+                db.execute("SELECT state, created_at, ended_at FROM subagents WHERE state NOT IN ('running','stopped')")]
+        rows += [(s_, a, b, s_ in ("delivered", "selected", "discarded"), False) for s_, a, b in
+                 db.execute("SELECT state, created_at, ended_at FROM task_attempts WHERE state != 'running'")]
+        for _, a, b, good, gone in rows:
+            ta, tb = _iso(a), _iso(b)
+            if ta is None or ta < since:
+                continue
+            if not gone and (tb is None or tb - ta < long_s):
+                continue
+            n += 1; ok += good; lost += gone
+        out["topics"] = dict(n=n, ok=ok, lost=lost)
+    except Exception:
+        pass
+    try:  # orfani lasciati dai terminali di Topics, e GB fissi delle due app
+        import ctypes
+        resp = ctypes.CDLL(None).responsibility_get_pid_responsible_for_pid
+        resp.restype, resp.argtypes = ctypes.c_int, [ctypes.c_int]
+        procs = {}
+        for line in run(["ps", "-Ao", "pid=,ppid=,command="]).splitlines():
+            m = re.match(r"\s*(\d+)\s+(\d+)\s+(.*)", line)
+            if m:
+                procs[int(m[1])] = (int(m[2]), m[3])
+        host = {p for p, (_, c) in procs.items() if "Topics Host.app" in c}
+        out["orphans"] = sum(1 for p, (pp, _) in procs.items() if pp == 1 and p not in host and resp(p) in host)
+        fp = lambda keys: sum(memhog.footprint_mb(p) or 0 for p, (_, c) in procs.items() if any(k in c for k in keys)) / 1024
+        # il nucleo di ciascuna app; i processi delle sessioni (CLI, MCP) pesano uguale da tutte e due le parti
+        out["gb"] = dict(topics=fp(["topics-app/server.ts", "topics-app/server/ai-bridge.mjs", "Topics Host.app", "Topics.app/Contents/MacOS"]),
+                         claude=fp(["/Applications/Claude.app/Contents/"]))
+    except Exception:
+        pass
+    return out
+
+
+def rate(x):
+    return None if not x or not x["n"] else 100 * x["ok"] / x["n"]
+
+
+# ---------------------------------------------------------------- decisione
+
+def findings(f):
+    """Il punto critico: dai fatti alle righe da guardare. Pura, cosi' si prova con fatti finti.
+    Ogni riga: (sezione, chiave stabile, testo per il rapporto, forma breve per WhatsApp).
+    La chiave non contiene numeri che cambiano a ogni giro: dice «e' la stessa cosa di lunedi'»."""
+    out = []
+    add = lambda sec, key, line, brief: out.append((sec, f"{sec}:{key}", line, brief))
+    base = f.get("baseline") or {}
+    seen = lambda k: set(base[k]) if base.get(k) is not None else None  # senza base, niente «nuovo»
+    why = lambda x: f" {x['why']}" if x["why"] else ""
+    # avvio
+    orphans = f.get("orphans") or []
+    for o in orphans:
+        app = re.search(r"([^/]+)\.app/", o["missing"])
+        add("avvio", f"orphan:{o['label']}", f"{o['label']}: demone di un'app tolta{' (' + app.group(1) + ')' if app else ''}, "
+            f"lancia {short(o['missing'])} che non esiste piu' ({short(o['plist'])})", f"{o['label']} senza la sua app")
+    known = seen("startup")
+    for it in f["startup"]:
+        if not it["enabled"]:
+            continue
+        if it["missing"] and it["plist"] not in {o["plist"] for o in orphans}:  # lo stesso plist una volta sola
+            add("avvio", f"missing:{it['id']}", f"{it['id']} lancia {short(it['missing'])}, che non esiste piu': al prossimo avvio muore in silenzio",
+                f"{it['id']} lancia un file sparito")
+        if known is not None and it["id"] not in known:
+            add("avvio", f"new:{it['id']}", f"nuovo all'avvio: {it['name']} ({it['id']}, {short(it['exe'] or it['plist'] or '?')})",
+                f"nuovo all'avvio {it['name']}")
+    for x in f["failures"]:
+        # uscita negativa = ucciso da un segnale (jetsam, qualcuno): non e' «a vuoto», e la card lo spegnerebbe
+        if not x.get("periodic") and x["exit"] > 0 and (x["rate"] >= LOOP_PER_HOUR or x["runs"] >= RESPAWN_RUNS):
+            add("avvio", f"loop:{x['label']}", f"{x['label']}: servizio che riparte a vuoto, {num(x['runs'])} avvii in {round(f['uptime_h'] / 24)} giorni, "
+                f"ultima uscita {x['exit']}{why(x)}", f"{x['label']} riparte a vuoto ({num(x['runs'])} avvii)")
+        elif not x["running"] and x["exit"] > 0 and x["label"] in ATTILIO_CHOICES:
+            # non e' un guasto: il job chiede una scelta che solo Attilio puo' fare, quindi riga per lui e nessuna card
+            tail = f" Ultima riga del log: «{short(x['log_tail'])}»." if x.get("log_tail") else ""
+            add("avvio", f"failed:{x['label']}", f"{x['label']}: fermo (uscita {x['exit']}), ma non e' un guasto: aspetta una tua scelta, "
+                f"{ATTILIO_CHOICES[x['label']]}. Cura: decidere dove, poi `launchctl kickstart gui/{os.getuid()}/{x['label']}`.{tail}",
+                f"{x['label']} aspetta una tua scelta: {ATTILIO_CHOICES[x['label']].split(' (')[0]}")
+        elif not x["running"] and x["exit"] > 0:  # un segnale (uscita negativa) e' qualcuno che l'ha fermato
+            add("avvio", f"failed:{x['label']}", f"{x['label']}: fermo, l'ultimo giro e' fallito (uscita {x['exit']}{why(x)})",
+                f"{x['label']} fermo (uscita {x['exit']})")
+        elif not x.get("periodic") and x["exit"] < 0 and x["rate"] >= LOOP_PER_HOUR:
+            # ucciso e rilanciato da KeepAlive almeno una volta l'ora (jetsam, un guardiano): spreco anche lui, ma
+            # non «a vuoto» e non da spegnere, quindi solo «chi lo uccide e perche' riparte»
+            add("avvio", f"killed:{x['label']}", f"{x['label']}: ucciso da un segnale e rilanciato, {num(x['runs'])} avvii in "
+                f"{round(f['uptime_h'] / 24)} giorni (ultima uscita {x['exit']}{why(x)}): chi lo uccide e perche' riparte",
+                f"{x['label']} ucciso e rilanciato ({num(x['runs'])} avvii)")
+    # sicurezza
+    for k, v in f["posture"].items():
+        if not v:
+            txt = {"filevault": "FileVault spento: il disco non e' cifrato", "firewall": "firewall spento",
+                   "sip": "SIP spento", "gatekeeper": "Gatekeeper spento: le app non firmate partono senza avviso"}[k]
+            add("sicurezza", f"posture:{k}", txt, txt.split(":")[0])
+    for name, ports in sorted(f["lan"].items()):
+        add("sicurezza", f"lan:{name}", f"{name} ascolta sulla rete locale (porte {', '.join(ports)}): raggiungibile da chiunque sul Wi-Fi",
+            f"{name}:{ports[0]}{'+' + str(len(ports) - 1) if len(ports) > 1 else ''} in LAN")
+    for o in f["odd"]:
+        if not trusted(o["signer"]):
+            add("sicurezza", f"odd:{o['path']}", f"in esecuzione da una cartella temporanea, {o['signer']}: {short(o['path'])}",
+                f"{os.path.basename(o['path'])} {o['signer']} da cartella temporanea")
+    seen_net = seen("net")
+    for n in f["net"]:
+        if seen_net is not None and n["key"] not in seen_net:
+            add("sicurezza", f"net:{n['key']}", f"nuovo in rete: {n['name']} ({n['signer']}, {short(n['key'])})",
+                f"nuovo in rete {n['name']} ({n['signer']})")
+    seen_ext = seen("ext")
+    for e in f["extensions"]:
+        if not e["enabled"]:
+            continue
+        if not e["store"]:
+            add("sicurezza", f"ext-out:{e['id']}", f"estensione fuori dallo store attiva in {e['browser']}: {e['name']}",
+                f"estensione fuori store {e['name']}")
+        elif seen_ext is not None and e["id"] not in seen_ext:
+            add("sicurezza", f"ext-new:{e['id']}", f"estensione nuova in {e['browser']}: {e['name']}", f"estensione nuova {e['name']}")
+    # backup
+    b, now = f["backup"], f["now"]
+    if not b["tm_dest"]:
+        add("backup", "tm", "Time Machine non e' configurato: dei file fuori da iCloud e da git c'e' una copia sola" +
+            (", e Scrivania e Documenti non sono su iCloud" if b["icloud_docs"] is False else ""), "Time Machine assente")
+    elif b["tm_last"] is None:
+        add("backup", "tm-unknown", "Time Machine configurato ma non leggo la data dell'ultimo backup", "Time Machine: data illeggibile")
+    elif now - b["tm_last"] > TM_MAX_DAYS * DAY:
+        dd = int((now - b["tm_last"]) / DAY)
+        add("backup", "tm-old", f"ultimo backup Time Machine di {dd} giorni fa", f"Time Machine fermo da {dd} gg")
+    if b["private_last"] is None or now - b["private_last"] > PRIVATE_MAX_H * 3600:
+        when = "mai spinto" if b["private_last"] is None else f"fermo da {int((now - b['private_last']) / 3600)} ore"
+        add("backup", "private", f"backup notturno di jarvis-private {when} (manutenzione notturna, launchd com.jarvis.manutenzione)", f"jarvis-private {when}")
+    stale = [u for u in b["unpushed"] if now - u[2] > UNPUSHED_DAYS * DAY]
+    if stale:
+        top = ", ".join(f"{n} ({c}, dal {datetime.date.fromtimestamp(t).strftime('%d/%m')})" for n, c, t in stale[:5])
+        add("backup", "unpushed", f"{len(stale)} repo in ~/Projects con commit solo su questo Mac da piu' di {UNPUSHED_DAYS} giorni: {top}",
+            f"{len(stale)} repo con commit non spinti da {UNPUSHED_DAYS}+ gg")
+    if b["noremote"]:
+        add("backup", "noremote", f"{len(b['noremote'])} repo senza remote, solo su questo disco: {', '.join(b['noremote'][:6])}",
+            f"{len(b['noremote'])} repo senza remote")
+    # disco
+    d = f["disk"]
+    pct = 100 * d["free_gb"] / d["total_gb"]
+    if pct < DISK_FREE_PCT:
+        add("disco", "free", f"liberi {d['free_gb']:.0f} GB su {d['total_gb']:.0f} ({pct:.0f}%): sotto il {DISK_FREE_PCT}% lo swap resta senza spazio",
+            f"liberi {d['free_gb']:.0f} GB ({pct:.0f}%)")
+    s = f.get("storage")
+    if s:
+        old_kb = sum(kb for _, kb, _ in s["old_downloads"])
+        if old_kb >= OLD_DOWNLOADS_GB << 20:
+            add("disco", "old-downloads", f"{gb(old_kb)} in Download piu' vecchi di {OLD_DOWNLOAD_DAYS} giorni ({len(s['old_downloads'])} elementi)",
+                f"{gb(old_kb)} di download vecchi")
+        inst_kb = sum(kb for _, kb in s["installers"])
+        if inst_kb >= INSTALLERS_GB << 20:
+            add("disco", "installers", f"{gb(inst_kb)} di installer (.dmg/.pkg/.iso) in Download, Scrivania e Documenti ({len(s['installers'])} file)",
+                f"{gb(inst_kb)} di installer")
+        dup_kb = sum(kb for kb, _ in s["dupes"])
+        if dup_kb >= DUPES_GB << 20:
+            add("disco", "dupes", f"{gb(dup_kb)} di probabili doppioni in {len(s['dupes'])} gruppi, il piu' grosso: {short(s['dupes'][0][1][0])}",
+                f"{gb(dup_kb)} di doppioni")
+        for p, kb in s["logs"]:
+            if kb >= BIG_LOG_GB << 20:
+                add("disco", f"log:{p}", f"log da {gb(kb)}: {short(p)}", f"log {os.path.basename(p)} {gb(kb)}")
+    # memoria: dal registro scripts/memlog. Il 26/10 Topics non faceva partire le card con il kernel al 53% «libera»:
+    # senza storia non si distingue una pressione vera da una misura che inganna.
+    ml = f.get("memlog")
+    if ml is None or ml["last_age_s"] > MEMLOG_STALE_H * 3600 or ml["samples"] < ml["expected"] * MEMLOG_MIN_COVER:
+        got = "illeggibile" if ml is None else f"{ml['samples']} righe su {ml['expected']} attese, ultima {ml['last_age_s'] // 3600} h fa"
+        add("memoria", "registro", f"registro della memoria (com.jarvis.memlog) fermo o a buchi: {got}; cura: "
+            f"`launchctl kickstart gui/{os.getuid()}/com.jarvis.memlog`", "registro memoria fermo")
+    elif (ml["swap_hi_share"] or 0) >= MEMLOG_SWAP_SHARE and (ml["swapin_hi_share"] or 0) >= MEMLOG_SWAP_SHARE:
+        tops = ", ".join(f"{k} {v}" for k, v in ml["top"][:3])
+        add("memoria", "pressione", f"memoria stretta da giorni: swap oltre l'85% nel {ml['swap_hi_share']:.0%} dei campioni e letta da disco "
+            f"oltre 10 pagine/s nel {ml['swapin_hi_share']:.0%} degli intervalli (kernel «libera» mediana {ml['lvl_p50']}%, "
+            f"a Topics restano {ml['topics_p50']} GB); in testa {tops}", f"memoria stretta: swap piena {ml['swap_hi_share']:.0%} del tempo, in testa {ml['top'][0][0]}")
+    # processi: una riga per processo, i piu' lontani dalla soglia prima
+    far = lambda p: max(p["avg"] / CPU_AVG_PCT if p["hot"] else 0, (p["fp"] or 0) / (f["ram_mb"] * MEM_PCT / 100) if p["heavy"] else 0)
+    for p in sorted((p for p in f.get("procs") or [] if p["hot"] or p["heavy"]), key=lambda p: -far(p)):
+        bits = ([f"{p['avg']:.0f}% di CPU in media da {p['hours']:.0f} ore"] if p["hot"] else []) + \
+               ([f"{gb(p['fp'] * 1024)} di memoria"] if p["heavy"] else [])
+        brief = " ".join(([f"{p['avg']:.0f}% CPU"] if p["hot"] else []) + ([gb(p["fp"] * 1024)] if p["heavy"] else []))
+        add("processi", f"proc:{p['name']}", f"{p['name']}: {', '.join(bits)} ({p['what']})", f"{p['name']} {brief}")
+    r = f.get("resti") or []
+    mb = sum(x["mb"] for x in r)
+    if len(r) >= RESTI_N or mb >= RESTI_MB:
+        add("processi", "resti", f"{len(r)} resti senza padrone ancora vivi ({gb(int(mb * 1024))}), visti da devreap --list e non chiusi",
+            f"{len(r)} resti senza padrone")
+    # app
+    apps = f.get("apps") or []
+    tot = sum(a["kb"] for a in apps)
+    if tot >= UNUSED_APPS_GB << 20:
+        top = ", ".join(f"{a['name']} {gb(a['kb'])}" for a in apps[:5])
+        add("app", "unused", f"{len(apps)} app non aperte da {UNUSED_DAYS} giorni, {gb(tot)} in tutto: {top}",
+            f"{len(apps)} app ferme da 6 mesi, {gb(tot)}")
+    # agenti: Topics contro Claude Code sui lavori lunghi
+    ag = f.get("agents") or {}
+    tp, cc = ag.get("topics"), ag.get("claude")
+    if tp and cc and tp["n"] >= AGENTS_MIN_N and cc["n"] >= AGENTS_MIN_N and rate(tp) < rate(cc) - AGENTS_GAP_PTS:
+        add("agenti", "topics-peggio", f"Topics porta in fondo il {rate(tp):.0f}% dei lavori lunghi ({tp['ok']} su {tp['n']}, {tp['lost']} persi), "
+            f"Claude Code il {rate(cc):.0f}% ({cc['ok']} su {cc['n']}): i lavori lunghi restano su Claude Code",
+            f"Topics {rate(tp):.0f}% contro Claude Code {rate(cc):.0f}% sui lavori lunghi")
+    if (ag.get("orphans") or 0) > TOPICS_ORPHANS_MAX:
+        add("agenti", "orfani", f"{ag['orphans']} processi orfani lasciati dai terminali di Topics (soglia {TOPICS_ORPHANS_MAX})",
+            f"{ag['orphans']} orfani da Topics")
+    for line in f["blind"]:
+        add("cieco", "sfltool" if line == BLIND_SFL else line, line, line)  # chiave corta: diventa la chiave della card
+    return out
+
+
+def split_accepted(lines, accepted):
+    keep, quiet = [], []
+    for sec, key, line, brief in lines:
+        a = next((a for a in accepted if a.get("match") and a["match"] in line), None)
+        (quiet if a else keep).append((sec, key, line, brief, a and a.get("why")))
+    return keep, quiet
+
+
+def snapshot(f, keep):
+    """La base per «nuovo da l'ultima volta». Una sonda cieca non la azzera: al giro dopo
+    tutto sembrerebbe nuovo (23/10, lsof muto → 16 «nuovo in rete» falsi)."""
+    s = dict(ts=int(f["now"]), startup=sorted(i["id"] for i in f["startup"] if i["enabled"]),
+             ext=sorted(e["id"] for e in f["extensions"] if e["enabled"]),
+             # chi va in rete va e viene: la base della rete si accumula, se no ogni assenza diventa un «nuovo»
+             net=sorted({n["key"] for n in f["net"]} | set((f.get("baseline") or {}).get("net") or [])),
+             # cio' che e' gia' stato detto e c'e' ancora: il settimanale non lo ripete, il mensile si'.
+             # Una riga che sparisce esce di qui e, se torna, e' di nuovo una notizia.
+             reported=sorted(k for _, k, _, _, _ in keep))
+    for k in f["blind_keys"]:
+        if (f.get("baseline") or {}).get(k) is not None:
+            s[k] = f["baseline"][k]
+        else:
+            s.pop(k, None)
+    return s
+
+
+# ---------------------------------------------------------------- card
+
+def cards(f, keep, report):
+    """Le righe che un agente sa curare, come card: una per chiave stabile (board-card non fa doppioni),
+    con la prova, la cura proposta e la barra. Restano ad Attilio, e quindi su WhatsApp, quelle che solo
+    lui puo' decidere: sicurezza, i suoi repo, file, app e processi suoi, e cio' che gira come root
+    (/Library/LaunchDaemons: vuole la sua password)."""
+    uid = os.getuid()
+    fail = {x["label"]: x for x in f["failures"]}
+    orph = {o["label"]: o for o in f.get("orphans") or []}
+    btm = {i["id"]: i for i in f["startup"]}
+    day = datetime.date.fromtimestamp(f["now"]).strftime("%d/%m")
+    out = []
+    for _, key, line, *_ in keep:
+        kind, _, name = key.partition(":")[2].partition(":")
+        plain_bar = False
+        job, notte = f"gui/{uid}/{name}", True  # notte: reversibile e non aspetta Attilio (board-card --notte)
+        if kind in ("loop", "failed", "killed") and name in ATTILIO_CHOICES:
+            continue  # la cura e' una scelta di Attilio: la riga resta nel messaggio per lui
+        x = fail.get(name, {})
+        where = JARVIS  # dove lavora la coda notturna; per i job, la loro cartella
+        gone = x.get("gone") if kind in ("loop", "failed", "killed") and x.get("domain") == "gui" else None
+        if kind in ("loop", "failed", "killed") and x.get("domain") == "gui":
+            where = x.get("dir") or where
+        if kind == "loop" and x.get("domain") == "gui":
+            title = f"Fermare {name}, che riparte a vuoto"
+            fix = (f"App tolta: `launchctl bootout {job}` e `launchctl disable {job}`, il plist della home in ~/Library/LaunchAgents/disabled/. "
+                   "Servizio che serve: correggere la causa nel log; se serve solo a volte, avvio a richiesta con Sockets al posto di "
+                   "KeepAlive (tools/residenti.md).")
+            if x.get("running"):
+                # vivo adesso: spento di notte senza nessuno toglierebbe un servizio che serve (tunnel llamacpp, 23/10)
+                notte = False
+                cure = f"E' vivo adesso: prima di fermarlo capire chi lo usa. Di chi e': `launchctl print {job}` (plist, programma, log). {fix}"
+            else:
+                cure = (f"Di notte solo diagnosi, senza bootout, disable ne' plist: di chi e' (`launchctl print {job}`), la causa dal log, "
+                        f"e la proposta in un commento sulla card. Di giorno: {fix}")
+            bar = f"`launchctl print {job} | grep runs` fermo per 10 minuti, o il servizio non c'e' piu'"
+        elif kind == "failed" and x.get("domain") == "gui":
+            # un job d'altri puo' fallire per una scelta di Attilio (topics-db-snapshot: dove tenere il backup esterno)
+            notte = name.startswith("com.jarvis.")
+            title = f"Riparare {name}: l'ultimo giro e' fallito"
+            cure = f"Leggere il log (stdout/stderr path in `launchctl print {job}`), correggere la causa, riprovare con `launchctl kickstart {job}`."
+            bar = f"`launchctl print {job}` dice last exit code = 0"
+        elif kind == "killed" and x.get("domain") == "gui":
+            title, notte = f"Capire chi uccide {name} e perche' riparte", False
+            cure = (f"Chi lo uccide: `log show --last 2h --predicate 'eventMessage CONTAINS \"{name}\"'` (jetsam = memoria) e i log dei "
+                    "guardiani (devreap, oc-heapwatch, mac-brake). Perche' riparte: KeepAlive nel plist. Jetsam: meno memoria o niente "
+                    "KeepAlive; un guardiano: mettere d'accordo i due, non spegnere il servizio.")
+            bar = f"`launchctl print {job} | grep runs` fermo per un'ora"
+        elif kind == "orphan" and name in orph and not orph[name]["system"]:
+            title = f"Togliere {name}, demone di un'app tolta"
+            cure = (f"`launchctl bootout {job}` se e' caricato, poi `launchctl disable {job}` (regge ai riavvii); il plist della home in "
+                    "~/Library/LaunchAgents/disabled/. In /Library/LaunchAgents basta il disable: togliere il file vuole la password di Attilio.")
+            bar = f"`launchctl print-disabled gui/{uid}` lo dice disabled, o il plist non c'e' piu'"
+        elif kind == "missing" and not (btm.get(name, {}).get("plist") or "").startswith("/Library/LaunchDaemons/"):
+            title = f"Togliere l'elemento d'avvio {name}, che lancia un file sparito"
+            pl = btm.get(name, {}).get("plist")
+            if pl:
+                cure = f"Il plist e' {short(pl)}: bootout e disable del suo Label, file in ~/Library/LaunchAgents/disabled/. Mai sfltool resetbtm."
+                bar = "il plist non c'e' piu' o il suo Label e' disabled in `launchctl print-disabled`"
+            else:
+                # osascript su System Events, la prima volta, apre in primo piano la richiesta di Automazione: di notte resta li'
+                notte = False
+                cure = ("Elemento di login senza plist: con System Events (osascript) solo se il permesso Automazione e' gia' dato, "
+                        "se no lo toglie Attilio da Impostazioni > Generali > Elementi di login. Mai sfltool resetbtm.")
+                bar = "l'elemento non compare piu' in `sfltool dumpbtm`"
+        elif key == "cieco:sfltool":
+            # Attilio non ci puo' fare niente da WhatsApp: e' lavoro di diagnosi per un agente, di giorno
+            title, notte = "Capire perche' sfltool non risponde (backgroundtaskmanagementd appeso)", False
+            cure = ("`time sfltool dumpbtm > /dev/null` (oltre 120 s e' appeso) e `log show --last 2h --predicate "
+                    "'process == \"backgroundtaskmanagementd\"'`. Il demone e' di sistema: riavviarlo vuole la password di Attilio, "
+                    "quindi la card propone e lui decide. Intanto i plist senza eseguibile li trova orphan_plists() dal disco.")
+            bar = "`sfltool dumpbtm` risponde in meno di 120 s e il prossimo mac-health non ha la riga [cieco]"
+        elif key == "backup:private":
+            title = "Riparare il backup notturno di jarvis-private"
+            cure = "Leggere logs/manutenzione/ (passo private/sync.sh --commit della manutenzione delle 2:30), correggere, rilanciare `private/sync.sh --commit`."
+            bar = "`git -C ~/.claude/jarvis/private log -1 --format=%cr @{u}` sotto le 48 ore"
+        elif key == "agenti:orfani":
+            title, notte = "Chiudere gli orfani lasciati dai terminali di Topics", False
+            cure = ("Chi li ha lanciati: .state/scripts.json di Topics ha sessionKey e pid. Chiudere solo quelli il cui padrone e' morto, "
+                    "e portare la regola nella classe «resto» di devreap perche' non tornino.")
+            bar = "orfani da Topics sotto 10 al giro dopo"
+        elif key == "processi:resti":
+            # La classe «resto» di devreap e' in sola osservazione (DEVREAP_RESTO_KILL=0) proprio perche' non e' verificata:
+            # la card non chiede di chiudere niente, un agente di giorno potrebbe chiudere un processo vivo.
+            observing = any(r.get("verdict", "").startswith(RESTO_OBSERVE) for r in f.get("resti") or [])
+            title, notte, plain_bar = "Capire chi sono i resti senza padrone che devreap vede (solo diagnosi, niente da chiudere)", False, True
+            cure = ("Solo diagnosi, nessun processo chiuso e nessun cambio di DEVREAP_RESTO_KILL. "
+                    + ("La classe «resto» e' in sola osservazione (DEVREAP_RESTO_KILL=0): non chiude, scrive OSSERVO-RESTO nel log di devreap. " if observing else "")
+                    + "Per ogni riga «resto» di `devreap --list`: `ps -o pid,ppid,etime,command -p <pid>`, di chi era il padrone "
+                    "(sessione, agente, test) e se e' davvero morto. Poi, sulla card, quali la regola avrebbe chiuso a ragione e quali a torto "
+                    "(un padrone vivo, un lavoro in corso). Se serve correggere la regola, e' una modifica a devreap con il suo test.")
+            bar = ("sulla card c'e' l'elenco dei resti con padrone e giudizio (a ragione / a torto) e nessun processo e' stato chiuso; "
+                   "se la regola risulta affidabile, la proposta di accendere DEVREAP_RESTO_KILL=1 va ad Attilio, che decide")
+        elif kind == "log":
+            title, notte = f"Mettere un tetto al log {os.path.basename(name)}", False
+            cure = f"Chi lo scrive: `lsof {name}`. Rotazione o livello di log piu' basso; la parte vecchia nel Cestino con trash."
+            bar = "il file sotto 100 MB, con una rotazione che lo tiene li'"
+        else:
+            continue
+        if gone:
+            # board-notte scarta ogni notte una card con una cartella che non esiste
+            notte = False
+        log = f"\n\nUltima riga del log: «{short(x['log_tail'])}»" if kind in ("loop", "failed", "killed") and x.get("log_tail") else ""
+        log += (f"\n\nLa cartella di lavoro del job, {short(gone)}, non esiste piu': per questo la card non e' nella coda notturna. "
+                "Va decisa di giorno: rimettere la cartella o togliere il job.") if gone else ""
+        desc = (f"Trovato da mac-health il {day}: {line}.{log}\n\nCartella: {short(where)}\n\nCura proposta: {cure}\n\n"
+                f"Barra: {bar}{'' if plain_bar else '; il prossimo mac-health non lo riporta'}.\n\nRapporto: {short(report)}")
+        out.append(dict(key=f"mac-health:{key}", finding=key, title=f"[Jarvis] {title}", desc=desc, notte=notte, dir=str(where)))
+    return out
+
+
+def open_cards(todo):
+    """board-card per ogni card: key -> id, None se Topics non risponde."""
+    bc = os.environ.get("MAC_HEALTH_BOARD_CARD") or str(JARVIS / "scripts/board-card")  # i test passano un finto
+    ids = {}
+    for c in todo:
+        args = [bc, "--key", c["key"], "--title", c["title"], "--desc", c["desc"]]
+        if c["notte"]:
+            args += ["--notte", "--dir", c.get("dir") or str(JARVIS)]
+        try:
+            r = subprocess.run(args, capture_output=True, text=True, timeout=60)
+            ids[c["key"]] = r.stdout.strip().splitlines()[-1] if r.returncode == 0 and r.stdout.strip() else None
+        except Exception:
+            ids[c["key"]] = None
+    return ids
+
+
+def for_attilio(keep, todo, ids):
+    """Le righe del messaggio WhatsApp: fuori quelle gia' diventate card. Se la card non e' nata
+    (Topics giu') la riga resta nel messaggio, se no la trovata si perde."""
+    carded = {c["finding"] for c in todo if ids.get(c["key"])}
+    return [k for k in keep if k[1] not in carded]
+
+
+# ---------------------------------------------------------------- uscita
+
+SECTIONS =("cieco", "backup", "sicurezza", "avvio", "agenti", "disco", "memoria", "processi", "app")
+MSG_MAX = 600  # regola di Attilio per ogni resoconto: esito per primo, al massimo 600 caratteri
+
+
+def message(keep, weekly, report, reported=None):
+    """Il testo per WhatsApp. Il settimanale dice solo le righe nuove rispetto al giro prima
+    (senza, le stesse 9 righe ogni lunedi'); il mensile le riassume tutte."""
+    news = [k for k in keep if weekly is False or reported is None or k[1] not in set(reported) or k[0] == "cieco"]
+    if not news:
+        return ""
+    n = len(news)
+    old = len(keep) - n
+    head = f"Mac, {'settimanale' if weekly else 'mensile'}: {n} {'cosa' if n == 1 else 'cose'} da guardare"
+    if weekly and old:
+        head += f" (+{old} gia' dette)"
+    tail = f"Dettagli: {short(report)} · non ho toccato niente"
+    body = []
+    for sec in SECTIONS:
+        rows = [k[3] for k in news if k[0] == sec]
+        if not rows:
+            continue
+        line = f"{sec}: {rows[0]}"
+        for i, r in enumerate(rows[1:], 1):
+            if len(line) + len(r) + 3 > 150:
+                line += f" · +{len(rows) - i}"
+                break
+            line += f" · {r}"
+        body.append(line)
+    text = lambda b: "\n".join([head] + b + [tail])
+    if len(text(body)) > MSG_MAX:
+        more = "e altre sezioni nel rapporto"
+        while len(body) > 1 and len(text(body + [more])) > MSG_MAX:
+            body.pop()
+        body.append(more)
+    return text(body)
+
+
+def report_md(f, keep, quiet, todo=(), ids=None):
+    L = [f"# Salute del Mac — {datetime.datetime.fromtimestamp(f['now']).strftime('%d/%m/%Y %H:%M')}",
+         f"Controllo {'settimanale' if f['weekly'] else 'mensile'}, {f['seconds']} s, sola lettura.", "",
+         "## Da guardare"]
+    L += [f"- [{s}] {l}" for s, _, l, _, _ in keep] or ["- niente"]
+    if todo:
+        L += ["", "## Card per gli agenti (board-card, una per chiave; fuori dal messaggio WhatsApp)"]
+        L += [f"- {c['title']}{' (notte)' if c['notte'] else ''} — {(ids or {}).get(c['key']) or 'card non creata: la riga resta nel messaggio'}"
+              for c in todo]
+    if quiet:
+        L += ["", "## Accettate (state/mac-health.accept.json)"] + [f"- [{s}] {l} — {w}" for s, _, l, _, w in quiet]
+    if f.get("procs"):
+        L += ["", "## Processi (CPU media sulla vita, footprint)"]
+        for p in sorted(f["procs"], key=lambda p: -(p["fp"] or 0)):
+            fp = f"{p['fp'] / 1024:.1f} GB" if p["fp"] else "—"
+            L.append(f"- {p['name']} (pid {p['pid']}): {p['avg']:.1f}% CPU media in {p['hours']:.0f} h, {fp} — {p['what']}")
+    L += ["", "## Avvio (attivi)"]
+    for it in sorted((i for i in f["startup"] if i["enabled"]), key=lambda i: i["id"]):
+        L.append(f"- {it['type']}: {it['name']} — {it['id']} — {short(it['exe'] or it['plist'] or '?')}")
+    L.append(f"- spenti: {sum(1 for i in f['startup'] if not i['enabled'])}")
+    for x in f["failures"]:
+        L.append(f"- uscita {x['exit']}{' ' + x['why'] if x['why'] else ''}: {x['label']}, {num(x['runs'])} avvii, {'in esecuzione' if x['running'] else 'fermo'}"
+                 f"{', periodico' if x.get('periodic') else ''}")
+    L += [f"- demone senza eseguibile: {o['label']} — {short(o['missing'])} — {short(o['plist'])}" for o in f.get("orphans") or []]
+    r = f.get("resti")
+    L += ["", "## Resti senza padrone (devreap --list)"]
+    if r is None:
+        L.append("- devreap non risponde: non controllati")
+    else:
+        L.append(f"- {len(r)} righe «resto», {gb(int(sum(x['mb'] for x in r) * 1024))}" if r else "- nessuna riga «resto» (classe assente o niente da raccogliere)")
+        L += [f"  - {x['line']}" for x in r[:20]]
+    L += ["", "## Memoria (registro scripts/memlog, 7 giorni)"]
+    if f.get("memlog"):
+        L += [f"- {x}" for x in f["memlog"]["text"].splitlines()]
+    else:
+        L.append("- registro illeggibile o vuoto: memlog --report non risponde")
+    d = f["disk"]
+    L += ["", "## Disco", f"- liberi {d['free_gb']:.0f} GB su {d['total_gb']:.0f}"]
+    s = f.get("storage")
+    if s:
+        L.append("- cartelle piu' grandi:")
+        L += [f"  - {gb(kb)} {short(p)}{f' (di cui {os.path.basename(k[0])} {gb(k[1])})' if k else ''}" for p, kb, k in s["top"]]
+        L.append("- file oltre 500 MB:")
+        L += [f"  - {gb(kb)} {short(p)}" for p, kb in s["big"]]
+        L.append(f"- Download oltre {OLD_DOWNLOAD_DAYS} giorni: {len(s['old_downloads'])}, {gb(sum(k for _, k, _ in s['old_downloads']))}")
+        L += [f"  - {gb(kb)} {short(p)} ({dd} giorni)" for p, kb, dd in s["old_downloads"][:15]]
+        L.append(f"- installer: {gb(sum(k for _, k in s['installers']))}")
+        L += [f"  - {gb(kb)} {short(p)}" for p, kb in s["installers"][:15]]
+        L.append(f"- probabili doppioni (stessa dimensione, stesso primo e ultimo MB): {gb(sum(k for k, _ in s['dupes']))}")
+        L += [f"  - {gb(kb)} recuperabili: {' = '.join(short(x) for x in g)}" for kb, g in s["dupes"][:15]]
+        L.append(f"- Cestino: {gb(s['trash_kb']) if s['trash_kb'] is not None else 'non leggibile senza Accesso completo al disco'}")
+        L.append("- doppioni dentro Foto: album Duplicati dell'app, qui non si guarda")
+    if f.get("apps") is not None:
+        L += ["", f"## App non aperte da {UNUSED_DAYS} giorni"]
+        L += [f"- {a['name']} {gb(a['kb'])}, {('mai' if a['days'] is None else str(a['days']) + ' giorni')}{', ' + a['category'] if a['category'] else ''}" for a in f["apps"]] or ["- nessuna"]
+    L += ["", "## Sicurezza", "- " + ", ".join(f"{k} {'acceso' if v else 'SPENTO'}" for k, v in f["posture"].items())]
+    L += [f"- in LAN: {n} porte {', '.join(p)}" for n, p in sorted(f["lan"].items())]
+    L.append("- in rete adesso (non Apple):")
+    L += [f"  - {n['name']} — {n['signer']} — {short(n['key'])}" for n in f["net"]]
+    L.append("- estensioni attive:")
+    L += [f"  - {e['browser']}: {e['name']}{'' if e['store'] else ' (fuori store)'}" for e in f["extensions"] if e["enabled"]]
+    L.append(f"- estensioni spente: {sum(1 for e in f['extensions'] if not e['enabled'])}")
+    ag = f.get("agents") or {}
+    side = lambda x, extra="": "fonte illeggibile" if x is None else (
+        f"{x['ok']} su {x['n']} ({rate(x):.0f}%){extra}" if x["n"] else "nessuno")
+    g = ag.get("gb")
+    tp = ag.get("topics")
+    gbs = f"Topics {g['topics']:.1f}, Claude {g['claude']:.1f}".replace(".", ",") if g else "n.d."
+    orph = "n.d." if ag.get("orphans") is None else ag["orphans"]
+    lost = f", {tp['lost']} persi" if tp else ""
+    L += ["", f"## Agenti, lavori lunghi ({AGENTS_DAYS} giorni, oltre {AGENTS_LONG_MIN} min)",
+          f"- Topics: {side(tp, lost)} · Claude Code: {side(ag.get('claude'))} · "
+          f"orfani da Topics: {orph} · GB fissi: {gbs}"]
+    b = f["backup"]
+    L += ["", "## Backup",
+          f"- Time Machine: {'non configurato' if not b['tm_dest'] else (datetime.datetime.fromtimestamp(b['tm_last']).strftime('%d/%m/%Y %H:%M') if b['tm_last'] else 'data illeggibile')}",
+          f"- iCloud Scrivania e Documenti: {({True: 'si', False: 'no'}).get(b['icloud_docs'], 'non leggibile')}",
+          f"- jarvis-private spinto: {datetime.datetime.fromtimestamp(b['private_last']).strftime('%d/%m/%Y %H:%M') if b['private_last'] else 'mai'}",
+          f"- repo con commit non spinti: {len(b['unpushed'])}"]
+    L += [f"  - {n}: {c} commit, il piu' vecchio del {datetime.date.fromtimestamp(t).strftime('%d/%m/%Y')}" for n, c, t in b["unpushed"]]
+    L.append(f"- repo senza remote: {', '.join(b['noremote']) or 'nessuno'}")
+    return "\n".join(L) + "\n"
+
+
+def main():
+    weekly = "--weekly" in sys.argv
+    dry = "--dry-run" in sys.argv  # prova: niente card, stato intatto (se no la prova consuma le «nuove» del lunedi')
+    # il primo del mese gira il mensile, che contiene gia' il settimanale
+    if weekly and datetime.date.today().day == 1 and "--all" not in sys.argv:
+        return 0
+    report = None
+    if "--report" in sys.argv:
+        report = Path(sys.argv[sys.argv.index("--report") + 1])
+    else:
+        LOGDIR.mkdir(parents=True, exist_ok=True)
+        report = LOGDIR / f"{datetime.date.today().isoformat()}{'-settimanale' if weekly else ''}{'-prova' if dry else ''}.md"
+    f = read_facts(weekly)
+    keep, quiet = split_accepted(findings(f), f["accepted"])
+    todo = cards(f, keep, report)
+    ids = {c["key"]: "prova" for c in todo} if dry else open_cards(todo)
+    report.write_text(report_md(f, keep, quiet, todo, ids))
+    if not dry:
+        STATE.parent.mkdir(parents=True, exist_ok=True)
+        STATE.write_text(json.dumps(snapshot(f, keep), indent=1))
+    msg = message(for_attilio(keep, todo, ids), weekly, report, (f["baseline"] or {}).get("reported"))
+    if msg:
+        print(msg)
+    elif "--all" in sys.argv:
+        print(f"Mac, controllo {'settimanale' if weekly else 'mensile'}: tutto a posto ({f['seconds']} s). Rapporto: {short(report)}")
+    if dry:
+        print("\n".join([f"[prova] {len(todo)} card che aprirei:"] + [f"- {c['key']} → {c['title']}{' (notte)' if c['notte'] else ''}" for c in todo]))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

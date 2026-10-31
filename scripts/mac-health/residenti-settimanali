@@ -1,0 +1,87 @@
+#!/usr/bin/env python3
+"""I tre residenti più pesanti del Mac, per app, col footprint vero; per ognuno nuovo una card nella coda notturna
+che cerca un'alternativa più leggera e la misura, o scrive perché non c'è (Attilio: il Mac è il terminale, non il server).
+
+  residenti-settimanali [--dry-run]
+
+Gira il lunedì come passo della manutenzione delle 2:30. Raggruppa i processi per app o per progetto (Beeper con i
+suoi helper fa un numero solo) e misura il footprint dei 40 più grossi per RSS, come memhog: `ps rss` mente fino a 30
+volte. Un residente già passato da una card non ne riceve un'altra per 90 giorni. Stampa una riga; exit 0.
+"""
+import json, re, subprocess, sys, time
+from importlib.machinery import SourceFileLoader
+from pathlib import Path
+
+JARVIS = Path(__file__).resolve().parent.parent.parent
+memhog = SourceFileLoader("memhog", str(JARVIS / "scripts/devreap/memhog")).load_module()
+STATE = JARVIS / "state/residenti.json"
+BOARD_CARD = JARVIS / "scripts/board-card"
+RIPOSO = 90 * 86400
+
+# Il lavoro stesso, non un residente da sostituire: l'app di Claude e le sue sessioni, Topics (il prodotto di
+# Attilio), OpenClaw (è Jarvis, e il suo peso lo guarda già oc-heapwatch) e i processi di sistema di macOS.
+FUORI = re.compile(r"/Applications/Claude\.app/|Application Support/Claude/claude-code/|\.local/bin/claude\b|openclaw"
+                   r"|/Topics( Host)?\.app/|topics-app/|^/System/|^/usr/libexec/|^/usr/sbin/")
+
+
+def gruppo(cmd):
+    m = re.search(r"/Applications/([^/]+)\.app/", cmd) or re.search(r"Application Support/([^/]+)/", cmd)
+    if m:
+        return m.group(1)
+    m = re.search(r"/Projects/([^/ ]+)|/\.openclaw/|/\.claude/jarvis/([^/ ]+)", cmd)
+    exe = Path(cmd.split()[0]).name
+    if m:
+        dove = m.group(1) or ("openclaw" if "/.openclaw/" in m.group(0) else f"jarvis/{m.group(2)}")
+        return f"{exe} {dove}"
+    if "openclaw" in cmd:
+        return f"{exe} openclaw"
+    return exe
+
+
+def misura():
+    righe = []
+    for line in subprocess.run(["ps", "-Axo", "pid=,rss=,command="], capture_output=True, text=True).stdout.splitlines():
+        m = re.match(r"\s*(\d+)\s+(\d+)\s+(.*)", line)
+        if m and not FUORI.search(m.group(3)):
+            righe.append((int(m.group(1)), int(m.group(2)), m.group(3)))
+    gruppi = {}
+    for pid, _, cmd in sorted(righe, key=lambda r: -r[1])[:40]:
+        fp = memhog.footprint_mb(pid) or 0
+        gruppi[gruppo(cmd)] = gruppi.get(gruppo(cmd), 0) + fp
+    return sorted(gruppi.items(), key=lambda kv: -kv[1])[:3]
+
+
+def main():
+    dry = "--dry-run" in sys.argv
+    top = misura()
+    stato = json.loads(STATE.read_text()) if STATE.exists() else {}
+    ora = time.time()
+    nuove = []
+    for nome, mb in top:
+        if ora - stato.get(nome, {}).get("carta", 0) < RIPOSO:
+            continue
+        gb = f"{mb / 1024:.1f}".replace(".", ",")
+        desc = (f"Il {time.strftime('%d/%m')} era fra i tre residenti più pesanti del Mac: {gb} GB di footprint (memhog). "
+                "Cerca un'alternativa più leggera e misurala: versione web o cloud gratuita, uscita per inattività con launchd "
+                "Sockets (tools/residenti.md), un'app nativa invece di Electron, o spegnerla di notte. Barra: footprint prima e "
+                "dopo, misurato. Se non c'è, scrivi perché in un commento. Non disinstallare né cambiare app di Attilio: la "
+                "proposta va in review con i numeri, decide lui.")
+        if dry:
+            nuove.append(f"{nome} (prova)")
+            continue
+        r = subprocess.run([str(BOARD_CARD), "--key", f"residente:{nome.lower()}", "--title",
+                            f"[Jarvis] Alternativa più leggera a {nome} ({gb} GB)", "--desc", desc, "--notte",
+                            "--dir", str(JARVIS)], capture_output=True, text=True, timeout=60)
+        if r.returncode == 0:
+            stato[nome] = {"carta": ora, "id": r.stdout.strip(), "mb": round(mb)}
+            nuove.append(nome)
+    if not dry:
+        STATE.parent.mkdir(parents=True, exist_ok=True)
+        STATE.write_text(json.dumps(stato, indent=1, ensure_ascii=False))
+    pesi = " · ".join(f"{n} {mb / 1024:.1f} GB".replace(".", ",") for n, mb in top)
+    print(f"Residenti più pesanti: {pesi}; card nuove: {', '.join(nuove) or 'nessuna'}")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

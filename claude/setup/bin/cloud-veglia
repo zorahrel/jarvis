@@ -1,0 +1,135 @@
+#!/usr/bin/env python3
+# Veglia le sessioni cloud, giro ogni 2 minuti, max ~13 ore:
+# - richiesta di permesso in sospeso: AskUserQuestion -> deny «decidi tu»; ExitPlanMode -> allow;
+#   il resto -> deny con l'invito a riscrivere il comando in modo sicuro (mai approvare alla cieca);
+# - sessione ferma: se l'ultimo messaggio ha blocchi «=== percorso ===» o il suo ramo cloud/ è sul
+#   remoto, ha consegnato -> esce (mi sveglia). Se è ferma senza consegna da 25 minuti (di solito
+#   aspetta un comando in background), la sollecita, al massimo 3 volte; poi esce;
+# - saldo letto ogni 10 minuti (l'API dell'usage risponde 429 se interrogata di più); sotto soglia
+#   manda «chiudi» a tutte le sessioni non consegnate, poi esce.
+# Uso: veglia <soglia_dollari> <sid>...   Token dal Portachiavi, mai stampato.
+import json, os, subprocess, sys, time, urllib.request, uuid
+sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
+from cloud_conto import oauth as conto_oauth, org as conto_org, cli_env  # CLOUD_ACCOUNT=auto-N: altro account di vdm
+soglia, sids = float(sys.argv[1]), sys.argv[2:]
+BASE_ENV = '{"env":{"ANTHROPIC_BASE_URL":"https://api.anthropic.com"}}'
+SOLLECITO = ("Sei ferma da 25 minuti senza consegna. Se aspettavi un comando in background, leggi il suo "
+             "log e prosegui; se hai finito, consegna come da brief (push, oppure patch e REPORT nell'ultimo messaggio).")
+
+def log(*a): print(time.strftime("%H:%M"), *a, flush=True)
+
+def headers():
+    tok, org = conto_oauth()["accessToken"], conto_org()
+    return {"Authorization": "Bearer " + tok, "anthropic-version": "2023-06-01", "anthropic-beta": "ccr-byoc-2025-07-29",
+            "x-organization-uuid": org, "Content-Type": "application/json", "User-Agent": "cloud-veglia/2"}
+
+def call(path, body=None):
+    req = urllib.request.Request("https://api.anthropic.com/v1/sessions" + path, headers=headers(),
+                                 data=json.dumps(body).encode() if body else None, method="POST" if body else "GET")
+    with urllib.request.urlopen(req, timeout=30) as r:
+        return json.load(r)
+
+def events(sid):
+    evs, after = [], None
+    while True:
+        d = call(f"/{sid}/events?limit=1000" + (f"&after_id={after}" if after else ""))
+        evs += d.get("data", [])
+        if not d.get("has_more"): return evs
+        after = d.get("last_id") or evs[-1].get("id")
+
+def ultimo_testo(evs):
+    for e in reversed(evs):
+        m = e.get("message") or {}
+        if m.get("role") == "assistant" and isinstance(m.get("content"), list):
+            t = " ".join(b.get("text", "") for b in m["content"] if isinstance(b, dict) and b.get("type") == "text").strip()
+            if t: return t
+    return ""
+
+def ha_consegnato(evs):
+    t = ultimo_testo(evs)
+    if any(l.startswith("=== ") and l.rstrip().endswith(" ===") for l in t.splitlines()): return True
+    # Consegna esatta a pezzi (cloud-bundle): l'ultimo messaggio dice «BUNDLE <righe> <sha256>».
+    if __import__("re").search(r"\bBUNDLE \d+ [0-9a-f]{64}\b", t): return True
+    rami = subprocess.run(["git", "-C", os.path.expanduser("~/Projects/topics-app-wt-cloud-pass"), "ls-remote",
+                           "origin", "refs/heads/cloud/*"], capture_output=True, text=True).stdout
+    # Rami di consegna: tracce (t7-...) e verifiche (v2-...); le basi (-base) non sono consegne.
+    nomi = [x for x in __import__("re").findall(r"cloud/([tv]\d+[a-z]?-[\w-]+)", t) if not x.endswith("-base")]
+    # Il ramo da solo non basta: una sessione si ferma anche fra un sottoagente e l'altro nominando il
+    # ramo già pushato. Conta il REPORT della traccia sul ramo (t10b-… → reports/T10b.md).
+    return any(f"refs/heads/cloud/{x}\n" in rami + "\n" and ha_report(x) for x in nomi)
+
+def ha_report(ramo):
+    repo, rif = os.path.expanduser("~/Projects/topics-app-wt-cloud-pass"), f"refs/veglia/{ramo}"
+    if subprocess.run(["git", "-C", repo, "fetch", "-q", "origin", f"+refs/heads/cloud/{ramo}:{rif}"], capture_output=True).returncode:
+        return False
+    traccia = ramo.split("-")[0]; traccia = traccia[0].upper() + traccia[1:]
+    r = subprocess.run(["git", "-C", repo, "show", f"{rif}:openspec/changes/cloud-quality-pass/reports/{traccia}.md"],
+                       capture_output=True, text=True)
+    # Una bozza (T7b, 08/10: «| (in corso: barra finale) |» nelle caselle) non è una consegna.
+    return r.returncode == 0 and "(in corso" not in r.stdout
+
+def sblocca(sid, evs):
+    fatte = {e.get("response", {}).get("request_id") for e in evs if e.get("type") == "control_response"}
+    for e in [e for e in evs if e.get("type") == "control_request" and e.get("request_id") not in fatte]:
+        r = e["request"]; tool = r.get("tool_name")
+        if tool == "ExitPlanMode":
+            inner = {"behavior": "allow", "updatedInput": r.get("input", {})}
+        elif tool == "AskUserQuestion":
+            inner = {"behavior": "deny", "message": "Nessuno risponde alle domande: scegli tu l'opzione migliore, scrivi il perché nel REPORT e prosegui."}
+        else:
+            inner = {"behavior": "deny", "message": "Bloccato dal controllo di sicurezza e nessuno può approvarlo: riscrivi il comando in modo sicuro (per rm usa \"${VAR:?}\" o percorsi letterali) e prosegui. Motivo: " + r.get("decision_reason", "")[:200]}
+        call(f"/{sid}/events", {"events": [{"type": "control_response", "uuid": str(uuid.uuid4()),
+             "response": {"subtype": "success", "request_id": e["request_id"], "response": inner}}]})
+        log("sbloccata", sid[-6:], tool, inner["behavior"], "|", r.get("decision_reason", "")[:120])
+
+def scrivi(sid, testo):
+    subprocess.run(["claude", "-p", testo, "--cloud", sid, "--output-format", "json", "--settings", BASE_ENV],
+                   stdin=subprocess.DEVNULL, capture_output=True, timeout=120, env=cli_env())
+
+def residuo():
+    out = subprocess.run(["credito-cloud", "--json"], capture_output=True, text=True, timeout=60).stdout
+    return json.loads(out)["iguana_necktie"]["remaining_dollars"]
+
+stato = {s: {"ferma_da": None, "solleciti": 0} for s in sids}
+# VEGLIA_DOPO=sid,sid: sessioni già viste ferme col ramo nominato ma non finite (aspettano un sottoagente):
+# la consegna conta solo con eventi nuovi rispetto al primo giro, altrimenti la veglia riesce subito.
+dopo = {s: None for s in os.environ.get("VEGLIA_DOPO", "").split(",") if s}
+saldo, letto_alle = None, 0
+for giro in range(400):
+    try:
+        ora = time.time()
+        if ora - letto_alle > 600:
+            try:
+                saldo = residuo(); letto_alle = ora; log(f"saldo ${saldo:.2f}")
+            except Exception as ex:
+                letto_alle = ora - 300; log("saldo non letto, riprovo fra 5 minuti:", type(ex).__name__)
+        if saldo is not None and saldo < soglia:
+            log(f"CREDITO SOTTO ${soglia:.0f} (${saldo:.2f}): mando chiudi")
+            for sid in sids: scrivi(sid, "chiudi: il credito cloud è quasi finito. Finisci il fix in corso, barra, REPORT e consegna come da brief, poi fermati.")
+            break
+        for sid in sids:
+            st = call(f"/{sid}").get("session_status")
+            # «pending» è la sessione appena creata che non è ancora partita: viva, non finita.
+            if st in ("running", "pending"):
+                stato[sid]["ferma_da"] = None; continue
+            evs = events(sid)
+            if st == "requires_action":
+                sblocca(sid, evs); continue
+            if sid in dopo and dopo[sid] is None: dopo[sid] = len(evs)
+            if len(evs) > (dopo.get(sid) or 0) and ha_consegnato(evs):
+                log("CONSEGNA:", sid, st); raise SystemExit
+            if st != "idle":
+                log("FINITA senza consegna:", sid, st); raise SystemExit
+            s = stato[sid]
+            if s["ferma_da"] is None:
+                s["ferma_da"] = ora; continue
+            if ora - s["ferma_da"] > 1500:
+                if s["solleciti"] >= 3:
+                    log("FERMA dopo 3 solleciti:", sid); raise SystemExit
+                scrivi(sid, SOLLECITO); s["solleciti"] += 1; s["ferma_da"] = None
+                log("sollecitata", sid[-6:], f"({s['solleciti']}/3)")
+    except SystemExit:
+        break
+    except Exception as ex:
+        log("errore di giro:", type(ex).__name__, str(ex)[:120])
+    time.sleep(120)

@@ -1,0 +1,71 @@
+gui/501/com.jarvis.devbridge = {
+	active count = 1
+	path = /Users/zorahrel/Library/LaunchAgents/com.jarvis.devbridge.plist
+	type = LaunchAgent
+	state = running
+
+	program = /bin/bash
+	arguments = {
+		/bin/bash
+		/Users/zorahrel/jarvis/mcp-devbridge/run.sh
+	}
+
+	stdout path = /Users/zorahrel/jarvis/mcp-devbridge/logs/agent.log
+	stderr path = /Users/zorahrel/jarvis/mcp-devbridge/logs/agent.err
+	inherited environment = {
+		SSH_AUTH_SOCK => /private/tmp/com.apple.launchd.zFUCy2dhJ6/Listeners
+	}
+
+	default environment = {
+		PATH => /usr/bin:/bin:/usr/sbin:/sbin
+	}
+
+	environment = {
+		OSLogRateLimit => 64
+		XPC_SERVICE_NAME => com.jarvis.devbridge
+	}
+
+	domain = gui/501 [123527]
+	asid = 123527
+	minimum runtime = 30
+	exit timeout = 5
+	runs = 7
+	pid = 70693
+	immediate reason = inefficient
+	forks = 16506
+	execs = 1
+	initialized = 1
+	trampolined = 1
+	started suspended = 0
+	proxy started suspended = 0
+	checked allocations = 0 (queried = 1)
+	checked allocations reason = no host
+	checked allocations flags = 0x0
+	last terminating signal = Killed: 9
+
+	resource coalition = {
+		ID = 448047
+		type = resource
+		state = active
+		active count = 1
+		name = com.jarvis.devbridge
+	}
+
+	jetsam coalition = {
+		ID = 448048
+		type = jetsam
+		state = active
+		active count = 1
+		name = com.jarvis.devbridge
+	}
+
+	spawn type = daemon (3)
+	jetsam priority = 40
+	jetsam memory limit (active) = (unlimited)
+	jetsam memory limit (inactive) = (unlimited)
+	jetsamproperties category = daemon
+	jetsam thread limit = 32
+	cpumon = default
+
+	properties = keepalive | runatload | inferred program | managed LWCR | has LWCR
+}

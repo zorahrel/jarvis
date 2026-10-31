@@ -1,0 +1,15 @@
+#!/bin/sh
+# Repo locale della memoria di Jarvis: nessun remote, apposta.
+# Dentro: MEMORY.md, USER.md, DREAMS.md, memory/ (con .dreams), privato/ (fuori dalla
+# ricerca di OpenClaw) e prompts/ (sorgente del prompt dei gruppi).
+# Il .gitignore di ~/.openclaw ignora tutto, quindi `memgit snap "msg"` aggiunge con -f.
+# `snap` senza modifiche esce 0 senza commit: lo lancia anche launchd ogni notte.
+G="git --git-dir=$HOME/.openclaw/memoria.git --work-tree=$HOME/.openclaw"
+if [ "$1" = snap ]; then
+  shift
+  $G add -f -A -- MEMORY.md USER.md DREAMS.md memory privato prompts ':!memory/test-modelli' ':!**/__pycache__' || exit 1
+  $G diff --cached --quiet && exit 0
+  $G commit -q -m "${1:-snapshot memoria $(date '+%Y-%m-%d %H:%M')}"
+  exit $?
+fi
+exec $G "$@"

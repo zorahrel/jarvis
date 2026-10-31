@@ -1,0 +1,31 @@
+#!/usr/bin/env python3
+# Risponde alla richiesta di permesso in sospeso di una sessione cloud.
+# Uso: rispondi.py <sid> allow|deny ["messaggio per deny"]   (token dal Portachiavi, mai stampato)
+import json, os, subprocess, sys, urllib.request, urllib.error, uuid
+sid, beh = sys.argv[1], sys.argv[2]
+msg = sys.argv[3] if len(sys.argv) > 3 else ""
+raw = subprocess.run(["security", "find-generic-password", "-s", "Claude Code-credentials", "-w"], capture_output=True, text=True)
+tok = json.loads(raw.stdout)["claudeAiOauth"]["accessToken"]
+org = json.load(open(os.path.expanduser("~/.claude.json")))["oauthAccount"]["organizationUuid"]
+H = {"Authorization": "Bearer " + tok, "anthropic-version": "2023-06-01", "anthropic-beta": "ccr-byoc-2025-07-29",
+     "x-organization-uuid": org, "Content-Type": "application/json", "User-Agent": "cloud-rispondi/1"}
+B = "https://api.anthropic.com/v1/sessions/" + sid
+evs, after = [], None
+while True:
+    d = json.load(urllib.request.urlopen(urllib.request.Request(B + "/events?limit=1000" + (f"&after_id={after}" if after else ""), headers=H), timeout=20))
+    evs += d.get("data", [])
+    if not d.get("has_more"): break
+    after = d.get("last_id") or evs[-1].get("id")
+risposte = {e.get("response", {}).get("request_id") for e in evs if e.get("type") == "control_response"}
+pend = [e for e in evs if e.get("type") == "control_request" and e.get("request_id") not in risposte]
+if not pend: sys.exit("nessuna richiesta in sospeso")
+req = pend[-1]; r = req["request"]
+print("richiesta:", r.get("tool_name"), "|", r.get("decision_reason", "")[:160])
+inner = {"behavior": "allow", "updatedInput": r.get("input", {})} if beh == "allow" else {"behavior": "deny", "message": msg}
+body = {"events": [{"type": "control_response", "uuid": str(uuid.uuid4()),
+                    "response": {"subtype": "success", "request_id": req["request_id"], "response": inner}}]}
+try:
+    with urllib.request.urlopen(urllib.request.Request(B + "/events", data=json.dumps(body).encode(), headers=H, method="POST"), timeout=20) as x:
+        print("inviata:", x.status, x.read()[:200].decode(errors="replace"))
+except urllib.error.HTTPError as e:
+    print("errore:", e.code, e.read()[:400].decode(errors="replace")); sys.exit(1)

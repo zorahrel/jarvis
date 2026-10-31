@@ -1,0 +1,12 @@
+--- $HOME/.claude/jarvis/tools/usage-hub/config.json
++++ $HOME/.claude/jarvis/tools/usage-hub/config.json
+@@ -26,7 +26,7 @@
+   },
+   "port": 3360,
+   "shed": {
+-    "enabled": false,
+-    "why": "24/10: spenta. Il 23/10 13 pause su 13 su agenti che non pesavano; chi bloccava era tsserver 3 GB, wigolo 5,9 GB, gateway OpenClaw. Il riepilogo dice chi blocca e perche'. Riaccendere solo con un agente che pesa davvero (filtro di peso in shed.mjs)."
++    "enabled": true,
++    "why": "24/10 sera: riaccesa col bersaglio nuovo. Agisce solo sui lavori pesanti delle sessioni che nessuno guarda (coda comune coi gate di Topics, fermata dal 1,5 di carico per core da un minuto, pausa breve dei lavori in coda a Mac sotto sforzo (3 per core), tetto di memoria, test appesi da 3 h); mai sulle CLI degli agenti, sulle sessioni con qualcuno davanti, sulle chat di OpenClaw o sugli alberi di Topics. Prima (23/10) metteva in pausa agenti che non pesavano."
+   }
+ }

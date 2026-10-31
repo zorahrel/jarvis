@@ -1,0 +1,1152 @@
+#!/usr/bin/env python3
+"""devreap — uccide i dev server che stanno affamando il Mac. Nient'altro.
+
+Il 21/09/2026 un `next dev` di un sito cliente in loop (14 GB di footprint, 388% di CPU,
+zero connessioni) piu' due `next start` dimenticati da due giorni hanno riempito
+lo swap al 98%: Topics era vivo e in LISTEN ma non rispondeva piu' entro 25 s, e
+sembrava offline. Il freno interno di Topics vedeva la pressione ("swap sustained
+... nothing to interrupt") ma non puo' uccidere processi che non sono suoi.
+
+Criterio unico, scelto per non poter sbagliare:
+
+    la macchina soffre  +  il processo e' enorme  +  non lo usa nessuno
+    +  e' rimasto cosi' per tre passate di fila (15 min)
+
+Fuori da questa congiunzione non tocca niente. In particolare NON usa
+l'orfananza (`ppid 1`) come indizio: un dev server lanciato con `nohup` apposta
+e' orfano per costruzione, e il client Vite di topics-app sta li' legittimamente
+da giorni. E non guarda l'eta': vecchio non vuol dire morto.
+
+Un dev server ucciso non perde lavoro: lo stato sta nei file, si riavvia in
+trenta secondi. Per questo la raccolta e' sicura, ed e' anche il motivo per cui
+non tocca `bun test`, build o altro che, morendo, butterebbe via un risultato.
+
+Accanto a questa regola d'emergenza ne girano tre senza pressione: i server
+statici usa e getta nelle scratchpad (REAP-SCRATCH), i resti senza padrone
+(REAP-RESTO, dove l'orfananza conta solo insieme a un padrone morto) e i filtri
+git rimasti senza git (REAP-FILTRO).
+
+Uso:
+    devreap              una passata (per il timer launchd)
+    devreap --list       censimento, non uccide
+    devreap --dry-run    decide e spiega, non uccide
+    devreap --now        ignora il gate di pressione (uso manuale in emergenza)
+"""
+import calendar
+import ctypes
+import json
+import os
+import re
+import signal
+import sqlite3
+import subprocess
+import sys
+import time
+import traceback
+from pathlib import Path
+
+HOME = Path.home()
+STATE = HOME / ".claude/jarvis/state/devreap.json"
+LOG = HOME / ".claude/jarvis/logs/devreap.log"
+
+# --- Soglie -----------------------------------------------------------------
+# Le soglie si abbassano da env solo per la suite in test/devreap-test.sh:
+# in produzione nessuno le passa, e questi restano i valori veri.
+def _env(name, default, cast=float):
+    try:
+        return cast(os.environ[name])
+    except (KeyError, ValueError):
+        return default
+
+
+SWAP_PRESSURE_PCT = _env("DEVREAP_SWAP_PCT", 85.0)   # sotto: nessuna emergenza
+FOOTPRINT_MB = _env("DEVREAP_FOOTPRINT_MB", 6 * 1024)  # un Next sano sta sotto 2 GB
+STRIKES = _env("DEVREAP_STRIKES", 3, int)            # passate di fila (~15 min)
+KILLS_PER_PASS = _env("DEVREAP_KILLS", 1, int)       # uno per volta, poi rimisura
+
+# Cosa e' un dev server. Solo server: niente test runner, niente build.
+DEV_PATTERNS = [
+    r"next/dist/server/lib/start-server\.js",
+    r"\bnext (dev|start)\b",
+    r"node_modules/\.bin/next\b",
+    r"node_modules/\.bin/vite\b",
+    r"\bvite\b.*\b(dev|preview)\b",
+    r"node_modules/\.bin/astro\b",
+    r"\bastro\b.*\bdev\b",
+]
+# Fuori di qui non si opera. /private/tmp perche' i cloni usa e getta degli
+# agenti (un orchestratore di agenti, 120 cartelle `q-*` il 05/10) ci lanciano i loro `next dev`:
+# uno orfano dalle 03:14 e' arrivato a 51 GB e ha portato lo swap al 98%.
+ALLOWED_ROOTS = [str(HOME / "Projects"), "/private/tmp/", "/tmp/"]
+
+# Recinto della suite. Quando la suite abbassa le soglie lo fa per TUTTA la
+# macchina, e il 21/09 questo ha ucciso un `next dev` vero su :3200 mentre
+# provavo il reaper. Con DEVREAP_ONLY_PATH impostato, devreap ignora qualunque
+# processo il cui comando non contenga quel path: il test puo' essere aggressivo
+# quanto vuole senza poter toccare niente di reale.
+ONLY_PATH = os.environ.get("DEVREAP_ONLY_PATH", "")
+PROTECTED = [                              # residenti gestiti altrove
+    "topics-app/server.ts",
+    "Topics Host.app",
+    "openclaw/dist/index.js",
+    "jarvis/router",
+]
+OWNER_HINTS = ["Claude.app", "claude-code", "jcode", "tmux", "Terminal"]
+
+# Seconda regola, indipendente dalla pressione: i server statici usa e getta.
+# Il 24/10 una sessione Claude di armonia-site aveva lasciato 27
+# `python -m http.server` orfani, uno per ogni build confrontata, accumulati in
+# quattro giorni: il comando finisce con `&`, la shell muore e il server resta
+# a launchd. Qui l'orfananza conta perche' la congiunzione e' stretta: server
+# statico + cartella in una scratchpad di Claude + padre launchd + nessuna
+# connessione + piu' vecchio di SCRATCH_AGE. Servono file da disco, ucciderli
+# non perde niente.
+SCRATCH_PATTERN = r"-m\s+http\.server\b"
+SCRATCH_CWD = r"^/(private/)?tmp/claude-\d+/"
+SCRATCH_AGE = _env("DEVREAP_SCRATCH_AGE", 3600, int)
+
+# Terza regola, anche lei senza pressione: i resti senza padrone. Il 25/10
+# c'erano 36 processi vivi per 2,1 GB, tutti con ppid 1 e zero connessioni:
+# server, attese e prove lanciate staccate da sessioni e agenti gia' finiti.
+# Le prime due regole guardano il tipo e il danno, mai se il padrone c'e'
+# ancora. Il verificatore dello studio ha bocciato «basta che sia astro/vite/
+# http.server»: avrebbe chiuso la :4801 usata un'ora prima e l'astro di Attilio.
+# Qui il tipo non conta mai: serve un padrone morto (obbligatorio) e poi un
+# processo fermo da 2 ore.
+RESTO_IDLE = _env("DEVREAP_RESTO_IDLE", 2 * 3600, int)
+# Sola osservazione finche' non regge la verifica del 25/10: dopo un riavvio di Topics Host
+# il «responsabile morto» avrebbe chiuso il pty-bridge, cioe' tutti i terminali di Topics.
+RESTO_KILL = _env("DEVREAP_RESTO_KILL", 0, int)
+RESTO_PASSES = 3                  # passate ferme di fila, oltre alle 2 ore
+# Staccati apposta: con ppid 1 e il padrone «morto» sono comunque voluti. Il registro dell'osservazione
+# (25-28/10) li ha mostrati come chiusure sbagliate: gli involucri dei terminali di Topics dopo un
+# riavvio di Topics Host (26/10 02:48 e 13:23), un tunnel `ssh -f -N` di un progetto fatto per restare
+# staccato (27/10 03:11), il demone di 1Password (27/10 05:46) e il lanciatore di job dell'hub
+# (`sh -c "$0"` che scrive EXIT_FILE e JOB_LOG, 26/10 04:53: il job sopravvive a chi l'ha avviato
+# per costruzione). Si guarda il comando o la cartella della radice, mai il tipo di server.
+RESTO_ESCLUSI = (
+    ("tunnel ssh -f/-N", "cmd", re.compile(r"(?:^|/)ssh\s(?:.*\s)?-[A-Za-z]*[fN][A-Za-z]*(?:\s|$)")),
+    ("demone di 1Password", "cmd", re.compile(r"(?:^|/)op\s+daemon(?:\s|$)")),
+    # Il server di Jarvis hub (`node bin/usage-hub.mjs serve`) nasce staccato di proposito (28/10 03:13,
+    # 26/10 20:24): il suo padrone «morto» e' il lanciatore che ha finito. Il 30/10 la regola lo avrebbe chiuso.
+    ("hub di Jarvis", "cwd", re.compile(r"(?:^|/)tools/usage-hub(?:/|$)")),
+    ("hub di Jarvis", "cmd", re.compile(r"tools/usage-hub/|usage-hub\.mjs")),
+    # Un database non e' un server dimenticato: il dato sta nel processo e il padrone non si legge.
+    # Il 30/10 un mysqld con dati di staging in una cartella di lavoro sarebbe stato chiuso.
+    ("server di database", "cmd", re.compile(r"(?:^|/)(?:mysqld|postgres|mongod|redis-server)(?:\s|$)")),
+    ("involucro di un terminale Topics", "cmd", re.compile(r"_topics_group_has_peers|topics-command-group")),
+    ("sotto la cartella dei terminali Topics", "cwd", re.compile(r"^/(?:private/)?var/folders/[^/]+/[^/]+/T/topics-tt-")),
+    ("lanciatore di job dell'hub", "cmd", re.compile(r"\$EXIT_FILE\b.*\$JOB_LOG\b", re.S)),
+)
+
+
+def resto_escluso(cmd, cwd):
+    """Il nome dell'esclusione che copre questa radice, o None."""
+    for name, what, rx in RESTO_ESCLUSI:
+        if rx.search(cmd if what == "cmd" else cwd or ""):
+            return name
+    return None
+
+RESTO_GRACE = 10                  # secondi fra TERM e KILL
+STATE_RESTO = HOME / ".claude/jarvis/state/devreap-resto.json"
+
+# Quarta regola, senza attese: i filtri di git rimasti senza git. Il git-worker dell'app Claude fa
+# `git status` ogni ~30 s con GIT_OPTIONAL_LOCKS=0 (ricifra ogni file con lo stat sporco, a ogni
+# giro) e a timeout uccide solo il pid di git: il `git-crypt clean` resta bloccato per sempre su una
+# pipe che tiene aperta da sé. Tre il 24/10 alle 03:02, 03:03 e 03:04 in jarvis/private, mentre
+# l'rsync del backup sporcava lo stat. Un filtro esiste solo dentro un git: con ppid 1 non lo legge
+# più nessuno, e chiuderlo non perde niente (git rilancia il filtro al giro dopo).
+GIT_FILTER = re.compile(r"^(?:\S*/)?git-crypt (?:clean|smudge)\b")
+CLAUDE_SESSIONS = HOME / ".claude/sessions"   # <pid>.json di ogni sessione Claude viva
+TOPICS_SCRIPTS = HOME / "Projects/topics-app/.state/scripts.json"
+TOPICS_DB = HOME / "Projects/topics-app/data/topics.db"
+SYSTEM_PREFIXES = ("/System/", "/usr/libexec/", "/usr/sbin/", "/sbin/")
+SESSION_DIR = re.compile(r"^/(?:private/)?tmp/claude-\d+/[^/]+/"
+                         r"([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})(?:/|$)")
+TRASH = str(HOME / ".Trash") + "/"
+
+
+def log(msg, echo=False):
+    LOG.parent.mkdir(parents=True, exist_ok=True)
+    line = f"{time.strftime('%Y-%m-%dT%H:%M:%S%z')} {msg}"
+    with LOG.open("a") as f:
+        f.write(line + "\n")
+    if echo or sys.stdout.isatty():
+        print(line)
+
+
+def swap_pct():
+    try:
+        out = subprocess.run(["sysctl", "-n", "vm.swapusage"],
+                             capture_output=True, text=True, timeout=10).stdout
+    except Exception:
+        return 0.0
+    tot = re.search(r"total = ([\d.]+)M", out)
+    use = re.search(r"used = ([\d.]+)M", out)
+    if not (tot and use) or float(tot.group(1)) == 0:
+        return 0.0
+    return float(use.group(1)) / float(tot.group(1)) * 100
+
+
+def ps_table(raw=None):
+    # errors="replace": un solo argv non UTF-8 (byte 0xcc, tre volte il 25/10)
+    # faceva saltare il giro intero con UnicodeDecodeError. Un carattere
+    # storpiato in un comando non cambia nessuna decisione, un giro perso si'.
+    # LC_ALL=C perche' lstart esca in inglese come lo scrivono Topics e Claude.
+    if raw is None:
+        raw = subprocess.run(
+            ["ps", "-Ao", "pid=,ppid=,uid=,pcpu=,etime=,lstart=,command="],
+            capture_output=True, env={**os.environ, "LC_ALL": "C"}).stdout
+    procs = {}
+    for line in raw.decode("utf-8", errors="replace").splitlines():
+        parts = line.split(None, 10)
+        if len(parts) < 11:
+            continue
+        pid, ppid, uid, cpu, etime = parts[:5]
+        lstart = " ".join(parts[5:10])
+        try:
+            procs[int(pid)] = {"ppid": int(ppid), "uid": int(uid), "cpu": float(cpu),
+                               "age": parse_etime(etime), "lstart": lstart,
+                               "start": lstart_epoch(lstart), "cmd": parts[10]}
+        except ValueError:
+            continue
+    return procs
+
+
+def lstart_epoch(s):
+    try:
+        return int(time.mktime(time.strptime(s, "%a %b %d %H:%M:%S %Y")))
+    except ValueError:
+        return 0
+
+
+def same_start(text, epoch):
+    """La data di partenza scritta da altri (UTC o locale) e' quella del pid?"""
+    try:
+        st = time.strptime(" ".join(text.split()), "%a %b %d %H:%M:%S %Y")
+    except ValueError:
+        return False
+    return any(abs(e - epoch) <= 1 for e in (calendar.timegm(st), time.mktime(st)))
+
+
+def parse_etime(e):
+    days = 0
+    if "-" in e:
+        d, e = e.split("-", 1)
+        days = int(d)
+    bits = [int(x) for x in e.split(":")]
+    while len(bits) < 3:
+        bits.insert(0, 0)
+    return days * 86400 + bits[0] * 3600 + bits[1] * 60 + bits[2]
+
+
+def cwd_of(pid):
+    try:
+        out = subprocess.run(["lsof", "-a", "-p", str(pid), "-d", "cwd", "-Fn"],
+                             capture_output=True, text=True, errors="replace",
+                             timeout=5).stdout
+    except Exception:
+        return ""
+    return next((l[1:] for l in out.splitlines() if l.startswith("n")), "")
+
+
+def is_dev_server(cmd, pid=None):
+    if any(p in cmd for p in PROTECTED):
+        return False
+    if not any(re.search(p, cmd) for p in DEV_PATTERNS):
+        return False
+    # Il path puo' non stare nel comando: `node node_modules/.bin/../next dev`
+    # lanciato dalla cartella del progetto non ne nomina nessuno, e il 05/10
+    # cosi' e' sfuggito il next dev da 51 GB. Allora conta la cwd. La si legge
+    # solo qui, dopo i pattern, per non chiamare lsof su ogni processo.
+    where = cmd if pid is None else cmd + "\n" + cwd_of(pid)
+    if ONLY_PATH and ONLY_PATH not in where:
+        return False                     # recinto della suite: vedi ONLY_PATH
+    return any(root in where for root in ALLOWED_ROOTS)
+
+
+def footprint_mb(pid):
+    try:
+        out = subprocess.run(["footprint", "-p", str(pid)],
+                             capture_output=True, text=True, timeout=20).stdout
+    except Exception:
+        return 0.0
+    m = re.search(r"phys_footprint:\s+([\d.]+)\s*(KB|MB|GB)", out)
+    if not m:
+        return 0.0
+    v, unit = float(m.group(1)), m.group(2)
+    return v / 1024 if unit == "KB" else v if unit == "MB" else v * 1024
+
+
+def net(pid):
+    """(porte in LISTEN, connessioni entranti verso quelle porte)"""
+    detail = net_detail(pid)
+    return (set(), 0) if detail is None else detail[:2]   # in dubbio: zero porte
+
+
+def net_detail(pid):
+    """(porte, entranti, in ascolto su tutte le interfacce), o None se lsof non
+    risponde: per chi decide sull'inattivita' un buco non vale uno zero."""
+    try:
+        out = subprocess.run(["lsof", "-nP", "-p", str(pid), "-a", "-i"],
+                             capture_output=True, text=True, errors="replace",
+                             timeout=25).stdout
+    except Exception:
+        return None
+    listen = [m.groups() for line in out.splitlines() if "(LISTEN)" in line
+              for m in [re.search(r"\s(\S+):(\d+) \(LISTEN\)", line)] if m]
+    ports = {port for _, port in listen}
+    inbound = sum(1 for line in out.splitlines() if "(ESTABLISHED)" in line
+                  for m in [re.search(r":(\d+)->", line)]
+                  if m and m.group(1) in ports)
+    exposed = any(host in ("*", "0.0.0.0", "[::]") for host, _ in listen)
+    return ports, inbound, exposed
+
+
+def group_root(pid, procs):
+    """Risale l'albero finche' resta dentro il gruppo del dev server."""
+    cur = pid
+    seen = {cur}
+    while True:
+        parent = procs.get(cur, {}).get("ppid", 1)
+        if parent in (0, 1) or parent in seen:
+            return cur
+        pcmd = procs.get(parent, {}).get("cmd", "")
+        if any(h in pcmd for h in OWNER_HINTS):
+            return cur                               # sopra c'e' la sessione
+        if re.search(r"\b(next|bun|node|vite|disclaimer|nohup)\b", pcmd):
+            seen.add(parent)
+            cur = parent
+            continue
+        return cur
+
+
+def descendants(root, procs):
+    out, frontier = [root], [root]
+    while frontier:
+        nxt = [pid for pid, i in procs.items()
+               if i["ppid"] in frontier and pid not in out]
+        out.extend(nxt)
+        frontier = nxt
+    return out
+
+
+def kill_tree(pids, dry=False, grace=6):
+    if dry:
+        return "dry-run (nessun segnale)"
+    for p in sorted(pids, reverse=True):
+        try:
+            os.kill(p, signal.SIGTERM)
+        except OSError:
+            pass
+    time.sleep(grace)
+    hard = []
+    for p in pids:
+        try:
+            os.kill(p, 0)
+            hard.append(p)
+        except OSError:
+            pass
+    for p in hard:
+        try:
+            os.kill(p, signal.SIGKILL)
+        except OSError:
+            pass
+    return "TERM" if not hard else f"TERM+KILL({len(hard)})"
+
+
+def survey(procs):
+    """Un record per albero dev: porte, connessioni, footprint, eta'."""
+    roots = {}
+    for pid, info in procs.items():
+        if is_dev_server(info["cmd"], pid):
+            roots.setdefault(group_root(pid, procs), None)
+    # Se una radice e' discendente di un'altra, tieni solo la piu' alta.
+    tops = []
+    for r in roots:
+        if not any(r != o and r in descendants(o, procs) for o in roots):
+            tops.append(r)
+    rows = []
+    for root in sorted(tops):
+        members = sorted(descendants(root, procs))
+        ports, inbound, fp = set(), 0, 0.0
+        for p in members:
+            pt, ib = net(p)
+            ports |= pt
+            inbound += ib
+            fp = max(fp, footprint_mb(p))
+        rows.append({
+            "root": root, "members": members, "ports": sorted(ports),
+            "inbound": inbound, "fp": fp,
+            "cpu": max(procs.get(p, {}).get("cpu", 0.0) for p in members),
+            "age": max(procs.get(p, {}).get("age", 0) for p in members),
+            "cmd": procs.get(root, {}).get("cmd", "?"),
+        })
+    return rows
+
+
+def print_rows(rows, swap):
+    print(f"swap usato {swap:.1f}%  (gate a {SWAP_PRESSURE_PCT}%)\n")
+    if not rows:
+        print("nessun dev server attivo")
+        return
+    for r in rows:
+        verdict = "ok"
+        if r["inbound"] > 0:
+            verdict = "in uso"
+        elif r["fp"] > FOOTPRINT_MB:
+            verdict = "SOSPETTO (grosso e senza connessioni)"
+        print(f"  root={r['root']:<6} porte={','.join(r['ports']) or '-':<12} "
+              f"conn={r['inbound']:<3} {r['fp']:>7.0f}MB cpu={r['cpu']:>5.0f}% "
+              f"eta={r['age']//60:>5}m  {verdict}")
+        print(f"        {r['cmd'][:110]}")
+
+
+def scratch_servers(procs, owners=None):
+    """I server statici orfani lasciati nelle scratchpad di Claude."""
+    rows = []
+    for pid, info in procs.items():
+        if info["ppid"] != 1 or info["age"] < SCRATCH_AGE:
+            continue
+        if not re.search(SCRATCH_PATTERN, info["cmd"]):
+            continue
+        cwd = cwd_of(pid)
+        if not re.match(SCRATCH_CWD, cwd):
+            continue
+        if ONLY_PATH and ONLY_PATH not in info["cmd"] + "\n" + cwd:
+            continue                         # recinto della suite
+        # La scratchpad e' di una sessione ancora viva: il server e' suo anche
+        # se fermo da un'ora (il tipo e il posto da soli non bastano, 25/10).
+        sid = session_of(cwd)
+        if owners and sid and owners.session_alive(sid) is not False:
+            continue
+        ports, inbound = net(pid)
+        if inbound:
+            continue
+        rows.append({"pid": pid, "ports": sorted(ports), "age": info["age"],
+                     "cwd": cwd})
+    return rows
+
+
+def reap_scratch(procs, dry, owners=None, listing=False):
+    rows = scratch_servers(procs, owners)
+    if listing:
+        for r in rows:
+            print(f"  usa e getta pid={r['pid']} porte={','.join(r['ports']) or '-'} "
+                  f"eta={r['age']//60}m  {r['cwd'][-90:]}")
+        return set()
+    if not rows:
+        return set()
+    # Un solo giro di segnali: kill_tree aspetta 6 s, non va pagato per ognuno.
+    res = kill_tree([r["pid"] for r in rows], dry)
+    for r in rows:
+        log(f"REAP-SCRATCH pid={r['pid']} porte={','.join(r['ports']) or '-'} "
+            f"eta={r['age']//60}m [{res}] :: {r['cwd']}", echo=True)
+    return {r["pid"] for r in rows}
+
+
+# --- Resti senza padrone -----------------------------------------------------
+
+def session_of(path):
+    """L'id della sessione Claude se il path sta in /tmp/claude-<uid>/<progetto>/<id>/."""
+    m = SESSION_DIR.match(path or "")
+    return m.group(1) if m else None
+
+
+def is_app(exe):
+    """Eseguibile di un bundle (app, estensione, servizio XPC). Non lo e' il
+    Python.app dentro Python.framework che fa girare ogni http.server."""
+    m = re.search(r"\.(?:app|appex|xpc)/Contents/MacOS/", exe)
+    return bool(m) and ".framework/" not in exe[:m.start()]
+
+
+def unix_clients(text):
+    """Le connessioni accettate sui socket unix dell'albero, da `lsof -U -F dn`.
+
+    Il ponte dei terminali di Topics parla solo cosi': per lsof -i ha zero client
+    anche con tutti i terminali aperti (25/10). Una connessione accettata ha lo
+    stesso path del socket in ascolto e un device diverso; chi si collega a un
+    path da client vede invece «->0x...». Non contano le connessioni il cui altro
+    capo e' nell'albero stesso."""
+    by_path, peers, dev = {}, set(), None
+    for line in text.splitlines():
+        tag, val = line[:1], line[1:]
+        if tag == "f":
+            dev = None                       # file nuovo: il device va riletto
+        elif tag == "d":
+            dev = val
+        elif tag == "n" and dev and val:
+            if val.startswith("->"):
+                peers.add(val[2:])
+            else:
+                by_path.setdefault(val, set()).add(dev)
+    # Il socket in ascolto non e' mai l'altro capo di nessuno: resta sempre, da qui il -1.
+    return sum(max(0, len(devs - peers) - 1) for devs in by_path.values())
+
+
+class RespMemory:
+    """Di chi erano figli i processi, visti vivi con un responsabile in vita.
+
+    Misurato sul kernel vero (25/10): quando il responsabile di un processo muore,
+    macOS non restituisce mai il suo pid, ne' morto ne' riciclato: lo segue per
+    uniqueid e dichiara il figlio responsabile di se' stesso. Dal kernel un orfano
+    col padrone morto e uno nato staccato (jcode serve, il ponte di Topics, il demone
+    di Codex) sono quindi identici. Cio' che li distingue e' il passato: l'orfano
+    l'abbiamo visto, in una passata prima, con un responsabile vivo. Qui si tiene
+    solo chi aveva per responsabile una sessione Claude o un demone ('owner'): un'app
+    ospite che riparte (launchctl kickstart di Topics Host) lascia i suoi figli
+    responsabili di se' stessi, e non per questo abbandonati.
+
+    Chiave pid@partenza -> 'pid@partenza' del responsabile. Si salva in
+    devreap-resto.json, sotto 'kids', e si tengono solo i processi ancora vivi.
+
+    Il responsabile e' il CLI, ma la sessione sopravvive al suo CLI: quando Claude.app
+    riparte, la sessione ripresa ha un CLI nuovo e i figli del vecchio restano suoi. Per
+    questo si ricorda anche il sessionId del CLI ('sids', stessa chiave): il padrone e'
+    morto solo se il CLI e' morto E la sessione non e' viva."""
+
+    def __init__(self, data=None, sids=None):
+        self.kids = {k: v for k, v in dict(data or {}).items() if isinstance(v, str)}
+        self.sids = {k: v for k, v in dict(sids or {}).items()
+                     if isinstance(v, str) and k in self.kids}
+
+    @staticmethod
+    def key(pid, procs):
+        return f"{pid}@{procs[pid]['start']}"
+
+    def observe(self, procs, probe, owners, uid):
+        """Una passata sui processi vivi: aggiorna chi ha un responsabile 'owner' in vita
+        e dimentica i morti. Un processo gia' responsabile di se' stesso non cambia nulla."""
+        alive = {k: v for k, v in self.kids.items()
+                 if int(k.partition("@")[0]) in procs and self.key(int(k.partition("@")[0]), procs) == k}
+        sids = {k: v for k, v in self.sids.items() if k in alive}
+        kinds = {}                           # responsabile -> 'owner' | 'host', calcolato una volta
+        for pid, info in procs.items():
+            if info["uid"] != uid:
+                continue
+            resp = probe.responsible(pid)
+            if resp <= 0 or resp == pid or resp not in procs:
+                continue
+            if resp not in kinds:
+                kinds[resp] = resp_kind(resp, procs, probe, owners)
+            if kinds[resp] == "owner":
+                key = self.key(pid, procs)
+                alive[key] = self.key(resp, procs)
+                # La sessione del CLI, finche' il registro la dice; se non c'e' piu' si tiene
+                # quella vista prima dallo stesso lanciatore.
+                sid = owners.pid_session.get(resp)
+                if sid:
+                    sids[key] = sid
+                elif self.sids.get(key) and self.kids.get(key) == alive[key]:
+                    sids[key] = self.sids[key]
+        self.kids, self.sids = alive, {k: v for k, v in sids.items() if k in alive}
+
+    def launcher_of(self, pid, procs):
+        """'pid@partenza' del responsabile che aveva questo processo, None se mai visto."""
+        return self.kids.get(self.key(pid, procs))
+
+    def launcher_session(self, pid, procs):
+        """sessionId del CLI che ha lanciato questo processo, None se non lo sappiamo."""
+        return self.sids.get(self.key(pid, procs))
+
+    def dump(self):
+        return dict(self.kids)
+
+    def dump_sids(self):
+        return dict(self.sids)
+
+
+class LiveProbe:
+    """Le domande al kernel e a launchd. La suite le sostituisce con dei finti."""
+
+    def __init__(self):
+        lib = ctypes.CDLL("/usr/lib/libSystem.dylib")
+        self._resp = lib.responsibility_get_pid_responsible_for_pid
+        self._resp.restype, self._resp.argtypes = ctypes.c_int, [ctypes.c_int]
+        self._path = lib.proc_pidpath
+        self._path.restype = ctypes.c_int
+        self._path.argtypes = [ctypes.c_int, ctypes.c_char_p, ctypes.c_uint32]
+        self._info = lib.proc_pidinfo
+        self._info.restype = ctypes.c_int
+        self._info.argtypes = [ctypes.c_int, ctypes.c_int, ctypes.c_uint64,
+                               ctypes.c_void_p, ctypes.c_int]
+        self._launchd = None
+
+    def responsible(self, pid):
+        # Chi macOS considera padrone: per i figli di una sessione dell'app Claude
+        # e' il suo CLI (disclaimer), per Topics e Terminale e' l'app ospite.
+        return self._resp(pid)
+
+    def exe(self, pid):
+        buf = ctypes.create_string_buffer(4096)
+        n = self._path(pid, buf, 4096)
+        return buf.value.decode("utf-8", "replace") if n > 0 else ""
+
+    def cwd(self, pid):
+        # PROC_PIDVNODEPATHINFO (9): la cwd dal kernel, senza un lsof per radice.
+        # vnode_info e' lungo 152 byte, poi il path; dopo un rmdir resta il
+        # vecchio path, dopo `trash` quello nel Cestino.
+        buf = ctypes.create_string_buffer(2352)
+        if self._info(pid, 9, 0, buf, 2352) <= 0:
+            return ""
+        return buf.raw[152:152 + 1024].split(b"\0", 1)[0].decode("utf-8", "replace")
+
+    def outputs(self, pids):
+        """I file su cui l'albero scrive stdout e stderr."""
+        try:
+            out = subprocess.run(["lsof", "-a", "-p", ",".join(map(str, pids)),
+                                  "-d", "1,2", "-Fn"], capture_output=True, text=True,
+                                 errors="replace", timeout=25).stdout
+        except Exception:
+            return []
+        return sorted({l[1:] for l in out.splitlines() if l.startswith("n/")})
+
+    def net(self, pid):
+        return net_detail(pid)
+
+    def unix_clients(self, pids):
+        """Client collegati ai socket unix dell'albero; None se lsof non risponde."""
+        try:
+            out = subprocess.run(["lsof", "-nP", "-a", "-p", ",".join(map(str, pids)),
+                                  "-U", "-F", "dn"], capture_output=True, text=True,
+                                 errors="replace", timeout=25).stdout
+        except Exception:
+            return None
+        return unix_clients(out)
+
+    def launchd_pids(self):
+        if self._launchd is None:
+            out = subprocess.run(["launchctl", "list"], capture_output=True,
+                                 text=True, errors="replace").stdout
+            self._launchd = {int(f[0]) for f in (l.split() for l in out.splitlines()[1:])
+                             if f and f[0].isdigit()}
+        return self._launchd
+
+
+class Owners:
+    """Chi c'e' ancora: le sessioni Claude vive e le sessioni di Topics aperte."""
+
+    def __init__(self, procs, sessions=None, scripts=None, db=None):
+        sessions, scripts = sessions or CLAUDE_SESSIONS, scripts or TOPICS_SCRIPTS
+        self.db_path, self._db = Path(db or TOPICS_DB), None
+        # Ogni sessione Claude viva scrive <pid>.json con sessionId e procStart:
+        # procStart diverso da quello del pid di oggi = pid riciclato, non conta.
+        # procStart e' in UTC, lstart di ps in ora locale: si confrontano le epoch
+        # (il primo giro dal vivo dava per chiusa la sessione viva del sito).
+        self.session_ids, self.session_pids = set(), set()
+        self.pid_session = {}                # pid del CLI -> sessionId, per risalire alla sessione
+        for f in Path(sessions).glob("*.json"):
+            try:
+                d = json.loads(f.read_text())
+            except (OSError, ValueError):
+                continue
+            info = procs.get(d.get("pid"))
+            if not info:
+                continue
+            if d.get("procStart") and not same_start(d["procStart"], info["start"]):
+                continue
+            self.session_pids.add(d["pid"])
+            self.session_ids.add(d.get("sessionId"))
+            self.pid_session[d["pid"]] = d.get("sessionId")
+        # I comandi che Topics ha lanciato (run_command): pid del wrapper, ora di
+        # partenza e sessione che lo possiede.
+        # finished: Topics lo da' gia' per finito (recent, done/error). Se il wrapper e'
+        # ancora vivo con la stessa ora di partenza, e' sopravvissuto alla sua corsa.
+        self.commands = []
+        try:
+            data = json.loads(Path(scripts).read_text())
+        except (OSError, ValueError):
+            data = {}
+        for finished, entries in ((False, data.get("running")), (True, data.get("recent"))):
+            for e in entries or []:
+                key = (e.get("cmd") or {}).get("sessionKey")
+                if e.get("pid") and key:
+                    self.commands.append((e["pid"], str(e.get("pidLstart", "")), key, finished))
+
+    def _query(self, sql, args):
+        """Righe dal DB di Topics; None se c'e' ma non si legge: allora non si decide."""
+        if not self.db_path.exists():
+            return []
+        try:
+            if self._db is None:
+                self._db = sqlite3.connect(self.db_path.as_uri() + "?mode=ro", uri=True, timeout=5)
+            return self._db.execute(sql, args).fetchall()
+        except sqlite3.Error:
+            return None
+
+    def topics_alive(self, key):
+        """Come la chiude Topics: topic archiviata o riga del terminale cancellata.
+        True / False / None (non si sa).
+
+        Un terminale 'dormant' e' aperto: Topics parcheggia le PTY inattive
+        (terminal-idle-park, 8 minuti sotto pressione), la tab resta e la sessione
+        si rianima al focus. Chiudere la tab cancella la riga (terminal.ts)."""
+        rows = self._query("SELECT archived FROM topics WHERE session_key = ?", (key,))
+        if rows is None or rows:
+            return None if rows is None else any(r[0] == 0 for r in rows)
+        rows = self._query("SELECT 1 FROM terminal_sessions WHERE id = ?", (key,))
+        return None if rows is None else bool(rows)
+
+    def session_alive(self, sid):
+        """La sessione Claude sid e' viva: CLI acceso, o chat di Topics aperta (il
+        CLI di una chat vive solo durante il turno)."""
+        if sid in self.session_ids:
+            return True
+        rows = self._query("SELECT session_key FROM claude_code_sessions "
+                           "WHERE claude_session_id = ?", (sid,))
+        if rows is None:
+            return None
+        for (key,) in rows:
+            alive = self.topics_alive(key)
+            if alive is not False:
+                return alive
+        # Qualunque stato: anche 'dormant' e' una tab aperta (vedi topics_alive).
+        rows = self._query("SELECT 1 FROM terminal_sessions WHERE claude_session_id = ?", (sid,))
+        return None if rows is None else bool(rows)
+
+    def topics_command(self, members, procs):
+        """(sessionKey, viva?, finito?) se l'albero e' un comando lanciato da Topics."""
+        for pid, lstart, key, finished in self.commands:
+            if pid in members and same_start(lstart, procs[pid]["start"]):
+                return key, self.topics_alive(key), finished
+        return None
+
+
+def resp_kind(resp, procs, probe, owners):
+    """'owner' se il responsabile e' una sessione Claude o un demone (jcode serve),
+    'host' se e' un'app ospite (Topics Host, Terminale)."""
+    if resp in owners.session_pids:
+        return "owner"
+    return "host" if is_app(probe.exe(resp) or procs[resp]["cmd"]) else "owner"
+
+
+FINISHED_WHY = "comando Topics finito ma ancora vivo"
+# Cartelle dietro il consenso di privacy (TCC): un os.stat dal daemon fa comparire la
+# richiesta «devreap vuole accedere a Documenti» in primo piano sul Mac di Attilio.
+TCC_DIRS = tuple(str(HOME / d) + "/" for d in ("Desktop", "Documents", "Downloads"))
+
+
+def tcc_protected(path):
+    """True se il path sta in una cartella che non si tocca nemmeno con uno stat."""
+    return (path + "/").startswith(TCC_DIRS)
+
+
+def owner_gone(root, members, procs, probe, owners, memory=None):
+    """Perche' il padrone dell'albero e' morto; None se e' vivo o non si sa."""
+    memory = RespMemory() if memory is None else memory
+    cwd = probe.cwd(root)
+    resp = probe.responsible(root)
+    # Il kernel non da' mai un responsabile morto o riciclato (misurato 25/10): se il
+    # responsabile e' morto dice il processo stesso. Un responsabile diverso e' vivo.
+    kind = resp_kind(resp, procs, probe, owners) if resp > 0 and resp != root else None
+    # Veti: un padrone vivo, o che non si riesce a escludere, vince su ogni indizio.
+    if any(p in owners.session_pids for p in members):
+        return None                          # nell'albero gira una sessione Claude viva
+    cmd_owner = owners.topics_command(members, procs)
+    finished = bool(cmd_owner) and cmd_owner[2]
+    if cmd_owner and not finished and cmd_owner[1] is not False:
+        return None
+    sid = session_of(cwd)
+    if sid and owners.session_alive(sid) is not False:
+        return None
+    if resp <= 0:
+        return None                          # il kernel non risponde: ignoto
+    # Responsabile vivo: e' il padrone se e' una sessione Claude o un demone
+    # (jcode serve). Se e' un'app ospite (Topics Host, Terminale) non dice di
+    # quale sessione e' il processo: decidono gli indizi sotto. Essere
+    # responsabile di se' stesso non e' un indizio: lo sono jcode serve, il
+    # ponte di Topics e il demone di Codex, tutti vivi e voluti.
+    if kind == "owner":
+        return None
+    # Il responsabile e' morto se il processo e' responsabile di se' stesso ma l'abbiamo
+    # visto, in una passata prima, figlio di una sessione o di un demone che ora non c'e'
+    # piu'. Uno mai visto, o figlio di un'app ospite che riparte, non e' un indizio: lo
+    # sono di nascita jcode serve, il ponte di Topics e il demone di Codex.
+    launcher = memory.launcher_of(root, procs) if resp == root and procs[root]["ppid"] == 1 else None
+    if launcher:
+        lpid, _, lstart = launcher.partition("@")
+        if int(lpid) in procs and str(procs[int(lpid)]["start"]) == lstart:
+            return None                      # chi l'ha lanciato e' ancora li: il kernel sbaglia o non si sa
+        # Il CLI e' morto, ma la sessione puo' vivere con un CLI nuovo (Claude.app che
+        # riparte): i suoi figli restano suoi. Sessione ignota (None) = non si decide.
+        lsid = memory.launcher_session(root, procs)
+        if lsid and owners.session_alive(lsid) is not False:
+            return None
+        return f"responsabile {lpid} morto"
+    if finished:
+        # Topics l'ha gia' segnato finito (done/error) e il wrapper e' vivo con la stessa
+        # ora di partenza: e' sopravvissuto alla sua corsa, anche con la topic aperta
+        # (l'http.server su *:8777 del 24/10). Indizio debole: il «finito» puo' essere un
+        # falso morto (pidStartTime in timeout al boot sotto swap), vedi FINISHED_WHY.
+        return f"{FINISHED_WHY} ({cmd_owner[0]})"
+    if cmd_owner:
+        return f"sessione Topics chiusa ({cmd_owner[0]})"
+    if cwd and (cwd.startswith(TRASH) or (not tcc_protected(cwd) and not os.path.isdir(cwd))):
+        return "cartella cancellata"
+    if sid:
+        return f"sessione Claude {sid[:8]} chiusa"
+    return None
+
+
+def resto_candidates(procs, probe, owners, uid, skip=(), memory=None):
+    """Le radici con ppid 1 il cui padrone e' morto, con il motivo."""
+    memory = RespMemory() if memory is None else memory
+    # Prima di decidere si guarda chi ha ancora un responsabile: l'orfano di domani e'
+    # il figlio di una sessione di oggi (vedi RespMemory).
+    memory.observe(procs, probe, owners, uid)
+    rows = []
+    for pid, info in procs.items():
+        if info["ppid"] != 1 or info["uid"] != uid or pid in skip:
+            continue
+        # Senza path dal kernel (binario cancellato da un aggiornamento: node di
+        # brew, jcode) si guarda il comando. I resti piu' vecchi sono proprio
+        # quelli sopravvissuti a un aggiornamento.
+        exe = probe.exe(pid) or info["cmd"]
+        if exe.startswith(SYSTEM_PREFIXES) or is_app(exe):
+            continue
+        if pid in probe.launchd_pids():
+            continue                         # un job launchd ha gia' chi lo governa
+        if ONLY_PATH and ONLY_PATH not in info["cmd"] + "\n" + probe.cwd(pid):
+            continue                         # recinto della suite
+        if resto_escluso(info["cmd"], probe.cwd(pid)):
+            continue                         # staccato apposta (RESTO_ESCLUSI)
+        members = descendants(pid, procs)
+        why = owner_gone(pid, members, procs, probe, owners, memory)
+        if not why:                          # padrone vivo o ignoto: mai, qualunque cosa sia
+            continue
+        # Chi scrive l'output in una sessione viva lavora per lei (run_in_background).
+        outputs = probe.outputs(members)
+        if any(owners.session_alive(s) is not False
+               for s in filter(None, map(session_of, outputs))):
+            continue
+        rows.append({"root": pid, "members": members, "why": why,
+                     "weak": why.startswith(FINISHED_WHY),
+                     "outputs": outputs, "cwd": probe.cwd(pid)})
+    return rows
+
+
+def resto_decide(rows, procs, probe, state, now):
+    """Chi chiudere adesso. Ritorna (da chiudere, stato nuovo, [(riga, verdetto)])."""
+    reap, new_state, report = [], {}, []
+    for r in rows:
+        root = r["root"]
+        key = f"{root}@{procs[root]['start']}"
+        nets = [probe.net(p) for p in r["members"]]
+        unix = probe.unix_clients(r["members"])
+        if unix is None or any(n is None for n in nets):
+            if key in state:                 # lsof muto: passata ne' ferma ne' in uso
+                new_state[key] = state[key]
+            report.append((r, "aspetta (lsof non risponde, passata non contata)"))
+            continue
+        r["ports"] = sorted({p for n in nets for p in n[0]})
+        if sum(n[1] for n in nets) + unix:   # client TCP o su un socket unix dell'albero
+            report.append((r, "in uso, il conto riparte"))   # niente stato: da capo
+            continue
+        # Un http.server su tutte le interfacce espone i file in LAN (il business
+        # plan su *:8777 il 25/10): con il padrone morto non si aspetta.
+        # Non vale se l'unico indizio e' un «finito» di Topics: puo' essere un falso morto,
+        # e allora serve anche l'attesa (nessun client, fermo da 2 ore) come per ogni altro.
+        if not r.get("weak") and any(n[2] for n in nets) and any(
+                re.search(SCRATCH_PATTERN, procs[p]["cmd"]) for p in r["members"]):
+            r["why"] += ", http.server aperto sulla rete"
+            reap.append(r)
+            report.append((r, "si chiude ora"))
+            continue
+        if any(tcc_protected(p) for p in r["outputs"]):
+            # Il log sta dietro il consenso di privacy e non si tocca: senza la sua data non
+            # si sa se qualcuno scrive ancora, quindi la passata non conta (come lsof muto).
+            if key in state:
+                new_state[key] = state[key]
+            report.append((r, "aspetta (log in Desktop, Documenti o Download, non lo guardo)"))
+            continue
+        s = state.get(key) or {"first": now, "passes": 0}
+        s = {"first": s["first"], "passes": s["passes"] + 1}
+        new_state[key] = s
+        # L'ultimo accesso dal log, dove c'e': un http.server chiude la
+        # connessione a ogni GET e un campione ogni 5 minuti non lo vede.
+        last_out = max((os.stat(p).st_mtime for p in r["outputs"] if os.path.isfile(p)),
+                       default=0)
+        quiet = now - max(s["first"], last_out)
+        r["passes"], r["quiet"] = s["passes"], quiet
+        if (s["passes"] >= RESTO_PASSES and quiet >= RESTO_IDLE
+                and procs[root]["age"] >= RESTO_IDLE):
+            reap.append(r)
+            report.append((r, "si chiude ora"))
+        else:
+            report.append((r, f"aspetta (passate {s['passes']}/{RESTO_PASSES}, "
+                              f"ferma da {int(quiet // 60)}m su {RESTO_IDLE // 60}m)"))
+    return reap, new_state, report
+
+
+def resto_line(r, verdict, procs, fp_mb, kill=None):
+    """La riga «resto» del --list. Contratto con mac-health (25/10):
+    «  resto pid=<pid> albero=<n> fp=<MB>MB eta=<min>m <motivo> -> <verdetto>», con il
+    verdetto che inizia per «si chiude ora», «aspetta», «in uso» o «osservo»."""
+    kill = RESTO_KILL if kill is None else kill
+    if not kill and not verdict.startswith("in uso"):
+        # Sola osservazione: la classe decide ma non chiude, e il --list non deve dire il contrario.
+        verdict = "osservo: " + ("si chiuderebbe ora" if verdict == "si chiude ora" else verdict)
+    return (f"  resto pid={r['root']} albero={len(r['members'])} fp={fp_mb:.0f}MB "
+            f"eta={procs[r['root']]['age'] // 60}m {r['why']} -> {verdict}")
+
+
+def reap_resto(procs, dry, owners, listing=False, skip=()):
+    probe = LiveProbe()
+    try:
+        data = json.loads(STATE_RESTO.read_text())
+    except (OSError, ValueError):
+        data = {}
+    # Il vecchio file aveva 'seen' (responsabili morti, che il kernel non produce): si ignora.
+    memory = RespMemory(data.get("kids"), data.get("sids"))
+    rows = resto_candidates(procs, probe, owners, os.getuid(), skip, memory)
+    reap, counts, report = resto_decide(rows, procs, probe, data.get("counts") or {}, time.time())
+    if listing:
+        for r, verdict in report:
+            fp = sum(footprint_mb(p) for p in r["members"])
+            print(resto_line(r, verdict, procs, fp))
+            print(f"        porte={','.join(r.get('ports', [])) or '-'} "
+                  f"{r['cwd'][-70:]} :: {procs[r['root']]['cmd'][:90]}")
+        return
+    kill = RESTO_KILL and not dry
+    keys = [f"{r['root']}@{procs[r['root']]['start']}" for r in reap]
+    # Con il recinto della suite le righe vere non si vedono: scrivere lo stato
+    # adesso azzererebbe i loro conti. In sola osservazione lo stato si scrive:
+    # i conti maturano e la memoria dei responsabili si riempie.
+    if not dry and not ONLY_PATH:
+        STATE_RESTO.parent.mkdir(parents=True, exist_ok=True)
+        STATE_RESTO.write_text(json.dumps({"counts": counts, "kids": memory.dump(), "sids": memory.dump_sids(),
+                                           "noted": [] if kill else keys}))
+    if not reap:
+        return
+    if not kill and not dry:
+        # Una riga per resto, la prima volta che si chiuderebbe: non ogni 5 minuti.
+        noted = set(data.get("noted") or [])
+        for key, r in zip(keys, reap):
+            if key not in noted:
+                log(f"OSSERVO-RESTO pid={r['root']} albero={len(r['members'])} "
+                    f"eta={procs[r['root']]['age'] // 60}m motivo={r['why']} "
+                    f"[si chiuderebbe, DEVREAP_RESTO_KILL=0] cwd={r['cwd']} :: "
+                    f"{procs[r['root']]['cmd'][:120]}", echo=True)
+        return
+    res = kill_tree([p for r in reap for p in r["members"]], dry, grace=RESTO_GRACE)
+    for r in reap:
+        log(f"REAP-RESTO pid={r['root']} albero={len(r['members'])} "
+            f"porte={','.join(r.get('ports', [])) or '-'} eta={procs[r['root']]['age'] // 60}m "
+            f"motivo={r['why']} [{res}] cwd={r['cwd']} :: {procs[r['root']]['cmd'][:120]}",
+            echo=True)
+
+
+# Quinta regola: il tsserver di una sessione VIVA che si e' gonfiato. Quelli con il padrone morto sono
+# gia' resti (il tipo non conta mai). Qui serve footprint sopra TSSERVER_MB, CPU a zero e TSSERVER_PASSES
+# passate di fila: l'LSP riparte da solo alla prossima richiesta, quindi chiuderlo non perde lavoro.
+# Come i resti, in sola osservazione finche' RESTO_KILL e' 0.
+TSSERVER = re.compile(r"(?:^|[/\s])tsserver(?:\.js)?(?:\s|$)|typescript-language-server")
+TSSERVER_MB = _env("DEVREAP_TSSERVER_MB", 3072, int)
+TSSERVER_CPU = 1.0                # % di un core: sopra, lo sta usando
+TSSERVER_PASSES = 3
+STATE_TSSERVER = HOME / ".claude/jarvis/state/devreap-tsserver.json"
+
+# Sesta regola: dev server in percorsi che accumulano istanze abbandonate (es.
+# armonia-agency), senza connessioni browser da NOCLIENT_AGE secondi. A
+# differenza della regola d'emergenza, scatta senza gate di pressione e senza
+# strike: due ore senza client e il server non serve a nessuno.
+NOCLIENT_AGE   = _env("DEVREAP_NOCLIENT_AGE", 2 * 3600, int)   # 2 h default
+NOCLIENT_PATHS = [str(HOME / "Projects/armonia-agency")]
+NOCLIENT_KILL  = _env("DEVREAP_NOCLIENT_KILL", 1, int)
+
+
+def tsserver_decide(procs, uid, fp_of, counts):
+    """(da chiudere, conti nuovi). fp_of(pid) -> MB, chiamato solo per i candidati."""
+    reap, new = [], {}
+    for pid, i in sorted(procs.items()):
+        if i["uid"] != uid or i["ppid"] == 1 or not TSSERVER.search(i["cmd"]):
+            continue                                  # i orfani li prende la regola dei resti
+        if i["cpu"] >= TSSERVER_CPU or fp_of(pid) <= TSSERVER_MB:
+            continue
+        key = f"{pid}@{i['start']}"
+        new[key] = counts.get(key, 0) + 1
+        if new[key] >= TSSERVER_PASSES:
+            reap.append((pid, key))
+    return reap, new
+
+
+def reap_tsserver(procs, dry, listing=False):
+    try:
+        data = json.loads(STATE_TSSERVER.read_text())
+    except (OSError, ValueError):
+        data = {}
+    reap, counts = tsserver_decide(procs, os.getuid(), footprint_mb, data.get("counts") or {})
+    if listing:
+        for pid, key in reap:
+            print(f"  tsserver gonfio pid={pid} fp={footprint_mb(pid):.0f}MB -> "
+                  f"{'si chiude' if RESTO_KILL else 'osservo: si chiuderebbe'} :: {procs[pid]['cmd'][:90]}")
+        return
+    kill = RESTO_KILL and not dry
+    if not dry and not ONLY_PATH:
+        STATE_TSSERVER.parent.mkdir(parents=True, exist_ok=True)
+        noted = [k for _, k in reap] if not kill else []
+        STATE_TSSERVER.write_text(json.dumps({"counts": counts, "noted": noted}))
+    if not reap:
+        return
+    if not kill:
+        if not dry:
+            for pid, key in reap:
+                if key not in set(data.get("noted") or []):
+                    log(f"OSSERVO-TSSERVER pid={pid} fp={footprint_mb(pid):.0f}MB cpu=0 "
+                        f"[si chiuderebbe, DEVREAP_RESTO_KILL=0] :: {procs[pid]['cmd'][:120]}", echo=True)
+        return
+    for pid, key in reap:
+        fp = footprint_mb(pid)
+        res = kill_tree([pid], dry, grace=RESTO_GRACE)
+        log(f"REAP-TSSERVER pid={pid} fp={fp:.0f}MB [{res}] :: {procs[pid]['cmd'][:120]}", echo=True)
+
+
+def git_filter_orphans(procs, uid):
+    return sorted(p for p, i in procs.items()
+                  if i["ppid"] == 1 and i["uid"] == uid and GIT_FILTER.match(i["cmd"])
+                  and (not ONLY_PATH or ONLY_PATH in i["cmd"]))
+
+
+def reap_git_filters(procs, dry, listing=False):
+    pids = git_filter_orphans(procs, os.getuid())
+    if listing or not pids:
+        for p in pids:
+            print(f"  filtro git orfano pid={p} eta={procs[p]['age'] // 60}m -> si chiude :: {procs[p]['cmd']}")
+        return
+    probe = LiveProbe()
+    cwds = {p: probe.cwd(p) for p in pids}      # prima del kill: dopo non c'e' piu' niente da leggere
+    res = kill_tree(pids, dry, grace=2)
+    for p in pids:
+        log(f"REAP-FILTRO pid={p} eta={procs[p]['age'] // 60}m [{res}] cwd={cwds[p]} :: {procs[p]['cmd']}",
+            echo=True)
+
+
+
+
+# --- Server senza client (armonia-agency) ------------------------------------
+
+def noclient_servers(procs, rows):
+    """Dev server in NOCLIENT_PATHS con zero connessioni browser da NOCLIENT_AGE s.
+
+    Usa net_detail sul solo processo radice: il survey() somma anche le
+    connessioni interne astro->workerd (che appaiono come 'entranti' dai figli),
+    quindi r["inbound"] > 0 anche senza nessun browser aperto.
+    La radice ascolta solo sulle porte pubbliche (4444, ecc.); workerd e HMR
+    sono figli e i loro inbound interni non contano qui."""
+    result = []
+    for r in rows:
+        if r["age"] < NOCLIENT_AGE:
+            continue
+        cwd = cwd_of(r["root"])
+        if not any(cwd.startswith(p) for p in NOCLIENT_PATHS):
+            continue
+        # Solo la radice: evita di contare le connessioni interne ai figli.
+        detail = net_detail(r["root"])
+        if detail is None:
+            continue                      # lsof non ha risposto: non uccidere
+        root_inbound = detail[1]
+        if root_inbound > 0:
+            continue
+        result.append(r)
+    return result
+
+
+def reap_noclient(procs, rows, dry, listing=False):
+    candidates = noclient_servers(procs, rows)
+    if listing:
+        for r in candidates:
+            cwd = cwd_of(r["root"])
+            label = "si chiude" if NOCLIENT_KILL else "osservo: si chiuderebbe"
+            print(f"  noclient pid={r['root']} porte={','.join(r['ports']) or '-'} "
+                  f"eta={r['age']//60}m fp={r['fp']:.0f}MB {label} :: {cwd[-70:]}")
+        return
+    for r in candidates:
+        cwd = cwd_of(r["root"])
+        if NOCLIENT_KILL:
+            res = kill_tree(r["members"], dry)
+            log(f"REAP-NOCLIENT root={r['root']} porte={','.join(r['ports']) or '-'} "
+                f"fp={r['fp']:.0f}MB eta={r['age']//60}m [{res}] "
+                f"cwd={cwd} :: {r['cmd'][:90]}", echo=True)
+        elif not dry:
+            log(f"OSSERVO-NOCLIENT root={r['root']} fp={r['fp']:.0f}MB "
+                f"eta={r['age']//60}m [NOCLIENT_KILL=0] :: {r['cmd'][:90]}", echo=True)
+
+def main():
+    flags = set(sys.argv[1:])
+    listing = "--list" in flags
+    dry = "--dry-run" in flags
+    force = "--now" in flags
+
+    procs = ps_table()
+    swap = swap_pct()
+    owners = Owners(procs)
+    rows = survey(procs)
+
+    if listing:
+        print_rows(rows, swap)
+        reap_scratch(procs, dry, owners, listing=True)
+        reap_resto(procs, dry, owners, listing=True)
+        reap_tsserver(procs, dry, listing=True)
+        reap_noclient(procs, rows, dry, listing=True)
+        reap_git_filters(procs, dry, listing=True)
+        return
+
+    # Prima del gate: questi non aspettano che il Mac soffra.
+    reap_git_filters(procs, dry)
+    reaped = reap_scratch(procs, dry, owners)
+    try:
+        reap_resto(procs, dry, owners, skip=reaped)   # RESTO_KILL=0: decide e scrive, non chiude
+    except Exception:
+        # Un guasto della regola nuova non deve costare il giro d'emergenza
+        # sotto: e' gia' successo con ps, tre giri persi il 25/10.
+        traceback.print_exc()
+        log("ERRORE resto: traccia in devreap.err.log")
+
+    try:
+        reap_tsserver(procs, dry)
+    except Exception:
+        traceback.print_exc()
+        log("ERRORE tsserver: traccia in devreap.err.log")
+
+    try:
+        reap_noclient(procs, rows, dry)
+    except Exception:
+        traceback.print_exc()
+        log("ERRORE noclient")
+
+    # Gate: se la macchina respira, non c'e' niente da raccogliere.
+    if swap < SWAP_PRESSURE_PCT and not force:
+        if not dry:
+            STATE.parent.mkdir(parents=True, exist_ok=True)
+            STATE.write_text(json.dumps({}))   # pressione passata: azzera i strike
+        return
+
+    state = json.loads(STATE.read_text()) if STATE.exists() else {}
+    new_state, killed = {}, 0
+
+    # I piu' grossi per primi: in emergenza conta liberare, non essere equi.
+    for r in sorted(rows, key=lambda x: -x["fp"]):
+        key = str(r["root"])
+        guilty = r["inbound"] == 0 and r["fp"] > FOOTPRINT_MB
+        if not guilty:
+            continue
+        strikes = state.get(key, 0) + 1
+        if strikes >= STRIKES and killed < KILLS_PER_PASS:
+            res = kill_tree(r["members"], dry)
+            log(f"REAP root={r['root']} porte={','.join(r['ports']) or '-'} "
+                f"fp={r['fp']:.0f}MB cpu={r['cpu']:.0f}% eta={r['age']//60}m "
+                f"swap={swap:.0f}% pids={r['members']} [{res}] :: {r['cmd'][:90]}",
+                echo=True)
+            killed += 1
+            continue
+        new_state[key] = strikes
+        log(f"strike {strikes}/{STRIKES} root={r['root']} fp={r['fp']:.0f}MB "
+            f"conn=0 swap={swap:.0f}% :: {r['cmd'][:80]}")
+
+    if not dry:
+        STATE.parent.mkdir(parents=True, exist_ok=True)
+        STATE.write_text(json.dumps(new_state))
+
+
+if __name__ == "__main__":
+    main()

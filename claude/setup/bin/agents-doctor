@@ -1,0 +1,205 @@
+#!/bin/zsh
+# Barra dell'hub agenti: exit 0 = ogni harness legge istruzioni, skill e stile da ~/.agents.
+# Ogni controllo nomina il guasto che rileva; nessuno è decorativo.
+#   agents-doctor          tutti i controlli (Codex skills/list compreso, ~5 s)
+#   agents-doctor --fast   senza interrogare Codex
+setopt nullglob
+H=~/.agents; fail=0
+ok(){ print "ok   $1"; }
+ko(){ print "FAIL $1"; fail=1; }
+chk(){ if eval "$2" >/dev/null 2>&1; then ok "$1"; else ko "$1"; fi; }
+
+# 1. un link rotto nell'hub è una skill che un harness elenca e non può aprire
+broken=(${(f)"$(find -L $H/skills ~/.claude/commands ~/.claude/output-styles -maxdepth 1 -type l 2>/dev/null)"})
+(( ${#broken} == 0 )) && ok "nessun link rotto" || ko "link rotti: ${broken:t}"
+# 2. una skill sia nell'hub sia nell'attico torna nel listing che l'attico doveva svuotare
+dup=(); for s in ~/jarvis/skills-attic/*(/); do [[ -e $H/skills/${s:t} ]] && dup+=${s:t}; done
+(( ${#dup} == 0 )) && ok "hub e attico disgiunti" || ko "in hub E attico: $dup"
+# 3. ogni harness punta all'hub
+chk "~/.jcode/skills → hub" "[[ \$(readlink ~/.jcode/skills) == $H/skills ]]"
+# ~/.claude/skills è una cartella vera dal 30/10: un link per skill dell'hub (li tiene agents-build) più synced/ e
+# .trash dell'app Claude, che col link finivano nell'hub e nel catalogo di Codex e di Jarvis. Una skill scritta qui a
+# mano la vede solo Claude Code: va nell'hub.
+cs=(); for s in $H/skills/*(N); do [[ $(readlink ~/.claude/skills/${s:t} 2>/dev/null) == $s ]] || cs+=${s:t}; done
+own=(); for e in ~/.claude/skills/*(N^@); do [[ ${e:t} == synced ]] || own+=${e:t}; done
+if [[ -L ~/.claude/skills || ! -d ~/.claude/skills ]]; then ko "~/.claude/skills dev'essere una cartella vera: col link synced/ dell'app finisce nell'hub"
+elif [[ -e $H/skills/synced ]]; then ko "synced/ dell'app Claude dentro l'hub (lo vedono Codex e Jarvis) → mv in ~/.claude/skills"
+elif (( ${#cs} )); then ko "~/.claude/skills: mancano i link di $cs → agents-build"
+elif (( ${#own} )); then ko "skill scritte a mano in ~/.claude/skills (le vede solo Claude Code): $own → spostale nell'hub"
+else ok "~/.claude/skills: un link per skill dell'hub, synced/ dell'app fuori dall'hub"; fi
+# OpenClaw legge l'hub da sé (sorgente agents-skills-personal): un link ~/.openclaw/skills → hub lo raddoppiava come
+# «managed», dove i symlink sono rifiutati, e la scansione non andava mai in cache (21/10: ~12 avvisi al secondo).
+chk "~/.openclaw/skills non è un link all'hub (OpenClaw lo legge già)" "[[ ! -L ~/.openclaw/skills ]]"
+chk "~/.jcode/prompt-overlay.md (jcode) → hub" "[[ \$(readlink -f ~/.jcode/prompt-overlay.md) == $H/AGENTS.md ]]"
+# ~/AGENTS.md non deve tornare: Claude Code lo legge in ~ e sottocartelle e
+# ricaricherebbe ~10k token di doppione di CLAUDE.md in ogni sessione (29/09).
+chk "~/AGENTS.md assente (niente doppione in Claude Code)" "[[ ! -e ~/AGENTS.md && ! -L ~/AGENTS.md ]]"
+chk "~/.codex/AGENTS.md → hub" "[[ \$(readlink -f ~/.codex/AGENTS.md) == $H/AGENTS.md ]]"
+chk "AGENTS.md generato allineato a CLAUDE.md/TOOLS.md/stile" "$H/bin/agents-build --check"
+# Richiamo dinamico della memoria (hook UserPromptSubmit di Claude Code e Codex): recall@3 sui
+# prompt reali di eval.json. Rosso = schede rinominate o descrizioni impoverite.
+chk "memrecall: nessuna regressione sui prompt reali (recall@3, rumore)" "memrecall --eval >/dev/null"
+# TOOLS.md ha due percorsi: CLAUDE.md importa _shared/, agents-build guarda setup/shared/.
+# Se _shared/TOOLS.md torna una copia, AGENTS.md segue l'altra e Codex/jcode perdono le
+# modifiche in silenzio (successo, 03/10). TOOLS_LINK/TOOLS_SRC servono solo a provarlo su una copia.
+TL=${TOOLS_LINK:-$HOME/.claude/jarvis/agents/_shared/TOOLS.md}; TS=${TOOLS_SRC:-$HOME/.claude/setup/shared/TOOLS.md}
+chk "_shared/TOOLS.md è un link a setup/shared/TOOLS.md" "[[ -L $TL && \$(readlink -f $TL) == \$(readlink -f $TS) ]]"
+chk "rigenerazione automatica attiva" "launchctl print gui/$UID/com.jarvis.agents-build"
+# 4. stile e contesto di Claude Code
+S=~/.claude/settings.json
+st=$(python3 -c "import json;print(json.load(open('$S')).get('outputStyle',''))")
+chk "outputStyle=$st ha il suo file" "[[ -n '$st' ]] && grep -qx 'name: $st' ~/.claude/output-styles/*.md"
+chk "schemi MCP differiti (ENABLE_TOOL_SEARCH=true)" "python3 -c \"import json,sys;sys.exit(json.load(open('$S'))['env'].get('ENABLE_TOOL_SEARCH')!='true')\""
+# stessa leva per Jarvis su OpenClaw: un update riscrive dist/ e la patch sparisce in silenzio,
+# tutti gli schemi dei tool OpenClaw tornano su ogni chiamata (29/09). Rimedio: apply + kickstart.
+# OPENCLAW_DIST serve solo a provarlo su una copia di dist/.
+chk "OpenClaw: tool MCP a richiesta (openclaw-mcp-lazy.py check)" "~/.claude/jarvis/scripts/openclaw-mcp-lazy/openclaw-mcp-lazy.py check"
+# idem per la fine dei sottoagenti in chat privata: senza, su WhatsApp arrivava il testo grezzo del
+# figlio col prefisso [truncated-by-retention] (07/10, 6 volte in un giorno). Rimedio: apply + kickstart.
+chk "OpenClaw: fine sottoagenti in privato (openclaw-announce-fix.py check)" "~/.claude/jarvis/scripts/openclaw-announce-fix/openclaw-announce-fix.py check"
+# OpenClaw si aggiorna solo con openclaw-safe-update (04:20, a OpenClaw fermo, con rollback).
+# L'auto-update interno falliva di notte a managed-service-preflight (4 volte fino al 30/09) e
+# un update può rimetterlo a true: allora i due si pestano i piedi. Rimedio: config set + job caricato.
+chk "OpenClaw: auto-update interno spento (update.auto.enabled non true)" "python3 -c \"import json,os,sys;sys.exit(json.load(open(os.path.expanduser('~/.openclaw/openclaw.json'))).get('update',{}).get('auto',{}).get('enabled') is True)\""
+chk "OpenClaw: aggiornamento notturno caricato (com.jarvis.openclaw-safe-update)" "launchctl print gui/$UID/com.jarvis.openclaw-safe-update"
+# L'app OpenClaw del Mac si aggiorna con Sparkle, che installa solo quando l'app si chiude: accesa per settimane resta
+# indietro sulla CLI (25/10: app 2026.9.5, CLI 2026.10.5, WebContent a 528 MB). Rimedio: quit dell'app e open -ga
+# OpenClaw; lo fa openclaw-safe-update dopo un update riuscito, a Mac fermo. Senza app non c'è niente da allineare.
+# Il testo «OpenClaw: app del Mac» lo cerca openclaw-safe-update (APP_DOCTOR): cambiarlo insieme.
+# AGENTS_DOCTOR_OPENCLAW_APP serve solo a provarlo su una copia.
+oapp=${AGENTS_DOCTOR_OPENCLAW_APP:-/Applications/OpenClaw.app}
+if [[ -d $oapp ]]; then
+  av=$(plutil -extract CFBundleShortVersionString raw $oapp/Contents/Info.plist 2>/dev/null)
+  cv=$(openclaw --version 2>/dev/null | grep -oE '[0-9]{4}\.[0-9]+\.[0-9]+' | head -1)
+  [[ -n $av && ${av%-*} == ${cv%-*} ]] && ok "OpenClaw: app del Mac $av come la CLI" ||
+    ko "OpenClaw: app del Mac ${av:-?} diversa dalla CLI ${cv:-?} → osascript -e 'quit app \"OpenClaw\"' e open -ga OpenClaw"
+fi
+# 4b. push-guard gira dal pre-push globale: un core.hooksPath locale lo scavalca in silenzio. Successo il 14/10
+# in topics-app (lo rimette `npm run hooks:git`) e in jarvis dal 27/10 al 30/10. L'hook del repo non si perde
+# togliendolo: lo richiama _dispatch-repo-hook. AGENTS_DOCTOR_PUBLIC_REPOS serve solo a provarlo su una copia.
+hp=(); for r in ${=AGENTS_DOCTOR_PUBLIC_REPOS:-$HOME/.claude/jarvis $HOME/Projects/topics-app}; do
+  [[ -e $r/.git ]] || continue
+  [[ $(git -C $r rev-parse --path-format=absolute --git-path hooks/pre-push 2>/dev/null) == $HOME/.config/git/hooks/pre-push ]] || hp+=${r:t}
+done
+(( ${#hp} == 0 )) && ok "repo pubblici sul pre-push globale (push-guard)" ||
+  ko "push-guard non gira in: $hp → git -C <repo> config --local --unset core.hooksPath"
+# 5. MCP user scope: un server stdio lì si moltiplica per ogni sessione aperta
+extra=$(python3 -c "import json;print(' '.join(k for k in json.load(open('$HOME/.claude.json')).get('mcpServers',{}) if k not in ('exa','context7','gateway')))")
+[[ -z $extra ]] && ok "MCP user scope = exa, context7, gateway" || ko "MCP user scope in più: $extra"
+# 5b. stesso scope per muse: senza mcpServers in settings.json muse parte senza tool MCP (06/10)
+# ai-memory sì (prova del 27/10): è un ponte stdio da ~23 MB verso il server unico su :49374, non un server che si moltiplica
+mmiss=$(python3 -c "import json;print(' '.join(sorted(set(('exa','context7','gateway'))^(set(json.load(open('$HOME/.config/muse/settings.json')).get('mcpServers',{}))-{'ai-memory'}))))")
+[[ -z $mmiss ]] && ok "muse MCP scope = exa, context7, gateway" || ko "muse MCP scope scostato: $mmiss"
+# 5c. Codex e jcode: stessi tre comuni (in più restano i loro di serie: node_repl, docs OpenAI).
+# Codex è rimasto senza gateway fino al 26/10 perché qui non si guardava.
+cmiss=$(python3 -c "import tomllib;s=set(tomllib.load(open('$HOME/.codex/config.toml','rb')).get('mcp_servers',{}));print(' '.join(sorted({'exa','context7','gateway'}-s)))")
+[[ -z $cmiss ]] && ok "codex MCP: exa, context7, gateway presenti" || ko "codex MCP mancanti: $cmiss → ~/.codex/config.toml [mcp_servers.<nome>] url=…"
+jmiss=$(python3 -c "import json;s=set(json.load(open('$HOME/.jcode/mcp.json')).get('servers',{}));print(' '.join(sorted({'exa','context7','gateway'}-s)))")
+[[ -z $jmiss ]] && ok "jcode MCP: exa, context7, gateway presenti" || ko "jcode MCP mancanti: $jmiss → ~/.jcode/mcp.json"
+# 6. servizi KeepAlive com.jarvis.* fermi
+# quelli spenti apposta con `launchctl disable` non contano (es. darkroom-backend, 15/09)
+off=$(launchctl print-disabled gui/$UID 2>/dev/null | grep '=> disabled' | grep -o 'com\.jarvis\.[^"]*')
+down=(); for p in ~/Library/LaunchAgents/com.jarvis.*.plist; do
+  [[ $(plutil -extract KeepAlive raw $p 2>/dev/null) == true ]] || continue
+  lbl=${${p:t}%.plist}; [[ $off == *$lbl* ]] && continue; launchctl print gui/$UID/$lbl 2>/dev/null | grep -q 'state = running' || down+=$lbl; done
+(( ${#down} == 0 )) && ok "servizi KeepAlive in esecuzione" || ko "fermi: $down"
+# 7. backup a mano nelle cartelle di config (quelli gestiti dai tool restano)
+bak=(~/.openclaw/*.bak.20*(N) ~/.openclaw/*.bak-20*(N) ~/.jcode/*.bak-*(N) ~/.jcode/*.json.bak*(N) ~/.claude/*.bak*(N) ~/.claude/jarvis/router/*.bak*(N))
+(( ${#bak} == 0 )) && ok "nessun backup a mano sparso" || ko "${#bak} backup sparsi → ~/.agents/backups/<data>/"
+# 8. indice della memoria: Claude Code inietta MEMORY.md tagliato a 200 righe o 25.000 caratteri
+# (lunghezza di stringa JS, cioè unità UTF-16) con un WARNING che nessuno legge: fra il 21 e il
+# 24/09 70 sessioni hanno avuto l'indice monco. Soglia 150/20.000 per accorgersene prima. Stesso
+# limite per il MEMORY.md di ogni progetto. AGENTS_DOCTOR_PROJECTS serve solo a provarlo su una copia.
+while IFS='|' read -r st msg; do [[ $st == ok ]] && ok "$msg" || ko "$msg"; done < <(
+python3 - ${AGENTS_DOCTOR_PROJECTS:-$HOME/.claude/projects}/*/memory/MEMORY.md <<'PY'
+import os,sys
+R,C=150,20000; top=(-1,); bad=0
+for p in sys.argv[1:]:
+    s=open(p,encoding='utf-8',errors='replace').read()
+    r,c=len(s.splitlines()),len(s.encode('utf-16-le'))//2
+    if r>R or c>C:
+        f=p.replace(os.path.expanduser('~'),'~',1)
+        print(f"ko|{f}: {r}/{R} righe, {c}/{C} caratteri → sposta righe morte in ARCHIVE.md"); bad=1
+    top=max(top,(max(r/R,c/C),p.split('/')[-3],r,c))
+if len(top)>1 and not bad:
+    print(f"ok|{len(sys.argv)-1} MEMORY.md, il più pieno {top[1]}: {top[2]}/{R} righe, {top[3]}/{C} caratteri")
+PY
+)
+# 8b. stessa trappola per Jarvis: OpenClaw inietta AGENTS.md, SOUL.md, USER.md… tagliati oltre un limite per file
+# (USER.md 4.000, gli altri 20.000) e in totale (60.000), con un WARN nel log che nessuno legge. Il 24/10 USER.md era a
+# 4.239 da due giorni e Jarvis perdeva la coda delle regole PoP. Rosso sopra il 90%, per accorgersene prima del taglio.
+# I limiti si leggono dal dist installato (un update può cambiarli). AGENTS_DOCTOR_OPENCLAW serve solo a provarlo su una copia.
+while IFS='|' read -r st msg; do [[ $st == ok ]] && ok "$msg" || ko "$msg"; done < <(
+python3 - "${AGENTS_DOCTOR_OPENCLAW:-$HOME/.openclaw}" <<'PY'
+import glob,json,os,re,sys
+root=sys.argv[1]
+lim={'file':20000,'user':4000,'total':60000}
+for f in glob.glob('/opt/homebrew/lib/node_modules/openclaw/dist/bootstrap-*.mjs'):
+    s=open(f,encoding='utf-8',errors='replace').read()
+    for k,n in (('file','DEFAULT_BOOTSTRAP_MAX_CHARS'),('total','DEFAULT_BOOTSTRAP_TOTAL_MAX_CHARS'),('user','USER_BOOTSTRAP_MAX_CHARS')):
+        m=re.search(n+r'\s*=\s*([0-9.e]+)',s)
+        if m: lim[k]=int(float(m.group(1)))
+try:
+    d=json.load(open(os.path.join(root,'openclaw.json'))).get('agents',{}).get('defaults',{})
+    lim['file']=int(d.get('bootstrapMaxChars',lim['file'])); lim['total']=int(d.get('bootstrapTotalMaxChars',lim['total']))
+except Exception: pass
+names=['AGENTS.md','SOUL.md','TOOLS.md','IDENTITY.md','USER.md','HEARTBEAT.md','MEMORY.md','BOOTSTRAP.md']
+bad=0; worst=(0,'',0,0)
+for ws in [root]+sorted(glob.glob(os.path.join(root,'workspace-*'))):
+    tot=0
+    for n in names:
+        p=os.path.join(ws,n)
+        if not os.path.isfile(p): continue
+        c=len(open(p,encoding='utf-8',errors='replace').read()); tot+=c
+        L=min(lim['file'],lim['user']) if n=='USER.md' else lim['file']
+        rel=p.replace(os.path.expanduser('~'),'~',1)
+        if c>0.9*L:
+            print(f"ko|{rel}: {c}/{L} caratteri, OpenClaw lo taglia sopra {L} → sposta i dettagli in memory/ (il testo delle regole solo con l'ok di Attilio)"); bad=1
+        worst=max(worst,(c/L,rel,c,L))
+    if tot>0.9*lim['total']:
+        print(f"ko|{ws}: file iniettati {tot}/{lim['total']} caratteri in totale"); bad=1
+if not bad and worst[1]:
+    print(f"ok|file iniettati di Jarvis sotto il 90% del limite, il più pieno {worst[1]}: {worst[2]}/{worst[3]}")
+PY
+)
+# 9. Codex vede davvero le skill dell'hub (lo dice lui, non la cartella)
+if [[ ${1:-} != --fast ]]; then
+  # solo le cartelle con un SKILL.md: `synced/` e' un contenitore di skill, non una skill
+  n=$(ls -d $H/skills/*/SKILL.md(N) | wc -l | tr -d ' ')
+  seen=$(python3 - <<'PY'
+import json,subprocess,select,time,os
+p=subprocess.Popen(["codex","app-server"],stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.DEVNULL,text=True)
+w=lambda o:(p.stdin.write(json.dumps(o)+"\n"),p.stdin.flush())
+w({"jsonrpc":"2.0","id":1,"method":"initialize","params":{"clientInfo":{"name":"agents-doctor","version":"1"}}})
+w({"jsonrpc":"2.0","method":"initialized"})
+w({"jsonrpc":"2.0","id":2,"method":"skills/list","params":{"cwds":["/tmp"]}})
+hub=os.path.realpath(os.path.expanduser("~/.agents/skills"))
+dirs={os.path.realpath(os.path.join(hub,d)) for d in os.listdir(hub)
+      if os.path.isfile(os.path.join(hub,d,"SKILL.md"))}
+end=time.time()+30; out=-1
+while time.time()<end:
+  if not select.select([p.stdout],[],[],1)[0]: continue
+  l=p.stdout.readline()
+  if '"id":2' in l:
+    sk=[s for c in json.loads(l)["result"]["data"] for s in c["skills"]]
+    out=len({os.path.dirname(os.path.realpath(s["path"])) for s in sk} & dirs)
+    syn=sum(1 for s in sk if "/skills/synced/" in s["path"]); break
+p.kill(); print(out, syn if out >= 0 else -1)
+PY
+)
+  syn=${seen#* }; seen=${seen%% *}
+  [[ $seen == $n ]] && ok "Codex vede $seen/$n skill dell'hub" || ko "Codex vede $seen/$n skill dell'hub"
+  # le skill dell'app Claude (synced/) nel catalogo di Codex: il 30/10 erano 83 voci su 144, e il budget del catalogo
+  # tagliava a ~50 caratteri le descrizioni di tutte, vai e senior-pass comprese
+  [[ $syn == 0 ]] && ok "Codex: nessuna skill dell'app Claude (synced/) nel catalogo" ||
+    ko "Codex vede $syn skill di synced/ → ~/.claude/skills dev'essere una cartella vera, non un link all'hub"
+  # stesso guasto per Jarvis: skill dalla sorgente dell'hub (agents-skills-personal) che non sono skill dell'hub
+  jx=$(openclaw skills list --agent main --json 2>/dev/null | python3 -c "
+import json,os,sys
+hub=os.path.expanduser('~/.agents/skills'); names=set(os.listdir(hub))
+d=json.load(sys.stdin); sk=d.get('skills',d) if isinstance(d,dict) else d
+print(' '.join(sorted(s['name'] for s in sk if s.get('source')=='agents-skills-personal' and s.get('modelVisible') and s['name'] not in names)))" 2>/dev/null || echo '?')
+  [[ -z $jx ]] && ok "Jarvis: nessuna skill fuori dall'hub" || ko "Jarvis vede skill fuori dall'hub: $jx"
+fi
+print "hub: $(ls $H/skills | wc -l | tr -d ' ') skill · attico: $(ls -d ~/jarvis/skills-attic/*(/) | wc -l | tr -d ' ') · AGENTS.md $(wc -c < $H/AGENTS.md | tr -d ' ') byte"
+exit $fail

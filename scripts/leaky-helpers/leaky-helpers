@@ -1,0 +1,202 @@
+#!/usr/bin/env python3
+"""leaky-helpers: tre aiutanti del Mac che perdono memoria, riavviati di notte a Mac fermo (passo di manutenzione.sh).
+
+Perche' (studio dei processi del 25/10): la sessione di login dura settimane, e tre aiutanti crescono senza mai morire,
+quindi nessun guardiano li prende. Il perl MediaRemoteAdapter di Lyric Fever (1,1 GB in 18 giorni, ~60 MB al giorno;
+il 25/10 e' sopravvissuto alla chiusura dell'app con ppid 1), WiFiAgent (496 MB per l'icona del Wi-Fi, bug Apple) e Ice
+(cresce a ogni stacco del monitor, issue #530). E' un tampone dichiarato: la cura a monte (adapter, Apple, Thaw al
+posto di Ice, togliere Lyric Fever dagli elementi di login) e' una scelta di Attilio.
+
+Regole, sul footprint vero (phys_footprint di proc_pid_rusage, non RSS: il perl aveva 6 MB residenti su 1,1 GB):
+  Lyric Fever  un perl MediaRemoteAdapter di Lyric Fever.app sopra 300 MB -> quit dell'app, TERM ai suoi perl
+               rimasti, open -ga 'Lyric Fever' se era aperta. Il perl di Wispr Flow e' identico ma non e' suo: mai.
+  WiFiAgent    sopra 300 MB -> killall WiFiAgent (launchd lo rialza).
+  Ice          sopra 400 MB -> quit e open -ga Ice.
+Solo se ~/bin/mac-libero esce 0: un'app che si chiude sotto le mani di Attilio costa piu' della memoria.
+Una riga su stdout (finisce in logs/manutenzione/leaky-helpers.log) per ogni azione. Exit 1 se un'app non si chiude.
+
+Uso: leaky-helpers [--dry-run]
+Banco: LEAKY_HELPERS_FAKE=<file json> sostituisce ps e footprint ([{"pid","ppid","cmd","fp_mb"}]) e va sempre con
+LEAKY_HELPERS_BIN=<cartella> che sostituisce osascript, open, killall e kill: pid finti con un kill vero colpirebbero
+processi veri.
+"""
+import ctypes
+import ctypes.util
+import json
+import os
+import subprocess
+import sys
+import time
+
+LF_APP = "/Applications/Lyric Fever.app/Contents/MacOS/Lyric Fever"
+WIFI = "/System/Library/CoreServices/WiFiAgent.app/Contents/MacOS/WiFiAgent"
+ICE_APP = "/Applications/Ice.app/Contents/MacOS/Ice"
+LF_LIMIT_MB, WIFI_LIMIT_MB, ICE_LIMIT_MB = 300, 300, 400
+QUIT_WAIT_S = float(os.environ.get("LEAKY_HELPERS_QUIT_WAIT_S", 15))
+MAC_LIBERO = os.environ.get("LEAKY_HELPERS_MAC_LIBERO") or os.path.expanduser("~/bin/mac-libero")
+FAKE = os.environ.get("LEAKY_HELPERS_FAKE")
+BIN = os.environ.get("LEAKY_HELPERS_BIN")
+SYS_BIN = {"osascript": "/usr/bin/osascript", "open": "/usr/bin/open", "killall": "/usr/bin/killall", "kill": "/bin/kill"}
+
+
+def tool(name):
+    return os.path.join(BIN, name) if BIN else SYS_BIN[name]
+
+
+def log(msg):
+    print(f"{time.strftime('%Y-%m-%d %H:%M:%S')} {msg}", flush=True)
+
+
+def run(cmd, timeout=30):
+    """(exit, ultime righe di stderr): l'errore va nel log, senno' un -1743 di TCC sembra un'app lenta."""
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+        return r.returncode, " / ".join(r.stderr.strip().splitlines()[-2:])
+    except subprocess.TimeoutExpired:
+        return 124, f"nessuna risposta in {timeout:g} s"
+    except OSError as e:
+        return 124, str(e)
+
+
+class RUsageV0(ctypes.Structure):
+    _fields_ = [("uuid", ctypes.c_uint8 * 16)] + [(n, ctypes.c_uint64) for n in (
+        "user_time system_time pkg_idle_wkups interrupt_wkups pageins wired_size resident_size phys_footprint "
+        "proc_start_abstime proc_exit_abstime").split()]
+
+
+_libc = None
+
+
+def footprint_mb(pid):
+    global _libc
+    _libc = _libc or ctypes.CDLL(ctypes.util.find_library("System") or "/usr/lib/libSystem.dylib")
+    r = RUsageV0()
+    return r.phys_footprint >> 20 if _libc.proc_pid_rusage(pid, 0, ctypes.byref(r)) == 0 else 0
+
+
+def is_lf_perl(cmd):
+    return cmd.startswith("/usr/bin/perl ") and "/Lyric Fever.app/" in cmd and "MediaRemoteAdapter" in cmd
+
+
+def is_exe(cmd, exe):
+    return cmd == exe or cmd.startswith(exe + " ")
+
+
+def watched(cmd):
+    return is_lf_perl(cmd) or any(is_exe(cmd, e) for e in (LF_APP, WIFI, ICE_APP))
+
+
+def over(p):
+    return (is_lf_perl(p["cmd"]) and p["fp_mb"] > LF_LIMIT_MB) or (is_exe(p["cmd"], WIFI) and p["fp_mb"] > WIFI_LIMIT_MB) \
+        or (is_exe(p["cmd"], ICE_APP) and p["fp_mb"] > ICE_LIMIT_MB)
+
+
+def label(cmd):
+    return "perl di Lyric Fever" if is_lf_perl(cmd) else os.path.basename(cmd.split(" -")[0])
+
+
+def processes():
+    """Solo i processi che le regole guardano, col footprint: misurarlo su tutti i 1.400 non serve."""
+    if FAKE:
+        with open(FAKE) as f:
+            return [p for p in json.load(f) if watched(p["cmd"])]
+    out = subprocess.run(["ps", "-axo", "pid=,ppid=,command="], capture_output=True, text=True, timeout=30).stdout
+    rows = []
+    for line in out.splitlines():
+        f = line.split(None, 2)
+        if len(f) == 3 and f[0].isdigit() and watched(f[2]):
+            rows.append({"pid": int(f[0]), "ppid": int(f[1]), "cmd": f[2], "fp_mb": footprint_mb(int(f[0]))})
+    return rows
+
+
+def pids_of(test):
+    return [p["pid"] for p in processes() if test(p["cmd"])]
+
+
+def quit_app(name, exe, dry):
+    """Quit normale (Apple Event), mai SIGKILL; True se l'app e' chiusa entro QUIT_WAIT_S."""
+    if dry:
+        log(f"dry-run: quit app \"{name}\"")
+        return True
+    rc, err = run([tool("osascript"), "-e", f'quit app "{name}"'], QUIT_WAIT_S + 15)
+    if rc:
+        log(f"{name}: osascript exit {rc}: {err or 'nessun messaggio'}")
+    end = time.time() + QUIT_WAIT_S
+    while pids_of(lambda c: is_exe(c, exe)) and time.time() < end:
+        time.sleep(0.5)
+    return not pids_of(lambda c: is_exe(c, exe))
+
+
+def reopen(name, dry):
+    if dry:
+        log(f"dry-run: open -ga \"{name}\"")
+        return
+    rc, err = run([tool("open"), "-ga", name])
+    log(f"{name}: riaperta in background" if rc == 0 else f"{name}: open -ga uscito {rc}: {err}")
+
+
+def lyric_fever(procs, dry):
+    big = [p for p in procs if is_lf_perl(p["cmd"]) and over(p)]
+    if not big:
+        return 0
+    was_open = any(is_exe(p["cmd"], LF_APP) for p in procs)
+    log(f"Lyric Fever: perl MediaRemoteAdapter a {max(p['fp_mb'] for p in big)} MB (soglia {LF_LIMIT_MB}), "
+        + ("riavvio l'app" if was_open else "app chiusa, chiudo il perl rimasto"))
+    if was_open and not quit_app("Lyric Fever", LF_APP, dry):
+        log(f"Lyric Fever: non si chiude entro {QUIT_WAIT_S:g} s, lascio tutto com'era")
+        return 1
+    # il vecchio perl puo' sopravvivere all'app (25/10: ppid 1, 1,1 GB): si chiude a parte
+    left = pids_of(is_lf_perl) if not dry else [p["pid"] for p in procs if is_lf_perl(p["cmd"])]
+    if left:
+        if dry:
+            log(f"dry-run: kill -TERM {' '.join(map(str, left))}")
+        else:
+            rc = run([tool("kill"), "-TERM", *map(str, left)])[0]
+            log(f"Lyric Fever: TERM ai perl rimasti {' '.join(map(str, left))} (exit {rc})")
+    if was_open:
+        reopen("Lyric Fever", dry)
+    return 0
+
+
+def wifi_agent(procs, dry):
+    big = [p for p in procs if is_exe(p["cmd"], WIFI) and over(p)]
+    if not big:
+        return 0
+    if dry:
+        log(f"dry-run: killall WiFiAgent ({big[0]['fp_mb']} MB, soglia {WIFI_LIMIT_MB})")
+        return 0
+    rc = run([tool("killall"), "WiFiAgent"])[0]
+    log(f"WiFiAgent: {big[0]['fp_mb']} MB (soglia {WIFI_LIMIT_MB}), killall exit {rc}, launchd lo rialza")
+    return 0
+
+
+def ice(procs, dry):
+    big = [p for p in procs if is_exe(p["cmd"], ICE_APP) and over(p)]
+    if not big:
+        return 0
+    log(f"Ice: {big[0]['fp_mb']} MB (soglia {ICE_LIMIT_MB}), riavvio l'app")
+    if not quit_app("Ice", ICE_APP, dry):
+        log(f"Ice: non si chiude entro {QUIT_WAIT_S:g} s, lascio tutto com'era")
+        return 1
+    reopen("Ice", dry)
+    return 0
+
+
+def main():
+    dry = "--dry-run" in sys.argv[1:]
+    if FAKE and not BIN:
+        print("leaky-helpers: LEAKY_HELPERS_FAKE senza LEAKY_HELPERS_BIN: rifiuto, colpirei pid veri", file=sys.stderr)
+        return 2
+    if run([MAC_LIBERO], 10)[0] != 0:
+        log("Mac in uso: non chiudo app sotto le mani di Attilio, riprovo la notte prossima")
+        return 0
+    procs = processes()
+    rc = lyric_fever(procs, dry) | wifi_agent(procs, dry) | ice(procs, dry)
+    if not any(over(p) for p in procs):
+        # la misura anche quando non si fa niente: dice quanto mancava alla soglia
+        log("sotto soglia: " + (", ".join(f"{label(p['cmd'])} {p['fp_mb']} MB" for p in procs) or "nessun aiutante acceso"))
+    return rc
+
+
+if __name__ == "__main__":
+    sys.exit(main())

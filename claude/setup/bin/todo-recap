@@ -1,0 +1,134 @@
+#!/usr/bin/env python3
+"""Lista todo per WhatsApp letta dal vivo da Promemoria (unica fonte, Attilio 13/10).
+
+Le mie voci: lista Jarvis/ActiveTasks, titolo «SIMBOLO CODICE: testo», note = riga ↳.
+Le sue: liste personali, solo le scadute o di oggi, in testa. Non le tocco.
+Il CODICE resta nel titolo per ritrovare la voce, ma non si stampa (Attilio 15/10: «gli id dei
+task confondono solo»). In fondo l'usage attuale, che va riportato con ogni recap (stessa data).
+
+Default = recap breve (Attilio 19/10: «c'è bisogno che mi riporti ogni volta tutti i task?»):
+► in corso sempre, ⚠ solo se nuova o cambiata dall'ultimo recap, ☐ solo se parte oggi,
+niente ■ né i suoi promemoria scaduti (li vede in Promemoria). `--full` = lista intera, per il brief.
+"""
+import hashlib
+import json
+import os
+import re
+import subprocess
+import sys
+import time
+import urllib.request
+from datetime import datetime, timedelta
+
+MINE = "Jarvis/ActiveTasks"
+HIS = ["🟡 Armonia", "🧘 Personale", "Shopping"]
+ORDER = "⚠►☐■☑"
+STATE = os.path.expanduser("~/.openclaw/state/todo-recap-seen.json")
+FULL = "--full" in sys.argv
+CODE = re.compile(r"^(\S+) [A-Z0-9]+: ")
+
+
+def items(name):
+    out = subprocess.run(["remindctl", "list", name, "--json"],
+                         capture_output=True, text=True, timeout=60)
+    if out.returncode:
+        sys.exit(f"remindctl {name}: {out.stderr.strip()}")
+    return [r for r in json.loads(out.stdout) if not r["isCompleted"]]
+
+
+def due(r):
+    d = r.get("dueDate")
+    return datetime.fromisoformat(d.replace("Z", "+00:00")).astimezone() if d else None
+
+
+def when(d, now):
+    if d.date() == now.date():
+        day = "oggi"
+    elif d.date() == (now + timedelta(days=1)).date():
+        day = "domani"
+    else:
+        day = d.strftime("%d/%m")
+    return f"{day} {d:%H:%M}".replace(" 00:00", "")
+
+
+def usage():
+    # Stessa fonte di quota-guard (usage-tray su :3337); se non risponde la riga lo dice e basta.
+    try:
+        ov = json.load(urllib.request.urlopen("http://127.0.0.1:3337/api/overview", timeout=10))
+    except Exception:
+        return "📊 Usage: contatore non raggiungibile"
+    parts = []
+    for p in ov["providers"]:
+        acct = next((a for a in p.get("accounts", []) if a.get("active")), None)
+        q = {x["key"]: x for x in (acct or {}).get("quotas", [])}
+        if p["id"] == "claude" and "7d" in q:
+            reset = time.strftime("%d/%m", time.localtime(q["7d"]["resetsAt"]))
+            parts.append(f"Claude {q['7d']['usedPct']}% settimana (reset {reset}), 5h {q.get('5h', {}).get('usedPct', '?')}%")
+        elif p["id"] == "codex" and "7d" in q:
+            parts.append(f"Codex {q['7d']['usedPct']}%")
+    try:
+        pop = subprocess.run([sys.executable, "/Users/zorahrel/.openclaw/bin/quota-guard.py", "--dry-run"],
+                             capture_output=True, text=True, timeout=30).stdout
+        m = re.search(r"~([\d.]+)% della settimana", pop)
+        if m:
+            try:
+                lim = json.load(open(os.path.expanduser("~/.config/claude-usage-hub/budgets.json")))["projects"]["PrinceOfPersia"]["budgetPct"]
+            except Exception:
+                lim = "?"
+            parts.append(f"PoP ~{m.group(1)}% su {lim:g}%" if isinstance(lim, (int, float)) else f"PoP ~{m.group(1)}%")
+    except Exception:
+        pass
+    return "📊 " + " · ".join(parts) if parts else "📊 Usage: nessun dato"
+
+
+now = datetime.now().astimezone()
+lines = []
+
+if FULL:
+    late = [r for n in HIS for r in items(n) if due(r) and due(r).date() <= now.date()]
+    if late:
+        late.sort(key=due)
+        lines.append("⚠ Promemoria tuoi scaduti o di oggi")
+        lines.append("↳ " + ", ".join(f"{r['title']} ({when(due(r), now)})" for r in late))
+
+try:
+    seen = json.load(open(STATE))
+except Exception:
+    seen = {}
+shown = {}
+
+mine = items(MINE)
+mine.sort(key=lambda r: (ORDER.find(r["title"][:1]) % 9, due(r) or now.replace(year=9999)))
+for r in mine:
+    t = CODE.sub(r"\1 ", r["title"])
+    sym = t[:1]
+    # ■ e ☐ devono avere una data di ripartenza: senza, o con la data passata, sono lavoro perso
+    # (21/10: PMI ■ senza data, fermo 7 giorni senza che nessuno lo vedesse) -> esce sempre
+    if sym in "■☐" and (not due(r) or due(r) < now):
+        lines.append("⏰ senza ripartenza: " + t[1:].strip(" :") + (f" (era {when(due(r), now)})" if due(r) else ""))
+        continue
+    if not FULL:
+        if sym == "⚠":
+            # la stessa domanda non si ripete a ogni messaggio: torna solo se cambia testo o nota
+            h = hashlib.sha1((r["title"] + (r.get("notes") or "")).encode()).hexdigest()[:12]
+            shown[r["id"]] = h
+            if seen.get(r["id"]) == h:
+                continue
+        elif sym == "☐":
+            if not due(r) or due(r).date() > now.date():
+                continue
+        elif sym != "►":
+            continue
+    if due(r) and sym == "☐":
+        t += f", {when(due(r), now)}"
+    lines.append(t)
+    if sym == "⚠" and r.get("notes"):
+        # La nota può già avere il suo «↳» (lo insegna AGENTS.md): uno solo.
+        lines.append("↳ " + r["notes"].strip().removeprefix("↳").strip())
+
+if not FULL:
+    with open(STATE, "w") as f:
+        json.dump(shown, f)
+
+lines.append(usage())
+print("\n".join(lines))

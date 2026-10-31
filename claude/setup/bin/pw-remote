@@ -1,0 +1,274 @@
+#!/usr/bin/env bash
+# pw-remote -- <comando>: i browser di Playwright girano sul PC, runner e server restano sul Mac.
+# Il runner si collega a un run-server del PC con un tunnel ssh. Il loopback e' legato su tutti e due
+# i lati, mai la LAN; a Chromium del PC il localhost del Mac arriva con exposeNetwork (solo le porte
+# del test server, mai <loopback>: altrimenti il PC accede a gateway, db, inspector).
+# Perche': a Mac carico 3 test costavano 5,5-6,3 s di CPU in locale e 1,9 s cosi' (22-24/10).
+#
+#   pw-remote -- npx playwright test [...]   il comando, nella cartella corrente
+#   pw-remote -h                             questo testo
+#
+# Exit: quello del comando · 64 uso, nessun Playwright, storageState senza PW_REMOTE_ALLOW_AUTH
+#       o nessuna porta da esporre · 75 PC non raggiungibile in 60 s (rimanda il giro) · 76 server
+#       sul PC non parte. Porte esposte (host:porta): PW_EXPOSE_PORTS=p1,p2 > E2E_BASE_URL/BASE_URL > baseURL nel config.
+# PW_REMOTE_ALLOW_AUTH=1 per config con storageState. PW_WATCHDOG_MINUTES=N (default: 2 min).
+# Runner e server sono la stessa versione esatta: ogni minor di Playwright cambia protocollo.
+set -uo pipefail
+
+case "${1:-}" in
+  -h|--help) sed -n '2,15p' "$0"; exit 0 ;;
+esac
+[ "${1:-}" = -- ] && shift
+[ $# -gt 0 ] || { echo "uso: pw-remote -- <comando>" >&2; exit 64; }
+
+ver=$(node -p "require('@playwright/test/package.json').version" 2>/dev/null) \
+  || ver=$(node -p "require('playwright/package.json').version" 2>/dev/null) \
+  || { echo "pw-remote: nessun @playwright/test ne' playwright in $PWD" >&2; exit 64; }
+
+# File di config che Playwright userebbe: -c/--config <file|cartella> dal comando, altrimenti il default
+# (.ts .js .mjs .mts .cjs .cts) nella cartella corrente.
+_find_config() {
+  local c="" a prev=""
+  for a in "$@"; do
+    case "$prev" in -c|--config) c=$a ;; esac
+    case "$a" in --config=*) c=${a#--config=} ;; esac
+    prev=$a
+  done
+  if [ -n "$c" ]; then
+    if [ -d "$c" ]; then c=$(ls "$c"/playwright.config.* 2>/dev/null | head -1); fi
+    [ -f "$c" ] && { printf '%s' "$c"; return; }
+    return
+  fi
+  local e
+  for e in ts js mjs mts cjs cts; do
+    [ -f "playwright.config.$e" ] && { printf '%s' "playwright.config.$e"; return; }
+  done
+}
+CFG=$(_find_config "$@")
+
+# Le sessioni autenticate (storageState) non girano sul PC senza PW_REMOTE_ALLOW_AUTH=1 (esattamente 1):
+# i cookie arriverebbero al browser del PC. Si guarda la config e gli spec: quelli passati sul comando,
+# altrimenti la testDir letterale della config (o la sua cartella).
+_check_no_auth() {
+  [ "${PW_REMOTE_ALLOW_AUTH:-}" = 1 ] && return 0
+  local hit="" a
+  _uses_auth() { /usr/bin/grep -E 'storageState' "$1" 2>/dev/null | /usr/bin/grep -vE '^[[:space:]]*(//|/?\*)' | /usr/bin/grep -q .; }
+  if [ -n "$CFG" ] && _uses_auth "$CFG"; then hit=$CFG; fi
+  if [ -z "$hit" ]; then
+    local files=() dir
+    local prev=""
+    for a in "$@"; do
+      case "$prev" in -c|--config) prev=$a; continue ;; esac
+      case "$a" in --config=*) prev=$a; continue ;; esac
+      case "$a" in *.ts|*.js|*.mjs|*.mts|*.cjs|*.cts) [ -f "$a" ] && files+=("$a") ;; esac
+      prev=$a
+    done
+    if [ ${#files[@]} -eq 0 ] && [ -n "$CFG" ]; then
+      dir=$(dirname "$CFG")
+      td=$(sed -nE "s/.*testDir[[:space:]]*:[[:space:]]*['\"]([^'\"]+)['\"].*/\1/p" "$CFG" | head -1)
+      [ -n "$td" ] && case "$td" in /*) dir=$td ;; *) dir="$(dirname "$CFG")/$td" ;; esac
+      while IFS= read -r f; do files+=("$f"); done < <(find "$dir" -maxdepth 4 \( -name node_modules -o -name test-results -o -name .auth \) -prune -o -type f \( -name '*.spec.*' -o -name '*.test.*' \) -print 2>/dev/null)
+    fi
+    for a in ${files[@]+"${files[@]}"}; do _uses_auth "$a" && { hit=$a; break; }; done
+  fi
+  [ -z "$hit" ] && return 0
+  echo "pw-remote: storageState in $hit: le sessioni autenticate non girano sul PC." >&2
+  echo "           PW_REMOTE_ALLOW_AUTH=1 solo se il PC e' fidato." >&2
+  exit 64
+}
+_check_no_auth "$@"
+
+. ~/.config/winfleet/config.env 2>/dev/null || true
+HOST="${OFFLOAD_HOST:-${HOST_SSH:-}}"
+[ -n "$HOST" ] || { echo "pw-remote: imposta OFFLOAD_HOST o HOST_SSH in ~/.config/winfleet/config.env" >&2; exit 75; }
+SRV='E:\offload\pw-srv\'"$ver"
+SSH=(ssh -o ConnectTimeout=5 -o BatchMode=yes -o ServerAliveInterval=15 -o ServerAliveCountMax=3)
+WDOG_MIN=${PW_WATCHDOG_MINUTES:-2}
+
+# Gli script PowerShell arrivano su stdin e partono con -EncodedCommand: nessun quoting ne' da
+# cmd.exe ne' da ssh. I segnaposto @VER@ @RPORT@ @TOK@ @WDOG_MIN@ li riempie `fill`.
+fill() { sed -e "s/@VER@/$ver/g" -e "s/@RPORT@/${RPORT:-0}/g" -e "s/@TOK@/${TOK:-x}/g" -e "s/@WDOG_MIN@/$WDOG_MIN/g"; }
+encode() { iconv -f UTF-8 -t UTF-16LE | base64 | tr -d '\n'; }
+on_pc() { local enc; enc=$(fill | encode); "${SSH[@]}" "$HOST" "powershell -NoProfile -NonInteractive -EncodedCommand $enc"; }
+
+# Porte del test server da esporre al PC via exposeNetwork (formato host:porta, mai <loopback>).
+# Playwright SOCKS5 confronta il hostname che il browser invia (es. "localhost") con il pattern:
+# "127.0.0.1:4871" non abbina "localhost:4871" perche' il matcher IPv4 usa host===tokenHost.
+# Si preserva l'hostname originale dell'URL (localhost:4871, non 127.0.0.1:4871).
+_expose_ports() {
+  local ports="" hp=""
+  # PW_EXPOSE_PORTS=p1,p2: porta esplicita, assume localhost (come il browser)
+  if [ -n "${PW_EXPOSE_PORTS:-}" ]; then
+    local p=""
+    IFS=','
+    for p in ${PW_EXPOSE_PORTS}; do
+      hp="localhost:${p}"
+      case ",$ports," in *",$hp,"*) ;; *) ports="${ports:+$ports,}$hp" ;; esac
+    done
+    unset IFS
+    printf '%s' "$ports"; return
+  fi
+  # Estrae host:porta dall'URL (http://localhost:4871/path → localhost:4871)
+  _url_hp() { printf '%s' "$1" | sed -E 's|https?://([^/?#]+).*|\1|' | grep -E '^[^:]+:[0-9]{2,5}$'; }
+  for _url in "${E2E_BASE_URL:-}" "${BASE_URL:-}"; do
+    [ -n "$_url" ] || continue
+    hp=$(_url_hp "$_url") || continue
+    [ -n "$hp" ] || continue
+    case ",$ports," in *",$hp,"*) ;; *) ports="${ports:+$ports,}$hp" ;; esac
+  done
+  local cfg=$CFG
+  if [ -n "$cfg" ]; then
+    while IFS= read -r hp; do
+      [ -n "$hp" ] || continue
+      case ",$ports," in *",$hp,"*) ;; *) ports="${ports:+$ports,}$hp" ;; esac
+    done < <(grep -oE "(baseURL|url)[[:space:]]*:[[:space:]]*['\"]https?://[^'\"]*" "$cfg" 2>/dev/null | \
+             sed -E "s|.*https?://([^/?#'\"]+).*|\1|" | \
+             grep -E '^[^:]+:[0-9]{2,5}$')
+  fi
+  printf '%s' "$ports"
+}
+
+install_ps() { cat <<'PS'
+$v = '@VER@'
+$d = 'E:\offload\pw-srv\' + $v
+New-Item -ItemType Directory -Force -Path $d | Out-Null
+Set-Location $d
+if (-not (Test-Path 'package.json')) { Set-Content -Path package.json -Value '{"private":true}' -Encoding ascii }
+& npm.cmd install --no-audit --no-fund ('@playwright/test@' + $v)
+if ($LASTEXITCODE) { exit 1 }
+& node.exe 'node_modules\playwright\cli.js' install chromium
+exit $LASTEXITCODE
+PS
+}
+
+# il run-server vive finche' vive questa sessione; il PID va in un file per il taskkill di fine giro.
+# Il run-server di Playwright apre il proxy SOCKS di exposeNetwork con listen(0), cioe' su tutte le
+# interfacce (visto il 24/10 su 1.64: 0.0.0.0, senza token): niente porte in LAN, quindi un
+# precaricamento (-r) lega al loopback ogni listen senza host. Un host esplicito resta com'e'.
+# Il watchdog (Start-Process separato) chiude il run-server se il client sparisce per WDOG_MIN minuti.
+run_ps() { cat <<'PS'
+$v = '@VER@'
+$d = 'E:\offload\pw-srv\' + $v
+$shim = Join-Path $d 'loopback-@TOK@.cjs'
+Set-Content -Path $shim -Encoding ascii -Value @'
+const net = require('net');
+const listen = net.Server.prototype.listen;
+net.Server.prototype.listen = function (...a) {
+  if (typeof a[0] === 'number' || (typeof a[0] === 'string' && /^[0-9]+$/.test(a[0]))) {
+    if (a[1] === undefined || a[1] === null) a[1] = '127.0.0.1';
+    else if (typeof a[1] !== 'string') a.splice(1, 0, '127.0.0.1');
+  }
+  return listen.apply(this, a);
+};
+'@
+$p = Start-Process -FilePath node.exe -ArgumentList @('-r', $shim, 'node_modules\playwright\cli.js', 'run-server', '--host', '127.0.0.1', '--port', '@RPORT@', '--path', '/@TOK@') -WorkingDirectory $d -WindowStyle Hidden -PassThru
+Set-Content -Path (Join-Path $d 'run-@TOK@.pid') -Value $p.Id -Encoding ascii
+$wScript = @"
+`$dl = (Get-Date).AddMinutes(@WDOG_MIN@)
+while ((Get-Date) -lt `$dl) {
+  Start-Sleep 15
+  if (netstat -ano -p TCP 2>`$null | Select-String ':@RPORT@ ' | Select-String 'ESTABLISHED') { `$dl = (Get-Date).AddMinutes(@WDOG_MIN@) }
+}
+`$f = '$d\run-@TOK@.pid'
+if (Test-Path `$f) { `$id = ([string](Get-Content `$f)).Trim(); if (`$id) { & taskkill.exe /PID `$id /T /F | Out-Null }; Remove-Item `$f -ErrorAction SilentlyContinue }
+Remove-Item '$d\loopback-@TOK@.cjs' -ErrorAction SilentlyContinue
+Remove-Item '$d\wdog-@TOK@.pid' -ErrorAction SilentlyContinue
+"@
+$wEnc = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($wScript))
+$wProc = Start-Process powershell.exe -ArgumentList @('-NoProfile','-NonInteractive','-EncodedCommand',$wEnc) -WindowStyle Hidden -PassThru
+Set-Content -Path (Join-Path $d 'wdog-@TOK@.pid') -Value $wProc.Id -Encoding ascii
+$p.WaitForExit()
+PS
+}
+
+stop_ps() { cat <<'PS'
+$v = '@VER@'
+$d = 'E:\offload\pw-srv\' + $v
+foreach ($pat in @('run-@TOK@.pid', 'wdog-@TOK@.pid')) {
+  foreach ($f in Get-ChildItem -Path $d -Filter $pat -ErrorAction SilentlyContinue) {
+    $id = ([string](Get-Content $f.FullName)).Trim()
+    if ($id) { & taskkill.exe /PID $id /T /F | Out-Null }
+    Remove-Item $f.FullName -ErrorAction SilentlyContinue
+  }
+}
+Remove-Item (Join-Path $d 'loopback-@TOK@.cjs') -ErrorAction SilentlyContinue
+PS
+}
+
+# un connect di prova al run-server, con il Playwright del runner (stessa versione esatta).
+# Anche dove c'e' solo il pacchetto playwright (la versione si legge anche da li'): con il solo
+# @playwright/test la prova falliva sempre ed usciva 76 dopo 15 s.
+PROBE_JS="let pw;
+try { pw = require('@playwright/test'); } catch { pw = require('playwright'); }
+pw.chromium.connect(process.env.PW_WS, { timeout: 5000 })
+  .then((b) => b.close().then(() => process.exit(0)))
+  .catch((e) => { console.error(e.message.split('\n')[0]); process.exit(1); });"
+
+cleanup() {
+  local rc=$?
+  if [ "${STARTED:-}" = 1 ]; then
+    kill "$SSHPID" 2>/dev/null   # chiude il tunnel
+    stop_ps | on_pc >/dev/null 2>&1   # il run-server sul PC va fermato col suo PID, il tunnel non basta
+  fi
+  exit "$rc"
+}
+trap cleanup EXIT
+trap 'exit 130' INT TERM
+
+# PC: sveglia e aspetta fino a 60 s d'orologio. winwake gira a parte: da solo aspetta fino a 40 giri
+# da 3 ssh, e a PC che non risponde sulla 22 (24/10, ping si' e ssh no) il «60 s» durava ~10 minuti.
+pc_up() { ssh -o ConnectTimeout=3 -o BatchMode=yes "$HOST" exit 2>/dev/null; }
+if ! pc_up; then
+  echo "pw-remote: sveglio il PC" >&2
+  ~/.local/bin/winwake >&2 &
+  WAKEPID=$!
+  deadline=$((SECONDS + 60))
+  until pc_up; do
+    [ "$SECONDS" -ge "$deadline" ] && { kill "$WAKEPID" 2>/dev/null; echo "pw-remote: PC non risponde entro 60 s" >&2; exit 75; }
+    sleep 3
+  done
+  kill "$WAKEPID" 2>/dev/null
+fi
+
+# prima volta di questa versione: installa il server sul PC (minuti, con Chromium)
+if [ "$(printf "%s" "if (Test-Path '$SRV\node_modules\playwright\cli.js') { 'yes' }" | on_pc | tr -d '\r')" != yes ]; then
+  echo "pw-remote: installo Playwright $ver sul PC (prima volta)" >&2
+  install_ps | on_pc >&2 || { echo "pw-remote: installazione su PC fallita" >&2; exit 76; }
+fi
+
+RPORT=$((20000 + RANDOM % 20000))
+TOK=$(openssl rand -hex 16)
+LPORT=$(python3 -c 'import socket; s = socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1])')
+WS="ws://127.0.0.1:$LPORT/$TOK"
+RUN_ENC=$(run_ps | fill | encode)
+
+# una sola sessione ssh: tunnel e run-server insieme
+"${SSH[@]}" -o ExitOnForwardFailure=yes -L "127.0.0.1:$LPORT:127.0.0.1:$RPORT" "$HOST" \
+  "powershell -NoProfile -NonInteractive -EncodedCommand $RUN_ENC" &
+SSHPID=$!
+STARTED=1
+
+deadline=$((SECONDS + 15)); msg=""
+until msg=$(PW_WS="$WS" node -e "$PROBE_JS" 2>&1); do
+  [ "$SECONDS" -ge "$deadline" ] && { echo "pw-remote: run-server non risponde in 15 s: $(echo "$msg" | tail -1)" >&2; exit 76; }
+  sleep 1
+done
+
+EXPOSE_NET=$(_expose_ports)
+if [ -z "$EXPOSE_NET" ]; then
+  echo "pw-remote: nessuna porta trovata in playwright.config.ts/js, E2E_BASE_URL o PW_EXPOSE_PORTS." >&2
+  echo "           Imposta PW_EXPOSE_PORTS=porta o aggiungi baseURL al config." >&2
+  exit 64
+fi
+export PW_TEST_CONNECT_WS_ENDPOINT="$WS"
+export PW_TEST_CONNECT_EXPOSE_NETWORK="$EXPOSE_NET"  # M5-target: mai '<loopback>'; porta-specifica (es. localhost:4871)
+T0=$(date +%s)
+"$@"
+RC=$?
+
+CMD="$*"
+mkdir -p ~/.cache/offload
+jq -cn --argjson at "$((T0 * 1000))" --argjson s "$(( $(date +%s) - T0 ))" --argjson rc "$RC" \
+  --arg dir "$(basename "$PWD")" --arg cmd "${CMD:0:80}" \
+  '{at: $at, mode: "browsers", dir: $dir, cmd: $cmd, rc: $rc, seconds: $s}' >> ~/.cache/offload/runs.jsonl 2>/dev/null || true
+exit "$RC"

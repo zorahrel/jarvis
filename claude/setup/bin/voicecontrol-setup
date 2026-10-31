@@ -1,0 +1,89 @@
+#!/usr/bin/env bash
+# voicecontrol-setup — prepara Controllo vocale in italiano e verifica che sia acceso.
+#
+# Perche' esiste: l'interruttore di Controllo vocale NON si accende da script
+# (macOS lo rifiuta: `defaults write CommandAndControlEnabled -bool true` torna a
+# 0 da solo, e `launchctl kickstart com.apple.AssistiveControl` esce 255). Va
+# girato a mano una volta. Tutto il resto si automatizza, e lo fa questo script.
+#
+#   voicecontrol-setup            stato + apre il pannello se serve
+#   voicecontrol-setup comandi    mostra i comandi italiani che servono a te
+#   voicecontrol-setup verifica   prova che sia davvero attivo (processo, non flag)
+set -euo pipefail
+
+PANE="x-apple.systempreferences:com.apple.preference.universalaccess?VoiceControl"
+
+acceso() {
+  # Come NON si verifica, provato il 19/09 e sbagliato due volte:
+  #  - `launchctl list com.apple.AssistiveControl`: a servizio fermo stampa
+  #    "-<TAB>255<TAB>...", dove 255 e' l'ultimo exit code e NON un pid. Un grep
+  #    generico su "una cifra" lo prende e da' un falso positivo. Ma soprattutto,
+  #    su macOS 26 quel job resta a "-" ANCHE con Controllo vocale acceso: non e'
+  #    lui a fare il lavoro, quindi e' proprio l'indizio sbagliato (falso negativo).
+  #  - il solo flag nelle preferenze: si puo' scrivere a mano e resta 1 anche se
+  #    il sistema non ha acceso niente.
+  # Quello che vale davvero: flag a 1 E un processo di riconoscimento vocale
+  # locale vivo, che e' cio' che il Controllo vocale accende per ascoltare.
+  local flag
+  flag=$(defaults read com.apple.Accessibility CommandAndControlEnabled 2>/dev/null || echo 0)
+  [ "$flag" = "1" ] || return 1
+  pgrep -f 'localspeechrecognition' >/dev/null 2>&1
+}
+
+stato() {
+  local flag; flag=$(defaults read com.apple.Accessibility CommandAndControlEnabled 2>/dev/null || echo 0)
+  if acceso; then
+    echo "Controllo vocale: ATTIVO (servizio in esecuzione)"
+  else
+    echo "Controllo vocale: spento (flag=$flag, servizio fermo)"
+    echo
+    echo "Va acceso a mano, una volta sola:"
+    echo "  Impostazioni → Accessibilità → Controllo vocale → interruttore in alto"
+    echo "Apro il pannello..."
+    open "$PANE" 2>/dev/null || true
+  fi
+}
+
+comandi() {
+  cat <<'FINE'
+I comandi che coprono quello che hai chiesto (in italiano, sistema in it_IT):
+
+  «Mostra numeri»          numera ogni elemento cliccabile a schermo
+  «Fai clic su 7»          clicca l'elemento numero 7
+  «Mostra griglia»         griglia numerata, per i punti senza etichetta
+  «Fai clic su Invia»      clicca per NOME, senza numeri
+  «Apri Safari»            lancia un'app
+  «Passa a Mail»           cambia app in primo piano
+  «Mostra comandi»         elenco di cio' che si puo' dire nell'app corrente
+  «Modalita comando»       smette di scrivere cio' che dici, ascolta solo comandi
+  «Rendi pronunciabile»    crea un comando nuovo su cio' che hai selezionato
+
+Per i tuoi tre esempi:
+  "mostrami le finestre" → «Mostra numeri» oppure «Mostra griglia finestra»
+  "apri questo"          → «Apri <app>» oppure «Fai clic su <nome>»
+  "cerca questo"         → «Fai clic su Cerca» poi detti il testo
+
+Scheda completa: ~/comandi-vocali.md
+
+LIMITE DA SAPERE: e' una grammatica fissa, non capisce l'intento.
+«Segna come lette le prime tre conversazioni» NON funziona: per quello
+serve un LLM che legge l'albero AX (vedi la scheda di memoria
+reference_agente_vocale_mac_esistenti).
+FINE
+}
+
+verifica() {
+  if acceso; then
+    echo "OK: Controllo vocale attivo (flag=1 + riconoscimento vocale locale in esecuzione)."
+    echo "Prova a dire «Mostra numeri»: devono comparire i numerini sugli elementi."
+  else
+    echo "NO: non risulta attivo. Il flag da solo non basta, serve l'interruttore."
+    exit 1
+  fi
+}
+
+case "${1:-stato}" in
+  comandi)  comandi ;;
+  verifica) verifica ;;
+  *)        stato ;;
+esac

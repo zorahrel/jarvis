@@ -1,0 +1,46 @@
+#!/usr/bin/env python3
+"""capped LIMIT_MB TIMEOUT_S -- cmd...: runs cmd, killed with SIGKILL past LIMIT_MB of phys_footprint or TIMEOUT_S.
+
+The footprint, not ps rss: on macOS compressed memory does not show in RSS
+(a Bun process at 14 GB showed 2.5 GB). Read with proc_pid_rusage, cheap
+enough to poll every 100 ms. Exit 137 with a line on stderr when the memory
+cap fires, 124 on the time cap, otherwise cmd's own exit code.
+"""
+import ctypes
+import os
+import signal
+import subprocess
+import sys
+import time
+
+limit_mb, timeout_s = float(sys.argv[1]), float(sys.argv[2])
+cmd = sys.argv[sys.argv.index("--") + 1:]
+libproc = ctypes.CDLL("/usr/lib/libproc.dylib")
+buf = ctypes.create_string_buffer(512)
+
+
+def footprint_mb(pid):
+    # RUSAGE_INFO_V0: 16 bytes of uuid, then u64 fields; ri_phys_footprint is the 8th, at offset 72.
+    if libproc.proc_pid_rusage(pid, 0, buf) != 0:
+        return 0.0
+    return int.from_bytes(buf.raw[72:80], "little") / 1048576
+
+
+proc = subprocess.Popen(cmd)
+start, peak = time.monotonic(), 0.0
+while proc.poll() is None:
+    mb = footprint_mb(proc.pid)
+    peak = max(peak, mb)
+    if mb > limit_mb:
+        os.kill(proc.pid, signal.SIGKILL)
+        proc.wait()
+        print(f"[capped] killed: footprint {mb:.0f} MB > {limit_mb:.0f} MB", file=sys.stderr)
+        sys.exit(137)
+    if time.monotonic() - start > timeout_s:
+        os.kill(proc.pid, signal.SIGKILL)
+        proc.wait()
+        print(f"[capped] killed: over {timeout_s:.0f} s, peak {peak:.0f} MB", file=sys.stderr)
+        sys.exit(124)
+    time.sleep(0.1)
+print(f"[capped] peak {peak:.0f} MB", file=sys.stderr)
+sys.exit(proc.returncode)

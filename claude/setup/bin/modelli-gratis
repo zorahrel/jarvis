@@ -1,0 +1,412 @@
+#!/usr/bin/env python3
+"""modelli-gratis — giro giornaliero sui modelli LLM gratuiti, veloci e intelligenti.
+
+Raccoglie i candidati (free di opencode Zen, :free di OpenRouter, provider free tier su
+models.dev, annunci trovati da Codex sul web), fa valutare a Codex quelli mai visti,
+misura davvero quelli misurabili senza login nuovi e stampa SOLO le novità che passano
+il filtro (tps > 150 e benchmark buoni). Report: ~/.cache/modelli-gratis/AAAA-MM-GG.md
+
+Uso: modelli-gratis [--no-research] [--no-measure] [--dry]
+  --dry  non aggiorna lo stato (per provare senza "consumare" le novità)
+"""
+import concurrent.futures as cf
+import datetime as dt
+import json
+import os
+import subprocess
+import sys
+import tempfile
+import time
+import urllib.error
+import urllib.request
+
+HOME = os.path.expanduser("~")
+DIR = os.path.join(HOME, ".cache", "modelli-gratis")
+STATE = os.path.join(DIR, "state.json")
+TODAY = dt.date.today().isoformat()
+REPORT = os.path.join(DIR, f"{TODAY}.md")
+LOG = os.path.join(DIR, "run.log")
+MIN_TPS = 150
+PROMPT = "Explain in about 300 words how TCP congestion control works."
+# gpt-6-luna è il preferito. Dal 27/09 al 05/10 lo rifiutava perché il codex di Homebrew era
+# fermo alla 0.153 («not supported with a ChatGPT account»); dalla 0.160 va. gpt-reserve resta riserva.
+CODEX_MODELS = ["gpt-6-luna", "gpt-reserve"]
+OPENCODE = "/opt/homebrew/bin/opencode"
+CODEX = "/opt/homebrew/bin/codex"
+# provider con free tier noto: su models.dev si guardano solo i loro modelli nuovi
+FREE_TIER_PROVIDERS = {"groq": "Groq", "cerebras": "Cerebras", "sambanova": "SambaNova",
+                       "google": "Google AI Studio"}
+
+
+def log(*a):
+    with open(LOG, "a") as f:
+        print(dt.datetime.now().isoformat(timespec="seconds"), *a, file=f)
+
+
+def get_json(url, headers=None, timeout=60):
+    req = urllib.request.Request(url, headers={"User-Agent": "modelli-gratis", **(headers or {})})
+    with urllib.request.urlopen(req, timeout=timeout) as r:
+        return json.load(r)
+
+
+def keychain(service, account):
+    p = subprocess.run(["security", "find-generic-password", "-s", service, "-a", account, "-w"],
+                       capture_output=True, text=True)
+    return p.stdout.strip() or None
+
+
+# ---------- Artificial Analysis ----------
+# Benchmark indipendenti (intelligenza, coding, tps misurati): meglio dei numeri dichiarati dai provider.
+# API gratuita con chiave (1000 req/giorno), chiede attribuzione. Una chiamata al giorno, in cache.
+
+def aa_models():
+    key = keychain("artificialanalysis", "api")
+    if not key:
+        return {}
+    cache = os.path.join(DIR, f"aa-{TODAY}.json")
+    try:
+        if os.path.exists(cache):
+            data = json.load(open(cache))
+        else:
+            data = get_json("https://artificialanalysis.ai/api/v2/data/llms/models", {"x-api-key": key})["data"]
+            json.dump(data, open(cache, "w"))
+    except Exception as e:
+        log("artificialanalysis", e)
+        return {}
+    return {norm(m.get("slug") or m.get("name", "")): m for m in data}
+
+
+def norm(s):
+    # "nemotron-3-ultra-550b-a55b:free" e "NVIDIA Nemotron 3 Ultra" devono incontrarsi
+    s = s.lower().split("/")[-1].split(":")[0]
+    for junk in ("-free", "-preview", "-latest", "-contributor"):
+        s = s.replace(junk, "")
+    return "".join(ch for ch in s if ch.isalnum())
+
+
+def aa_match(aa, key, name):
+    if not aa:
+        return None
+    for cand in (norm(key), norm(name)):
+        if cand in aa:
+            return aa[cand]
+    # prefisso: "musespark13" contro "musespark13thinking"; AA a volte mette il produttore
+    # davanti ("nvidianemotron3ultra...") e il catalogo no, quindi si prova anche col suffisso
+    k = norm(key)
+    hits = [m for s, m in aa.items() if len(k) > 6 and (s.startswith(k) or k.startswith(s) or s.endswith(k))]
+    return hits[0] if len(hits) == 1 else None
+
+
+def aa_line(m):
+    ev = m.get("evaluations") or {}
+    parts = [f"AA Intelligence {ev.get('artificial_analysis_intelligence_index')}",
+             f"Coding {ev.get('artificial_analysis_coding_index')}"]
+    if m.get("median_output_tokens_per_second"):
+        parts.append(f"{m['median_output_tokens_per_second']:.0f} tps (AA)")
+    return ", ".join(p for p in parts if "None" not in p) + " — artificialanalysis.ai"
+
+
+# ---------- candidati ----------
+
+def collect():
+    cands = {}
+    try:
+        md = get_json("https://models.dev/api.json")
+    except Exception as e:
+        log("models.dev", e)
+        md = {}
+
+    # opencode Zen: costo zero su models.dev e presente nella lista viva del client
+    live = subprocess.run([OPENCODE, "models", "--refresh"], capture_output=True, text=True,
+                          stdin=subprocess.DEVNULL, timeout=120).stdout.split()
+    for mid, m in md.get("opencode", {}).get("models", {}).items():
+        c = m.get("cost") or {}
+        key = f"opencode/{mid}"
+        if key in live and c.get("input") == 0 and c.get("output") == 0:
+            cands[key] = {"key": key, "name": m.get("name", mid), "measure": "opencode",
+                          "where": "opencode Zen (free, nessun login)",
+                          "how": f"opencode run -m {key} \"...\""}
+
+    # OpenRouter: prezzo zero, solo testo in uscita, niente router generico
+    try:
+        for m in get_json("https://openrouter.ai/api/v1/models")["data"]:
+            p = m.get("pricing", {})
+            outm = m.get("architecture", {}).get("output_modalities", ["text"])
+            if p.get("prompt") == "0" and p.get("completion") == "0" and outm == ["text"] \
+                    and m["id"] != "openrouter/free":
+                key = f"openrouter/{m['id']}"
+                cands[key] = {"key": key, "name": m.get("name", m["id"]), "measure": "openrouter",
+                              "orid": m["id"], "where": "OpenRouter free (chiave già nel Keychain)",
+                              "how": f"model \"{m['id']}\" su https://openrouter.ai/api/v1"}
+    except Exception as e:
+        log("openrouter", e)
+
+    # Kilo Gateway: :free senza chiave (200 req/ora per IP). Aggiunto 05/10/2026.
+    try:
+        for m in get_json("https://api.kilo.ai/api/gateway/models")["data"]:
+            p = m.get("pricing") or {}
+            if m["id"].startswith("kilo-auto/"):  # router, non un modello
+                continue
+            if m["id"].endswith(":free") or (str(p.get("prompt")) == "0" and str(p.get("completion")) == "0"):
+                key = f"kilo/{m['id']}"
+                cands[key] = {"key": key, "name": m.get("name", m["id"]), "measure": "kilo", "orid": m["id"],
+                              "where": "Kilo Gateway (free, nessuna chiave)",
+                              "how": f"model \"{m['id']}\" su https://api.kilo.ai/api/gateway"}
+    except Exception as e:
+        log("kilo", e)
+
+    # provider con free tier: servono account che non abbiamo, quindi solo segnalati
+    for pid, label in FREE_TIER_PROVIDERS.items():
+        for mid, m in md.get(pid, {}).get("models", {}).items():
+            if (m.get("modalities") or {}).get("output", ["text"]) != ["text"]:
+                continue
+            key = f"{pid}/{mid}"
+            cands[key] = {"key": key, "name": m.get("name", mid), "measure": None,
+                          "where": f"{label} free tier (serve account)", "how": f"{pid} API, model \"{mid}\""}
+    return cands
+
+
+# ---------- Codex: valutazione + annunci ----------
+
+SCHEMA = {
+    "type": "object", "additionalProperties": False, "required": ["rated", "announcements"],
+    "properties": {
+        "rated": {"type": "array", "items": {
+            "type": "object", "additionalProperties": False,
+            "required": ["key", "tier", "active", "declared_tps", "bench"],
+            "properties": {"key": {"type": "string"}, "tier": {"type": "string", "enum": ["top", "good", "weak", "unknown"]},
+                           "active": {"type": "boolean"},
+                           "declared_tps": {"type": ["number", "null"]}, "bench": {"type": "string"}}}},
+        "announcements": {"type": "array", "items": {
+            "type": "object", "additionalProperties": False,
+            "required": ["key", "name", "tier", "active", "declared_tps", "bench", "where", "how", "needs_login", "url"],
+            "properties": {"key": {"type": "string"}, "name": {"type": "string"}, "active": {"type": "boolean"},
+                           "tier": {"type": "string", "enum": ["top", "good", "weak", "unknown"]},
+                           "declared_tps": {"type": ["number", "null"]}, "bench": {"type": "string"},
+                           "where": {"type": "string"}, "how": {"type": "string"},
+                           "needs_login": {"type": "boolean"}, "url": {"type": "string"}}}},
+    },
+}
+
+
+# Un'unica chiamata su 62 modelli a effort max sfora i 25 minuti: lotti da 10 in parallelo.
+# La ricerca annunci a max non chiude in 25 minuti (due prove il 28/09), quindi gira a high.
+BATCH = 10
+
+
+def codex_research(new, seen_keys, research):
+    todo = [{"key": c["key"], "name": c["name"]} for c in new]
+    jobs = [(todo[i:i + BATCH], False) for i in range(0, len(todo), BATCH)]
+    if research:
+        jobs.append(([], True))
+    out = {"rated": [], "announcements": []}
+    with cf.ThreadPoolExecutor(4) as ex:
+        for r in ex.map(lambda j: codex_call(j[0], seen_keys, j[1]), jobs):
+            out["rated"] += r.get("rated", [])
+            out["announcements"] += r.get("announcements", [])
+    return out
+
+
+def codex_call(todo, seen_keys, research):
+    ask = f"""Oggi è {TODAY}. Lavori per chi cerca modelli LLM GRATUITI, veloci (oltre {MIN_TPS} token/s in output)
+e di intelligenza alta, per lavoro meccanico di agenti di coding (ricerca, build, refactor). Usa il web.
+
+1) RATED: per ognuno di questi modelli (key e nome) dai tier di intelligenza (top = vicino alla
+frontiera su coding/agentic, good = solido per lavoro meccanico, weak = piccolo o specialistico,
+unknown = nessun dato), active = false se l'accesso gratuito è ritirato, deprecato o chiuso
+a oggi, declared_tps = throughput in output dichiarato o misurato da fonti pubbliche
+(Artificial Analysis, OpenRouter, pagina del provider) oppure null, bench = 1 riga con i benchmark
+chiave e la fonte. Rispondi per TUTTI, con la key identica.
+{json.dumps(todo, ensure_ascii=False) if todo else "(nessuno: lista vuota)"}
+
+2) ANNOUNCEMENTS: {"cerca annunci degli ultimi 14 giorni di accesso GRATUITO a modelli LLM (free tier, promo, modelli :free) da Groq, Cerebras, SambaNova, Google AI Studio, OpenRouter, opencode Zen, NVIDIA NIM e simili. Solo modelli di testo buoni (tier top o good). Al massimo 8 risultati: guarda le pagine modelli e i blog dei provider elencati, poi fermati. key in forma provider/model-id minuscolo. Escludi quelli che compaiono in questa lista di chiavi già viste: " + json.dumps(sorted(seen_keys)) if research else "lascia la lista vuota"}.
+Per ogni annuncio: where (dove si usa), how (come: comando o endpoint), needs_login (serve creare un account?), url della fonte.
+Niente invenzioni: se un dato non c'è, null o "unknown"."""
+    with tempfile.TemporaryDirectory() as tmp:
+        sp, op = os.path.join(tmp, "schema.json"), os.path.join(tmp, "out.json")
+        json.dump(SCHEMA, open(sp, "w"))
+        for model in CODEX_MODELS:
+            try:
+                p = subprocess.run([CODEX, "exec", "--skip-git-repo-check", "-s", "read-only", "-m", model,
+                                    "-c", f'model_reasoning_effort="{"high" if research else "max"}"',
+                                    "-c", 'web_search="live"',
+                                    "--output-schema", sp, "-o", op, ask],
+                                   cwd=tmp, capture_output=True, text=True, stdin=subprocess.DEVNULL, timeout=900)
+            except subprocess.TimeoutExpired:
+                log("codex timeout", model, len(todo))
+                continue
+            if p.returncode == 0 and os.path.exists(op):
+                try:
+                    return json.load(open(op))
+                except Exception as e:
+                    log("codex json", model, e)
+            log("codex fail", model, p.returncode, (p.stderr or p.stdout)[-400:])
+    return {"rated": [], "announcements": []}
+
+
+# ---------- misure ----------
+# tps = token di testo in output / tempo tra primo e ultimo token di testo; ttft a parte.
+
+def measure_opencode(key):
+    p = subprocess.run([OPENCODE, "run", "--pure", "--format", "json", "-m", key, PROMPT],
+                       capture_output=True, text=True, cwd="/tmp", timeout=300, stdin=subprocess.DEVNULL)
+    step0, starts, ends, out = None, [], [], 0
+    for line in p.stdout.splitlines():
+        try:
+            e = json.loads(line)
+        except Exception:
+            continue
+        part = e.get("part", {})
+        if e.get("type") == "step_start" and step0 is None:
+            step0 = e["timestamp"]
+        tm = part.get("time") or {}
+        if part.get("type") == "text" and part.get("text") and tm.get("start"):
+            starts.append(tm["start"]); ends.append(tm.get("end") or e["timestamp"])
+        if e.get("type") == "step_finish":
+            out += part.get("tokens", {}).get("output", 0)
+        if e.get("type") == "error":
+            return {"error": str(e.get("error"))[:200]}
+    gen = (max(ends) - min(starts)) / 1000 if starts else 0
+    if gen <= 0 or not out:
+        return {"error": (p.stderr or "nessun output")[-200:]}
+    return {"tps": round(out / gen, 1), "ttft_s": round((min(starts) - step0) / 1000, 2), "out": out}
+
+
+def measure_openrouter(orid, key, base="https://openrouter.ai/api/v1"):
+    body = {"model": orid, "stream": True, "messages": [{"role": "user", "content": PROMPT}],
+            "stream_options": {"include_usage": True}}
+    headers = {"Content-Type": "application/json", **({"Authorization": f"Bearer {key}"} if key else {})}
+    req = urllib.request.Request(f"{base}/chat/completions", data=json.dumps(body).encode(), headers=headers)
+    t0 = time.time(); first = last = None; usage = {}
+    with urllib.request.urlopen(req, timeout=300) as r:
+        for raw in r:
+            line = raw.decode(errors="ignore").strip()
+            if not line.startswith("data:") or line.endswith("[DONE]"):
+                continue
+            try:
+                e = json.loads(line[5:])
+            except Exception:
+                continue
+            if "error" in e:
+                return {"error": str(e["error"])[:200]}
+            for ch in e.get("choices", []):
+                if (ch.get("delta") or {}).get("content"):
+                    now = time.time(); first = first or now; last = now
+            usage = e.get("usage") or usage
+    reas = (usage.get("completion_tokens_details") or {}).get("reasoning_tokens") or 0
+    out = (usage.get("completion_tokens") or 0) - reas
+    if not first or last <= first or out <= 0:
+        return {"error": "nessun token"}
+    return {"tps": round(out / (last - first), 1), "ttft_s": round(first - t0, 2), "out": out}
+
+
+def measure(c, orkey):
+    for attempt in (1, 2):
+        try:
+            if c["measure"] == "opencode":
+                return measure_opencode(c["key"])
+            if c["measure"] == "openrouter" and orkey:
+                return measure_openrouter(c["orid"], orkey)
+            if c["measure"] == "kilo":
+                return measure_openrouter(c["orid"], None, "https://api.kilo.ai/api/gateway")
+            return None
+        except urllib.error.HTTPError as e:
+            if e.code != 429 or attempt == 2:  # i :free di OpenRouter vanno a raffiche: un secondo tentativo
+                return {"error": f"HTTP {e.code}"}
+            time.sleep(30)
+        except Exception as e:
+            return {"error": str(e)[:200]}
+
+
+# ---------- giro ----------
+
+def main():
+    args = set(sys.argv[1:])
+    os.makedirs(DIR, exist_ok=True)
+    state = json.load(open(STATE)) if os.path.exists(STATE) else {"seen": {}}
+    seen = state["seen"]
+
+    cands = collect()
+    # non-LLM (voce, embedding, guardrail) fuori prima di pagare una valutazione
+    skip = ("whisper", "embedding", "guard", "safety", "computer-use", "tts", "lyria", "imagen", "veo")
+    new = [c for k, c in cands.items() if k not in seen and not any(s in k for s in skip)]
+    res = codex_research(new, set(seen) | set(cands), "--no-research" not in args)
+    rated = {r["key"]: r for r in res.get("rated", [])}
+    for c in new:
+        c.update({k: v for k, v in rated.get(c["key"], {}).items() if k != "key"})
+    # i numeri di Artificial Analysis vincono su quelli trovati da Codex: sono misurati, non dichiarati
+    aa = aa_models()
+    for c in new:
+        m = aa_match(aa, c["key"], c.get("name", ""))
+        if m:
+            c["bench"] = aa_line(m)
+            if m.get("median_output_tokens_per_second"):
+                c["declared_tps"] = round(m["median_output_tokens_per_second"], 1)
+            # Codex caduto (quota ChatGPT finita, visto il 05/10): il tier si ricava dall'indice AA.
+            # Soglie dalla classifica del 05/10: Muse Spark 48, GLM 5.3 45 = top; Nemotron Ultra 23 = good.
+            ii = (m.get("evaluations") or {}).get("artificial_analysis_intelligence_index")
+            if not c.get("tier") and ii is not None:
+                c["tier"] = "top" if ii >= 40 else "good" if ii >= 20 else "weak"
+    for a in res.get("announcements", []):
+        if a["key"] not in seen and a["key"] not in cands:
+            a["measure"] = None
+            a["where"] += " (serve account)" if a.get("needs_login") else ""
+            new.append(a)
+
+    # la chiave OpenRouter è di Cifra, solo per i prodotti (Attilio, 18/10): i :free non si misurano più
+    orkey = None
+    # si misura anche "unknown": misurare costa una chiamata gratis, e Muse Spark era unknown per Codex
+    tomeasure = [c for c in new if c.get("tier") in ("top", "good", "unknown") and c.get("active", True)
+                 and c.get("measure")]
+    if "--no-measure" not in args and tomeasure:
+        with cf.ThreadPoolExecutor(4) as ex:
+            for c, m in zip(tomeasure, ex.map(lambda c: measure(c, orkey), tomeasure)):
+                c["measured"] = m
+
+    def passes(c):
+        if c.get("active") is False or c.get("tier") not in ("top", "good", "unknown"):
+            return False
+        m = c.get("measured") or {}
+        if m.get("tps"):
+            return m["tps"] > MIN_TPS
+        # un "unknown" passa solo misurato: senza benchmark né misura non c'è niente da dire
+        return c.get("tier") != "unknown" and (c.get("declared_tps") or 0) > MIN_TPS
+
+    news = [c for c in new if passes(c)]
+    news.sort(key=lambda c: (c.get("tier") != "top", -((c.get("measured") or {}).get("tps") or c.get("declared_tps") or 0)))
+
+    def line(c, full=True):
+        m = c.get("measured") or {}
+        speed = (f"{m['tps']:.0f} tps misurati, primo token {m['ttft_s']} s" if m.get("tps")
+                 else f"{c.get('declared_tps'):.0f} tps dichiarati")
+        tier = {"unknown": "benchmark ignoti"}.get(c.get("tier"), c.get("tier"))
+        s = f"- {c['name']} ({tier}): {speed}. {c['where']}: {c['how']}"
+        return s + (f" — {c['bench']}" if full and c.get("bench") else "") + (f" — {c['url']}" if full and c.get("url") else "")
+
+    rep = [f"# Modelli gratis — {TODAY}", "", f"Candidati totali: {len(cands)} · nuovi valutati: {len(new)} · novità: {len(news)}", "",
+           "## Novità (tier top/good, oltre %d tps)" % MIN_TPS, *(line(c) for c in news or []), "" if news else "Nessuna.", "",
+           "## Tutti i nuovi valutati", "| key | tier | dichiarati | misurati | ttft | bench |", "|---|---|---|---|---|---|"]
+    for c in new:
+        m = c.get("measured") or {}
+        rep.append(f"| {c['key']} | {c.get('tier', '-')} | {c.get('declared_tps') or '-'} | "
+                   f"{m.get('tps') or m.get('error', '-') if m else '-'} | {m.get('ttft_s', '-') if m else '-'} | "
+                   f"{(c.get('bench') or '').replace('|', '/')} |")
+    open(REPORT, "w").write("\n".join(rep) + "\n")
+
+    if "--dry" not in args:
+        # senza voto (Codex caduto) non si segna come visto: domani si riprova
+        # errore di misura (429, timeout) su un candidato buono: si riprova domani
+        retry = lambda c: c.get("tier") != "weak" and "error" in (c.get("measured") or {})
+        for c in (c for c in new if c.get("tier") and not retry(c)):
+            seen[c["key"]] = {"first": TODAY, "tier": c.get("tier"), "declared_tps": c.get("declared_tps"),
+                              "tps": (c.get("measured") or {}).get("tps"), "reported": c in news}
+        json.dump(state, open(STATE, "w"), indent=1, ensure_ascii=False)
+
+    if news:
+        print("Modelli gratis nuovi e veloci:")
+        print("\n".join(line(c, full=False) for c in news))
+        print(f"Report: {REPORT}")
+
+
+if __name__ == "__main__":
+    main()

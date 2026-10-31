@@ -1,0 +1,42 @@
+#!/usr/bin/env bash
+# pc-state: com'e' il PC di casa, per la tray e per chi deve decidere se mandarci lavoro.
+# Stampa una riga JSON:
+#   {"pc":"dorme|chiuso|acceso|lavora","perche":"...","mac":4.2,"soglia":1.5,"avviso":true}
+# avviso = Mac sopra la soglia di offload e PC che dorme (cioe' il lavoro pesante sta qui).
+# Non sveglia il PC e non lo tiene sveglio: la porta 22 si guarda con nc, e l'ssh che legge lo
+# stato di wf-autosleep e' un `type` di autosleep.now: dura decine di millisecondi, e
+# wf-autosleep conta una sessione solo se e' aperta nell'istante in cui controlla (una volta al
+# minuto). Un powershell al posto di `type` dura 2 s: a un giro al minuto avrebbe azzerato il
+# conteggio del sonno una volta su due ogni 20 minuti.
+set -uo pipefail
+# Dati del PC: solo da ~/.config/winfleet/config.env (fuori da ogni repo). Se il file o la variabile
+# mancano si esce con 3 e un messaggio, invece di proseguire con un host vuoto.
+wfconf() {
+  local v; v="$(set +eu; . "$HOME/.config/winfleet/config.env" >/dev/null 2>&1; printf '%s' "${!1:-}")"
+  [ -n "$v" ] || { echo "${0##*/}: manca $1 in ~/.config/winfleet/config.env" >&2; return 3; }
+  printf '%s' "$v"
+}
+HOST="$(wfconf HOST_SSH)" || exit 3
+LAN="$(wfconf HOST_LAN)" || exit 3
+MAX="${OFFLOAD_MAX_MAC:-1.5}"
+mac=$(/usr/sbin/sysctl -n vm.loadavg hw.ncpu | awk 'NR==1{l=$2} NR==2{printf "%.2f", l/$1}')
+pc=dorme; why=""
+if nc -z -G 2 "${HOST#*@}" 22 2>/dev/null; then
+  pc=acceso
+  last=$(ssh -o BatchMode=yes -o ConnectTimeout=3 "$HOST" "type C:\\winfleet\\autosleep.now" 2>/dev/null | tr -d '\r' | iconv -c -f cp850 -t utf-8)
+  case "$last" in *"in uso: "*) pc=lavora; why="${last#*in uso: }" ;; *) why="${last#* * }" ;; esac
+elif nc -z -G 2 "$LAN" 47989 2>/dev/null; then
+  # Sveglio (Sunshine risponde in LAN) ma ssh no. Il 25/10 non era il firewall: il Tailscale del PC era
+  # sloggato. Lo dice Tailscale stesso, che sa se il PC e' collegato.
+  pc=chiuso
+  online=$(/Applications/Tailscale.app/Contents/MacOS/Tailscale status --json 2>/dev/null \
+    | jq -r --arg ip "${HOST#*@}" '.Peer[]? | select(.TailscaleIPs[0] == $ip) | .Online')
+  case "$online" in
+    false) why="sveglio, ma il Tailscale del PC e' scollegato: rifare il login sul PC" ;;
+    true) why="sveglio e su Tailscale, ma ssh non risponde" ;;
+    *) why="sveglio, ma ssh non risponde" ;;
+  esac
+fi
+avviso=$(awk -v l="$mac" -v m="$MAX" -v p="$pc" 'BEGIN{print (l > m && (p == "dorme" || p == "chiuso")) ? "true" : "false"}')
+jq -nc --arg pc "$pc" --arg why "$why" --argjson mac "$mac" --argjson soglia "$MAX" --argjson avviso "$avviso" \
+  '{pc:$pc, perche:$why, mac:$mac, soglia:$soglia, avviso:$avviso}'

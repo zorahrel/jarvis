@@ -1,0 +1,116 @@
+#!/usr/bin/env -S python3 -I
+# Ferma il commit di una sessione Claude Code sul branch di un'altra sessione.
+#
+# Perché esiste: il 05/08 su topics-app i commit di una sessione sono finiti sul branch
+# di un'altra, insieme alle sue cancellazioni in stage. Il 22/10 su claude-usage-hub le
+# modifiche al router di una sessione stavano per finire su tray/menu-essenziale, il
+# branch di un'altra che Attilio stava provando. Da dentro una sessione il checkout
+# condiviso non si vede; il branch su cui sta per committare sì.
+#
+# Il primo commit di una sessione su un branch lo fa suo (`branch.<b>.claudeSession`
+# nella config del repo, valida per tutti i worktree). Un'altra sessione che ci committa
+# viene fermata e le si dice di chi è e cosa fare. Il branch di default resta di tutti.
+# Vale solo per le sessioni interattive (app desktop e terminale). Fuori da Claude Code
+# (Attilio a mano, Codex, jcode) non ci sono variabili; i giri headless (`claude -p` dei
+# cron di OpenClaw e del turno notturno) hanno un id nuovo a ogni giro, e la seconda
+# notte verrebbero fermati sul branch che hanno aperto loro: non si controllano.
+#
+# Lo chiama ~/.config/git/hooks/pre-commit prima dell'hook del repo.
+# BRANCH_GUARD=off salta il controllo per un commit. Barra: setup/shared/branch-guard-test.sh
+import glob
+import json
+import os
+import subprocess
+import sys
+import time
+
+PROJECTS = os.path.expanduser("~/.claude/projects")
+
+
+def git(*args):
+    r = subprocess.run(["git", *args], capture_output=True, text=True)
+    return r.stdout.strip() if r.returncode == 0 else ""
+
+
+def describe(owner, transcript_id):
+    """Titolo, cartella e ultima attività della sessione che ha il branch."""
+    title, where, ago = "", "", ""
+    if transcript_id:
+        # Una sessione che cambia cartella lascia una trascrizione per cartella, con lo
+        # stesso id: quella viva è la più recente, e la cartella attuale sta in fondo.
+        files = glob.glob(f"{PROJECTS}/*/{transcript_id}.jsonl")
+        if files:
+            f = max(files, key=os.path.getmtime)
+            ago = f"ultima attività {int((time.time() - os.path.getmtime(f)) / 60)} min fa"
+            for d in sorted({os.path.dirname(x) for x in files}, key=lambda d: d != os.path.dirname(f)):
+                try:
+                    with open(os.path.join(d, transcript_id, "custom-title.json")) as t:
+                        title = json.load(t).get("customTitle", "")
+                    break
+                except (OSError, ValueError):
+                    continue
+            with open(f, "rb") as t:
+                t.seek(max(0, os.path.getsize(f) - 65536))
+                tail = t.read().decode(errors="replace").splitlines()
+            for line in reversed(tail):
+                if '"cwd"' in line:
+                    try:
+                        where = json.loads(line).get("cwd", "").replace(os.path.expanduser("~"), "~")
+                        break
+                    except ValueError:
+                        continue
+        else:
+            ago = "trascrizione non trovata: probabilmente chiusa"
+    name = f"«{title}»" if title else "senza titolo"
+    facts = ", ".join(x for x in (owner, ago, where and f"in {where}") if x)
+    return f"{name} ({facts})"
+
+
+INTERACTIVE = ("claude-desktop", "cli")
+
+
+def main():
+    me = os.environ.get("CLAUDE_CODE_HOST_SESSION_ID") or os.environ.get("CLAUDE_CODE_SESSION_ID")
+    if not me or os.environ.get("BRANCH_GUARD") == "off":
+        return 0
+    if os.environ.get("CLAUDE_CODE_ENTRYPOINT") not in INTERACTIVE:
+        return 0
+    branch = git("symbolic-ref", "--quiet", "--short", "HEAD")
+    if not branch:  # HEAD staccato: rebase, bisect, prove su un commit
+        return 0
+    default = git("symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD").removeprefix("origin/")
+    if branch in ("main", "master", default):
+        return 0
+
+    key = f"branch.{branch}"
+    owner = git("config", "--get", f"{key}.claudeSession")
+    if owner == me:
+        return 0
+    if not owner:
+        # Se la config è bloccata da un altro git, il branch resta libero: meglio un
+        # proprietario mancante che un commit fermato per un lock.
+        git("config", f"{key}.claudeSession", me)
+        git("config", f"{key}.claudeTranscript", os.environ.get("CLAUDE_CODE_SESSION_ID", ""))
+        return 0
+
+    who = describe(owner, git("config", "--get", f"{key}.claudeTranscript"))
+    repo = os.path.basename(git("rev-parse", "--show-toplevel")) or "repo"
+    print(f"""
+[branch-guard] Commit fermato: il branch «{branch}» è della sessione Claude {who}.
+Committare qui mescolerebbe il tuo lavoro col suo. Scegli una strada:
+  1. Lavoro tuo, diverso dal suo: portalo su un branch tuo, in un worktree tuo, senza toccare i suoi file:
+       git stash push -- <i tuoi file> && git worktree add ../{repo}-<nome> -b <nome> main && git -C ../{repo}-<nome> stash pop
+  2. Il tuo lavoro serve anche a lei: scrivile una volta con SendMessage (to = {owner}, o il titolo come lo mostra ListAgents) e accordatevi.
+  3. È lo stesso compito ripreso da te e quella sessione è chiusa: adotta il branch e ricommitta:
+       git config {key}.claudeSession {me}
+""", file=sys.stderr)
+    return 1
+
+
+if __name__ == "__main__":
+    # È un coordinamento, non un gate di sicurezza: se si rompe lui, i commit passano.
+    try:
+        sys.exit(main())
+    except Exception as e:  # noqa: BLE001
+        print(f"[branch-guard] errore interno, commit lasciato passare: {e}", file=sys.stderr)
+        sys.exit(0)

@@ -1,0 +1,540 @@
+#!/usr/bin/env python3
+"""Riavvio veloce del gateway OpenClaw senza perdere lavoro.
+
+OpenClaw non riprende i sottoagenti che un riavvio interrompe: li segna interrupted e poi
+subagent-error, e nessuno li rilancia (misurato 15/10: 7 su 7 fermi). Aspettare che finiscano non
+serve, durano 30-80 minuti (--safe ha atteso 10 minuti e li ha interrotti lo stesso). Quindi:
+
+  oc-restart                 NON taglia turni: se c'e' lavoro in corso (sottoagenti, run cron, chat che
+                             risponde) si stacca in background e riavvia da solo appena il gateway e'
+                             libero (max 6 h, poi riavvia comunque con la ripresa); se e' libero riavvia
+                             subito. Chi lo chiama da dentro un turno non resta bloccato: il suo turno
+                             finisce e il riavvio parte dopo.
+  oc-restart --now           riavvia adesso come prima (taglia i turni vivi e li riprende): solo per un
+                             gateway rotto (WhatsApp bloccato, heartbeat morto)
+  oc-restart --since EPOCH   riavvia solo se il gateway e' partito prima di EPOCH; se e' gia' ripartito dopo,
+                             stampa «già caricato: gateway partito alle HH:MM, dopo il riferimento» ed esce 0
+                             senza riavviare (vale anche nel processo in attesa). Uso tipico per chi riavvia solo
+                             per caricare una modifica (plugin, config):
+                               oc-restart --since $(stat -f %m <file cambiato>)
+                             Senza --since il riferimento e' l'istante della richiesta.
+  oc-restart --resume-since N  solo la ripresa: sottoagenti finiti male negli ultimi N minuti
+  oc-restart --dry-run       dice cosa farebbe e cosa blocca, non riavvia e non scrive a nessuno
+
+La ripresa e' un messaggio interno alla sessione del canale che li aveva lanciati (senza --deliver):
+e' quell'agente a ricontrollare git/worktree e a rilanciarli, con il contesto che ha gia'."""
+import json, math, os, re, sqlite3, subprocess, sys, time, urllib.request
+from pathlib import Path
+
+DB = Path.home() / ".openclaw/state/openclaw.sqlite"
+LOGDIR = Path("/tmp/openclaw")
+STATE = Path.home() / ".claude/jarvis/state"
+LABEL = "ai.openclaw.gateway"
+UP_S = 240                    # tempo concesso a gateway e WhatsApp per tornare su
+BAD_END = ("subagent-error", "subagent-killed")
+OC_CONFIG = Path.home() / ".openclaw/openclaw.json"
+DISCORD_AGENT = {"default": "main", "visione": "gtm"}  # account Discord -> agente che lo serve
+ACTIVE_DAYS = 3               # canali con una sessione viva negli ultimi giorni
+
+
+# Con completionTarget «parent» il record del sottoagente sta dentro parentCompletion (81 righe al 22/10):
+# il filtro lo prendeva per una riga di servizio e Note spese, morto nel riavvio delle 12:56, non e' ripartito.
+STATUS = ("coalesce(json_extract(payload_json,'$.execution.status'), "
+          "json_extract(payload_json,'$.parentCompletion.execution.status'))")
+ENDED = ("coalesce(json_extract(payload_json,'$.execution.endedAt'), "
+         "json_extract(payload_json,'$.parentCompletion.execution.endedAt'), created_at)")
+
+
+def payload(raw):
+    d = json.loads(raw)
+    return d.get("parentCompletion") or d
+
+
+def why_failed(p):
+    return (((p.get("execution") or {}).get("outcome") or {}).get("error") or "")[:120]
+
+
+def rows(sql, args=()):
+    con = sqlite3.connect(f"file:{DB}?mode=ro", uri=True, timeout=10)
+    try:
+        return [payload(r[0]) | {"_run": r[1], "_req": r[2]} for r in con.execute(sql, args)]
+    finally:
+        con.close()
+
+
+def running():
+    return rows("select payload_json, run_id, requester_session_key from subagent_runs "
+                f"where {STATUS} not in ('terminal')")
+
+
+def lost_since(ms):
+    """Finiti male (errore/ucciso) o mai consegnati, partiti o chiusi dopo ms."""
+    out = []
+    for p in rows("select payload_json, run_id, requester_session_key from subagent_runs "
+                  f"where {ENDED} >= ?", (ms,)):
+        ex, dl = p.get("execution") or {}, p.get("delivery") or {}
+        if not p.get("label"):
+            continue  # righe di servizio senza compito proprio
+        bad = p.get("endedReason") in BAD_END or ex.get("status") == "interrupted"
+        undelivered = ex.get("status") == "terminal" and dl.get("status") not in ("delivered", None)
+        if bad or undelivered:
+            out.append(p)
+    return out
+
+
+TERMINAL = (None, "done", "failed", "interrupted", "killed", "timeout")  # isTerminalSessionStatus di OpenClaw
+REPLY_WAIT_S = 120
+
+
+def replying():
+    """Chat con un turno in corso (sottoagenti e cron esclusi: per loro c'e' la ripresa).
+    Un riavvio a meta' risposta lascia la consegna «incerta» e alla prossima domanda OpenClaw manda
+    «I couldn't confirm whether my previous reply reached this chat» (22/10, 16:30 dopo un oc-restart)."""
+    try:
+        out = subprocess.run(["openclaw", "sessions", "--active", "15", "--all-agents", "--json"],
+                             capture_output=True, text=True, timeout=60).stdout
+    except subprocess.TimeoutExpired:
+        # 25/10 14:05 e 14:43: il timeout uccideva il processo in attesa e la richiesta andava persa in silenzio.
+        print(f"{time.strftime('%H:%M:%S')} openclaw sessions oltre 60 s: lo conto come occupato, riprovo al giro dopo", flush=True)
+        return ["sessions (timeout)"]
+    try:
+        d = json.loads(out)
+    except ValueError:
+        return []
+    ss = d.get("sessions", []) if isinstance(d, dict) else d
+    return [f"{s['key']} (aggiornata {age_text(s['ageMs'])} fa)" if s.get("ageMs") is not None else s["key"]
+            for s in ss if s.get("status") not in TERMINAL
+            and ":subagent:" not in s.get("key", "") and ":cron:" not in s.get("key", "")]
+
+
+def age_text(ms):
+    """Da quanto dura una cosa in corso, per chi legge --dry-run: «45 min», «2 h 51 min»."""
+    mins = max(0, int(ms // 60000))
+    return f"{mins} min" if mins < 60 else f"{mins // 60} h {mins % 60:02d} min"
+
+
+def wait_replies(dry):
+    end = time.time() + REPLY_WAIT_S
+    busy = replying()
+    while busy and not dry and time.time() < end:
+        time.sleep(5)
+        busy = replying()
+    if busy:
+        print(f"risposta ancora in corso in {', '.join(busy)}" + ("" if dry else f": riavvio dopo {REPLY_WAIT_S} s lo stesso"))
+
+
+IDLE_QUIET_S = 20            # gateway libero per tanto di fila prima di riavviare
+IDLE_POLL_S = 5
+IDLE_MAX_WAIT_S = 6 * 3600
+
+
+def active_work():
+    """Il contatore del gateway stesso: richieste radice (turni di chat), run cron e scritture di sessione in volo.
+    `openclaw sessions` non lo vede: durante un turno lo status salvato resta vuoto (verifier 23/10: --dry-run
+    diceva «nessuna» mentre un canale Discord faceva tool call)."""
+    try:
+        r = subprocess.run(["openclaw", "gateway", "call", "status", "--json"], capture_output=True, text=True, timeout=90)
+    except subprocess.TimeoutExpired:
+        # 25/10: il timeout non gestito uccideva in silenzio il processo in attesa. Come per replying():
+        # non so se e' libero, quindi e' occupato e riprovo al giro dopo.
+        print(f"{time.strftime('%H:%M:%S')} openclaw gateway call status oltre 90 s: lo conto come occupato, riprovo al giro dopo", flush=True)
+        return [("gateway", "status (timeout)")]
+    try:
+        w = json.loads(r.stdout)["shutdownBudget"]["activeWork"]
+    except (ValueError, KeyError, TypeError):
+        return []  # gateway che non risponde: e' gia' rotto, il riavvio non taglia niente
+    return [("gateway", f"{k} {w[k]}") for k in ("rootRequests", "cronRuns", "sessionMutations") if w.get(k)]
+
+
+def subagent_text(p, now_ms):
+    """Etichetta e da quanto e' vivo: un sottoagente di 3 ore che committa e uno fermo dalla creazione si
+    distinguono solo dall'eta' (28/10: il Lavoro T3 da 171 min teneva il gateway occupato da ore, lavoro vero)."""
+    started = (p.get("execution") or {}).get("startedAt") or p.get("createdAt")
+    label = p.get("label", "?")
+    return f"{label} (da {age_text(now_ms - started)})" if started else label
+
+
+def blockers():
+    """Lavoro che un riavvio taglierebbe: turni in volo per il gateway, sottoagenti vivi, run cron, chat che risponde."""
+    out = active_work()
+    now_ms = time.time() * 1000
+    out += [("sottoagente", subagent_text(p, now_ms)) for p in running()]
+    out += [("chat", k) for k in replying()]
+    con = sqlite3.connect(f"file:{DB}?mode=ro", uri=True, timeout=10)
+    try:
+        for job, started in con.execute("select job_id, started_at_ms from cron_run_receipts where status='running' "
+                                        "and started_at_ms > ?", ((time.time() - 7200) * 1000,)):
+            out.append(("cron", f"{job[:8]} (da {age_text(now_ms - started)})"))
+    finally:
+        con.close()
+    return out
+
+
+def wait_idle(max_wait=IDLE_MAX_WAIT_S):
+    """Aspetta gateway libero per IDLE_QUIET_S di fila, poi ricontrolla un'ultima volta (un ciclo di blockers()
+    dura ~15 s: un turno puo' partire nel frattempo). True = libero, False = scaduto il tempo."""
+    end, quiet_since = time.time() + max_wait, None
+    while time.time() < end:
+        b = blockers()
+        if b:
+            quiet_since = None
+        elif quiet_since is None:
+            quiet_since = time.time()
+        elif time.time() - quiet_since >= IDLE_QUIET_S:
+            if not blockers():
+                return True
+            quiet_since = None
+        time.sleep(IDLE_POLL_S)
+    return False
+
+
+WAITER_PID = STATE / "oc-restart-waiter.pid"
+# Riferimento delle richieste rimandate (epoch): il processo in attesa non riavvia se il gateway e' partito dopo
+# il PIU' RECENTE. Con il solo istante della prima, una seconda richiesta fatta dopo un riavvio spontaneo andava persa.
+REQUESTED_FILE = STATE / "oc-restart-waiter.requested"
+
+
+def read_requested():
+    try:
+        v = float(REQUESTED_FILE.read_text())
+    except (OSError, ValueError):
+        return 0.0
+    return v if math.isfinite(v) else 0.0
+
+
+def note_request(ref, merge):
+    """Registra il riferimento di una richiesta rimandata; con un processo in attesa gia' vivo tiene il massimo."""
+    STATE.mkdir(parents=True, exist_ok=True)
+    tmp = REQUESTED_FILE.with_name(REQUESTED_FILE.name + ".tmp")
+    tmp.write_text(str(max(read_requested(), ref) if merge else ref))
+    os.replace(tmp, REQUESTED_FILE)
+
+
+def already_loaded(ref):
+    """True (e lo dice) se il gateway e' partito dopo ref: una modifica da caricare e' gia' stata caricata."""
+    started = gateway_started_at() if ref else None
+    if started and started > ref:
+        print(f"già caricato: gateway partito alle {time.strftime('%H:%M', time.localtime(started))}, dopo il riferimento")
+        return True
+    return False
+
+
+def waiter_alive():
+    """Un solo processo in attesa: due --wait-idle riavvierebbero uno dopo l'altro."""
+    try:
+        pid = int(WAITER_PID.read_text())
+        os.kill(pid, 0)
+        return pid
+    except (OSError, ValueError):
+        return 0
+
+
+def release_waiter():
+    """Libera il pid file, ma solo se e' ancora il mio: dopo che l'ho liberato una richiesta nuova puo' aver lanciato
+    un altro processo in attesa, e il suo pid non va cancellato da me."""
+    try:
+        if int(WAITER_PID.read_text()) == os.getpid():
+            WAITER_PID.unlink(missing_ok=True)
+    except (OSError, ValueError):
+        pass
+
+
+def log_request(mode, busy):
+    """Chi chiede un riavvio e quando: la catena dei processi padre, per trovare chi lo fa."""
+    chain, pid = [], os.getppid()
+    for _ in range(6):
+        r = subprocess.run(["ps", "-o", "ppid=,command=", "-p", str(pid)], capture_output=True, text=True).stdout.strip()
+        if not r:
+            break
+        ppid, _, cmd = r.partition(" ")
+        chain.append(cmd.strip()[:90])
+        pid = int(ppid) if ppid.strip().isdigit() else 0
+        if pid <= 1:
+            break
+    STATE.mkdir(parents=True, exist_ok=True)
+    with open(STATE / "oc-restart-requests.jsonl", "a") as f:
+        f.write(json.dumps({"t": time.strftime("%Y-%m-%dT%H:%M:%S"), "mode": mode, "bloccanti": len(busy), "chain": chain}) + "\n")
+
+
+def gateway_pid():
+    out = subprocess.run(["launchctl", "print", f"gui/{os.getuid()}/{LABEL}"], capture_output=True, text=True).stdout
+    m = re.search(r"^\s*pid = (\d+)", out, re.M)
+    return m and m.group(1)
+
+
+def gateway_started_at():
+    """Epoch di avvio del processo gateway attuale (da etime di ps, indipendente dalla lingua), None se non c'e'."""
+    pid = gateway_pid()
+    if not pid:
+        return None
+    et = subprocess.run(["ps", "-o", "etime=", "-p", pid], capture_output=True, text=True).stdout.strip()
+    m = re.fullmatch(r"(?:(?:(\d+)-)?(\d+):)?(\d+):(\d+)", et)
+    if not m:
+        return None
+    d, h, mi, s = (int(x or 0) for x in m.groups())
+    return time.time() - (d * 86400 + h * 3600 + mi * 60 + s)
+
+
+def whatsapp_listening_after(ts):
+    """True se un log di oggi dice «Listening for WhatsApp» dopo ts (epoch)."""
+    stamp = time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime(ts))
+    for f in sorted(LOGDIR.glob(f"openclaw-{time.strftime('%Y-%m-%d')}*.log")):
+        with open(f, errors="replace") as fh:
+            for line in fh:
+                if "Listening for WhatsApp" in line:
+                    m = re.search(r'"time":"([^".+]+)', line)
+                    if m and m.group(1) >= stamp:
+                        return True
+    return False
+
+
+def restart():
+    old, t0 = gateway_pid(), time.time()
+    try:
+        r = subprocess.run(["openclaw", "gateway", "restart", "--force", "--json"], capture_output=True, text=True, timeout=180)
+        if r.returncode:
+            # esce 1 anche quando il riavvio c'e' stato: la sua sonda da 3 s scade su un gateway che
+            # sta ancora salendo (15/10). Decide il pid nuovo qui sotto, non questo exit code.
+            print(f"restart --force: exit {r.returncode}, controllo il pid")
+    except subprocess.TimeoutExpired:
+        # 24/10 02:48, Mac a 4-8 per core: il comando ha superato i 180 s ma il gateway era ripartito.
+        # Prima lo script cadeva qui e saltava la ripresa dei sottoagenti interrotti.
+        print("restart --force: oltre 180 s, controllo il pid")
+    end, pid = time.time() + UP_S, None
+    while time.time() < end:
+        time.sleep(3)
+        pid = gateway_pid()
+        if pid and pid != old and whatsapp_listening_after(t0):
+            print(f"gateway su (pid {old} -> {pid}) e WhatsApp in ascolto in {time.time() - t0:.0f} s")
+            return t0
+    sys.exit(f"dopo {UP_S} s: pid {pid} (era {old}), WhatsApp in ascolto: {whatsapp_listening_after(t0)}")
+
+
+def discord_get(token, path):
+    req = urllib.request.Request("https://discord.com/api/v10" + path, headers={
+        "Authorization": f"Bot {token}", "User-Agent": "DiscordBot (jarvis-oc-restart, 1.0)"})
+    with urllib.request.urlopen(req, timeout=20) as r:
+        return json.load(r)
+
+
+def snowflake(ms):
+    return str((int(ms) - 1420070400000) << 22)
+
+
+def resolve_token(tok):
+    """Stringa o SecretRef del Keychain ({"provider": "keychain", "id": "servizio/account"}). Dal passaggio dei
+    token al Keychain discord_missed saltava in silenzio ogni account: «0 messaggi» anche quando ce n'erano."""
+    if isinstance(tok, str):
+        return tok
+    if isinstance(tok, dict) and tok.get("provider") == "keychain" and "/" in tok.get("id", ""):
+        service, _, account = tok["id"].partition("/")
+        r = subprocess.run(["/usr/bin/security", "find-generic-password", "-s", service, "-a", account, "-w"],
+                           capture_output=True, text=True)
+        return r.stdout.strip() if r.returncode == 0 else None
+    return None
+
+
+def discord_missed(since_ms, until_ms):
+    """Messaggi umani arrivati su Discord a gateway giu' e mai registrati nella sessione del canale.
+    Discord non riconsegna gli eventi persi: senza questo un messaggio scritto durante il riavvio
+    resta senza risposta. Ritorna {session_key: [righe]}."""
+    accounts = ((json.loads(OC_CONFIG.read_text()).get("channels") or {}).get("discord") or {}).get("accounts") or {}
+    con = sqlite3.connect(f"file:{DB}?mode=ro", uri=True, timeout=10)
+    out = {}
+    try:
+        cutoff = (time.time() - ACTIVE_DAYS * 86400) * 1000
+        for acc, agent in DISCORD_AGENT.items():
+            token = resolve_token((accounts.get(acc) or {}).get("token"))
+            if not token:
+                print(f"  discord {acc}: token non leggibile, canali non controllati")
+                continue
+            keys = [r[0] for r in con.execute(
+                "select session_key from session_state_heads where agent_id=? and session_key like ? and updated_at>=?",
+                (agent, f"agent:{agent}:discord:channel:%", cutoff))]
+            for key in keys:
+                chan = key.rsplit(":", 1)[-1]
+                try:
+                    msgs = discord_get(token, f"/channels/{chan}/messages?limit=50&after={snowflake(since_ms)}")
+                except Exception as e:
+                    print(f"  discord {chan}: lettura fallita ({e})")
+                    continue
+                # visto = gia' entrato nella coda di ingresso di quell'account (event_id = id del messaggio)
+                ids = [m["id"] for m in msgs]
+                seen = {r[0] for r in con.execute(
+                    f"select event_id from channel_ingress_events where account_id=? and event_id in ({','.join('?' * len(ids))})",
+                    (acc, *ids))} if ids else set()
+                lines = []
+                for m in sorted(msgs, key=lambda m: m["id"]):
+                    if (m.get("author") or {}).get("bot"):
+                        continue
+                    ts = (int(m["id"]) >> 22) + 1420070400000
+                    if ts > until_ms or m["id"] in seen:
+                        continue
+                    who = (m.get("author") or {}).get("global_name") or (m.get("author") or {}).get("username", "?")
+                    lines.append(f"[{time.strftime('%H:%M', time.localtime(ts / 1000))}] {who} (<@{(m.get('author') or {}).get('id')}>): {m.get('content', '')[:1500]}")
+                if lines:
+                    out[key] = lines
+    finally:
+        con.close()
+    return out
+
+
+def discord_catchup(since_ms, until_ms, dry):
+    missed = discord_missed(since_ms, until_ms)
+    print(f"Discord: {sum(len(v) for v in missed.values())} messaggi arrivati a gateway giu' in {len(missed)} canali")
+    procs = []
+    for key, lines in missed.items():
+        msg = ("Nota di servizio (riavvio del gateway): mentre era giu' in questo canale sono arrivati questi "
+               "messaggi, che non hai ricevuto. Trattali come appena arrivati, con le regole di questo canale "
+               "(menzioni comprese): se non ti riguardano, NO_REPLY. La tua risposta finale arriva nel canale cosi' "
+               "com'e': scrivila per chi e' nel canale e non mandarla anche con message(send), senza riepiloghi per me "
+               "(22/10: un riepilogo in inglese e' finito in #canale-cliente).\n\n" + "\n".join(lines))
+        print(f"  {key}: {len(lines)}")
+        if dry:
+            continue
+        out = STATE / f"oc-restart-discord-{time.strftime('%Y%m%d-%H%M%S')}-{key.rsplit(':', 1)[-1]}.log"
+        STATE.mkdir(parents=True, exist_ok=True)
+        # --deliver: la risposta deve arrivare nel canale come una normale
+        procs.append(subprocess.Popen(["sh", "-c", 'for i in 1 2 3; do openclaw agent --session-key "$1" --message "$2" '
+                                       '--deliver --timeout 1800 --json && exit 0; echo "tentativo $i fallito"; sleep 30; done; exit 1',
+                                       "oc-restart", key, msg],
+                                      stdout=open(out, "w"), stderr=subprocess.STDOUT, start_new_session=True))
+        print(f"  esito in {out}")
+    return procs
+
+
+def resume_message(items, why):
+    """Testo della nota di servizio al genitore; usato anche da subagent-watchdog."""
+    lines = [f"- «{p['label']}» (run {p['_run'][:8]}, partito alle "
+             f"{time.strftime('%H:%M', time.localtime(p.get('createdAt', 0) / 1000))}, "
+             f"{p.get('endedReason') or (p.get('execution') or {}).get('status')}, "
+             f"consegna {(p.get('delivery') or {}).get('status')})" + (f": {why_failed(p)}" if why_failed(p) else "")
+             for p in items]
+    return (f"Nota di servizio ({why}): questi tuoi sottoagenti sono stati "
+            "interrotti prima di finire, o il loro resoconto non e' arrivato.\n" + "\n".join(lines) +
+            "\n\nPer ciascuno: controlla cosa c'e' gia' (git, worktree, file), poi rilancialo con lo stesso "
+            "compito dicendogli di riprendere da li', non da zero. Se risulta gia' finito, riporta l'esito "
+            "nel canale come faresti normalmente. Se l'errore accanto dice che rilanciarlo uguale fallirebbe "
+            "di nuovo (quota, credito, lo stesso bug), non rilanciarlo: scrivilo nel canale. "
+            "Non serve rispondere a questa nota.")
+
+
+def resume(lost, when, dry):
+    by_req = {}
+    for p in lost:
+        by_req.setdefault(p["_req"], []).append(p)
+    procs = []
+    for req, items in by_req.items():
+        msg = resume_message(items, f"riavvio del gateway delle {when}")
+        print(f"{req}: {len(items)} da riprendere")
+        if dry:
+            continue
+        # l'esito va su file: il 15/10 una nota spedita a gateway ancora in salita e' sparita in silenzio
+        out = STATE / f"oc-restart-resume-{time.strftime('%Y%m%d-%H%M%S')}-{req.rsplit(':', 1)[-1]}.log"
+        STATE.mkdir(parents=True, exist_ok=True)
+        procs.append(subprocess.Popen(["sh", "-c", 'for i in 1 2 3; do openclaw agent --session-key "$1" --message "$2" '
+                                       '--timeout 1800 --json && exit 0; echo "tentativo $i fallito"; sleep 30; done; exit 1',
+                                       "oc-restart", req, msg],
+                                      stdout=open(out, "w"), stderr=subprocess.STDOUT, start_new_session=True))
+        print(f"  esito in {out}")
+    return procs
+
+
+def main():
+    try:
+        return run()
+    finally:
+        if "--wait-idle" in sys.argv:
+            release_waiter()  # anche su errore o uscita anticipata: il pid file non resta a un processo morto
+
+
+def run():
+    a = sys.argv[1:]
+    # un'opzione sconosciuta (--help, -h, refusi) non deve riavviare: il 15/10 «--help» ha riavviato davvero
+    unknown = [x for x in a if x.startswith("-") and x not in ("--dry-run", "--resume-since", "--now", "--wait-idle", "--since")]
+    if unknown:
+        print(__doc__)
+        sys.exit(0 if set(unknown) <= {"-h", "--help"} else 2)
+    dry = "--dry-run" in a
+    if "--resume-since" in a:
+        mins = float(a[a.index("--resume-since") + 1])
+        lost = lost_since((time.time() - mins * 60) * 1000)
+        print(f"{len(lost)} sottoagenti da riprendere degli ultimi {mins:g} min")
+        resume(lost, time.strftime("%H:%M"), dry)
+        discord_catchup((time.time() - mins * 60) * 1000, time.time() * 1000, dry)
+        return 0
+    now_mode, wait_mode = "--now" in a, "--wait-idle" in a
+    since = None
+    if "--since" in a:
+        try:
+            since = float(a[a.index("--since") + 1])
+        except (IndexError, ValueError):
+            print(__doc__)
+            sys.exit(2)
+        if not wait_mode and already_loaded(since):
+            return 0  # il processo in attesa lo controlla dopo l'attesa, insieme alle richieste rimandate
+    busy = blockers()
+    if dry:
+        print(f"{len(busy)} cose in corso" + (":" if busy else ": nessuna"))
+        for k, v in busy:
+            print(f"  - {k}: {v}")
+        if any(k == "gateway" for k, _ in busy):
+            print("  (le richieste del gateway sono un contatore: il gateway non dice di chi sono ne' da quanto)")
+        print("riavvierebbe subito" if now_mode or not busy else "si staccherebbe e aspetterebbe il gateway libero")
+        return 0
+    if not now_mode and not wait_mode:
+        log_request("default", busy)
+        if busy:
+            pid = waiter_alive()
+            note_request(since if since is not None else time.time(), merge=bool(pid))
+            if pid:
+                print(f"rimandato: {len(busy)} cose in corso, c'e' gia' un riavvio in attesa (pid {pid})")
+                return 0
+            out = STATE / f"oc-restart-wait-{time.strftime('%Y%m%d-%H%M%S')}.log"
+            child = subprocess.Popen([sys.executable, str(Path(__file__).resolve()), "--wait-idle"],
+                                     stdout=open(out, "w"), stderr=subprocess.STDOUT, start_new_session=True)
+            # il pid lo scrive il padre subito: il figlio scriverebbe solo dopo il primo blockers() (3-150 s) e in
+            # quella finestra una seconda richiesta lancerebbe un secondo processo, cioe' due riavvii di fila.
+            STATE.mkdir(parents=True, exist_ok=True)
+            WAITER_PID.write_text(str(child.pid))
+            print(f"rimandato: {len(busy)} cose in corso ({', '.join(f'{k} {v}' for k, v in busy[:5])}). "
+                  f"Riavvio da solo appena il gateway e' libero (max 6 h). Esito in {out}")
+            return 0
+    elif now_mode:
+        log_request("now", busy)
+    if wait_mode:
+        STATE.mkdir(parents=True, exist_ok=True)
+        WAITER_PID.write_text(str(os.getpid()))
+        print(f"{time.strftime('%H:%M:%S')} attendo il gateway libero")
+        ok = wait_idle()
+        print(f"{time.strftime('%H:%M:%S')} " + ("gateway libero" if ok else "tempo scaduto: riavvio comunque con la ripresa"))
+        # 25/10: il riavvio chiesto alle 14:54 e' partito alle 15:03 a sessione chiusa, dopo che il gateway
+        # era gia' ripartito da solo; se e' partito dopo l'ultima richiesta, le richieste sono gia' servite.
+        ref = max(read_requested(), since or 0.0)
+        REQUESTED_FILE.unlink(missing_ok=True)  # consumato: un --wait-idle a mano non eredita un riferimento vecchio
+        # Consumato il file, le richieste nuove non le vedo piu': devono trovare il pid file libero e lanciare
+        # un altro processo in attesa (che, se il gateway e' ripartito dopo di loro, non riavvia). Prima il pid
+        # restava fino all'uscita, anche durante restart() (30-180 s), e una richiesta B arrivata li' andava persa;
+        # e un pid riusato da un altro processo bloccava per sempre le richieste.
+        release_waiter()
+        if ref and already_loaded(ref):
+            return 0
+    alive = running()
+    print(f"{len(alive)} sottoagenti vivi: " + ", ".join(p.get("label", "?") for p in alive))
+    if not wait_mode:
+        wait_replies(dry)
+    STATE.mkdir(parents=True, exist_ok=True)
+    snap = STATE / f"oc-restart-{time.strftime('%Y%m%d-%H%M%S')}.json"
+    snap.write_text(json.dumps([{"run": p["_run"], "req": p["_req"], "label": p.get("label")} for p in alive], ensure_ascii=False))
+    t0 = restart()
+    time.sleep(20)  # l'avvio marca gli orfani come interrupted/subagent-error
+    ids = {p["_run"] for p in alive}
+    lost = [p for p in lost_since((t0 - 60) * 1000) if p["_run"] in ids]
+    print(f"{len(lost)} su {len(alive)} interrotti dal riavvio")
+    resume(lost, time.strftime("%H:%M", time.localtime(t0)), False)
+    discord_catchup((t0 - 60) * 1000, time.time() * 1000, False)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

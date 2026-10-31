@@ -1,0 +1,316 @@
+#!/usr/bin/env python3
+"""Sblocca le sessioni OpenClaw che rifiutano ogni turno con SESSION_WORK_START_CHANGED e riconsegna
+i messaggi che OpenClaw ha scartato nel frattempo (launchd com.jarvis.oc-unstick, ogni minuto).
+
+Causa (30/10, #canale-cliente): bug del core, openclaw/openclaw#184289 (P1, aperto, nessuna correzione
+rilasciata). Un turno finito resta "proprietario" della sessione; da li' ogni ingresso fallisce con
+«changed while starting work» e dopo 7 tentativi (~2,5 min) OpenClaw mette il messaggio nei dead letter
+senza dirlo a nessuno. Il 30/10 sono spariti 4 messaggi di Attilio in 15 minuti, finche' la Regia non
+ha riavviato a mano. Solo il riavvio del gateway libera lo stato (sessions.recover su 10.8+ lo rifiuta).
+
+Cosa fa a ogni giro (lettura del DB in sola lettura, la CLI solo per agire):
+  1. trova gli ingressi che falliscono per quel conflitto: scartati (failed, session-start-conflict-
+     retry-limit) o ancora in coda con almeno 5 tentativi falliti per lo stesso motivo;
+  2. se ce n'e' uno nuovo e il gateway non e' ripartito dopo: una riga nella conversazione colpita e
+     `oc-restart --now` (al massimo uno ogni 30 min; dentro il riposo avvisa una volta e non riavvia);
+  3. a gateway ripartito da almeno 2 minuti: `openclaw channels dead-letters resubmit` per ogni
+     messaggio scartato (quelli ancora in coda li riprova il gateway da solo); se torna a fallire si
+     ricomincia dal punto 2, alla terza volta chiede di riscriverlo.
+Al primo giro gli scarti gia' presenti vengono solo registrati: sono storia, non si riconsegnano.
+
+Uso: oc-unstick             (un giro)
+     oc-unstick --dry-run   (dice cosa farebbe: non scrive, non riavvia, non manda)
+     oc-unstick --selftest  (scenari finti su un DB temporaneo, exit 0 se tutti giusti)"""
+import json, os, re, sqlite3, subprocess, sys, tempfile, time
+from pathlib import Path
+
+HOME = Path.home()
+DB = Path(os.environ.get("OC_UNSTICK_DB", HOME / ".openclaw/state/openclaw.sqlite"))
+OC_CONFIG = HOME / ".openclaw/openclaw.json"
+STATE = Path(os.environ.get("OC_UNSTICK_STATE", HOME / ".claude/jarvis/state/oc-unstick.json"))
+LOG = Path(os.environ.get("OC_UNSTICK_LOG", HOME / ".claude/jarvis/logs/oc-unstick.log"))
+OPENCLAW = os.environ.get("OC_UNSTICK_OPENCLAW", "openclaw")
+OC_RESTART = os.environ.get("OC_UNSTICK_RESTART", str(HOME / "bin/oc-restart"))
+REASON = "session-start-conflict-retry-limit"
+MIN_QUEUED_ATTEMPTS = 5      # ~36 s di conflitto continuo: una corsa passeggera si risolve in 1-2 tentativi
+COOLDOWN_S = 30 * 60         # un riavvio automatico ogni 30 min: niente giri di riavvii se il bug torna subito
+SETTLE_S = 120               # dopo l'avvio il recupero di OpenClaw impiega ~1 min (30/10: 15:22 -> 15:23)
+MAX_TRIES = 3
+os.environ["PATH"] = "/opt/homebrew/bin:" + os.environ.get("PATH", "/usr/bin:/bin")
+
+
+def log(line, dry):
+    print(line)
+    if not dry:
+        LOG.parent.mkdir(parents=True, exist_ok=True)
+        with LOG.open("a") as f:
+            f.write(time.strftime("%Y-%m-%d %H:%M:%S ") + line + "\n")
+
+
+def run(cmd, timeout=60):
+    try:
+        return subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+    except (subprocess.TimeoutExpired, OSError):
+        return None
+
+
+def query(sql, args):
+    con = sqlite3.connect(f"file:{DB}?mode=ro", uri=True, timeout=10)
+    try:
+        return con.execute(sql, args).fetchall()
+    finally:
+        con.close()
+
+
+def conflicts():
+    """Ingressi che falliscono per il conflitto, scartati o ancora in coda: {event_id: {...}}."""
+    rows = query("select event_id, channel_id, account_id, status, last_error, failed_at, received_at "
+                 "from channel_ingress_events where (status='failed' and failed_reason=?) or (status not in "
+                 "('completed','failed') and attempts>=? and last_error like '%SESSION_WORK_START_CHANGED%')",
+                 (REASON, MIN_QUEUED_ATTEMPTS))
+    out = {}
+    for eid, ch, acc, status, err, failed_at, received_at in rows:
+        m = re.search(r'Session "([^"]+)"', err or "")
+        out[eid] = {"channel": ch, "account": acc, "dead": status == "failed", "failed_at": failed_at or 0,
+                    "received_at": received_at, "key": m.group(1) if m else "?"}
+    return out
+
+
+def statuses(ids):
+    if not ids:
+        return {}
+    rows = query(f"select event_id, status from channel_ingress_events where event_id in ({','.join('?' * len(ids))})",
+                 ids)
+    return {**{i: None for i in ids}, **dict(rows)}
+
+
+def gateway_started_at():
+    """Epoch di avvio del processo del gateway, None se non gira."""
+    if os.environ.get("OC_UNSTICK_GW_START"):
+        return float(os.environ["OC_UNSTICK_GW_START"])
+    r = run(["launchctl", "list"], 10)
+    pid = next((l.split()[0] for l in (r.stdout if r else "").splitlines() if l.endswith("\tai.openclaw.gateway")), "-")
+    r = run(["ps", "-o", "etime=", "-p", pid], 10) if pid.isdigit() else None
+    if not r or not r.stdout.strip():
+        return None
+    days, _, hms = r.stdout.strip().rpartition("-")
+    secs = 0
+    for part in hms.split(":"):
+        secs = secs * 60 + int(part)
+    return time.time() - secs - int(days or 0) * 86400
+
+
+def owner():
+    try:
+        return ((json.loads(OC_CONFIG.read_text()).get("channels") or {}).get("whatsapp") or {}).get("allowFrom", [None])[0]
+    except (OSError, ValueError, IndexError):
+        return None
+
+
+def notify(key, account, text, dry):
+    """Una riga nella conversazione colpita se e' un canale Discord o la chat diretta di Attilio;
+    altrimenti (gruppi, chat di altri) ad Attilio su WhatsApp: mai un messaggio tecnico a un cliente."""
+    parts, me = key.split(":"), owner()
+    if len(parts) >= 5 and parts[2] == "discord" and parts[3] == "channel":
+        args = ["--channel", "discord", "--target", "channel:" + parts[4]]
+        if account and account != "default":
+            args += ["--account", account]
+    elif me:
+        args = ["--channel", "whatsapp", "--target", me]
+        if parts[2:5] != ["whatsapp", "direct", me]:
+            text += f" (conversazione: {key.split(':', 2)[-1]})"
+    else:
+        log(f"avviso non mandato, nessun destinatario: {text}", dry)
+        return
+    if dry:
+        print(f"[dry] avviso su {args[3]}: {text}")
+        return
+    r = run([OPENCLAW, "message", "send", *args, "-m", text], 60)
+    log(f"avviso {'mandato' if r and r.returncode == 0 else 'NON mandato'} su {args[3]}: {text}", dry)
+
+
+def hhmm(ms):
+    return time.strftime("%H:%M", time.localtime(ms / 1000))
+
+
+def since_ms(p):
+    """Da quando l'ingresso e' bloccato: lo scarto per i dead letter, l'arrivo per quelli in coda."""
+    return p["failed_at"] if p["dead"] else p["received_at"]
+
+
+def tick(dry):
+    found = conflicts()
+    if not STATE.exists():
+        log(f"primo giro: {len(found)} ingressi in conflitto gia' presenti, registrati come storia", dry)
+        if not dry:
+            STATE.parent.mkdir(parents=True, exist_ok=True)
+            STATE.write_text(json.dumps({"known": sorted(found), "pending": {}, "restart_at": 0, "warned_at": 0}))
+        return 0
+    st = json.loads(STATE.read_text())
+    known, pending, now = set(st["known"]), st["pending"], time.time()
+
+    for eid, ev in found.items():
+        p = pending.get(eid)
+        if eid in known:
+            continue
+        if p is None:
+            pending[eid] = {**ev, "tries": 0, "resubmitted_at": 0}
+        elif p["resubmitted_at"] and ev["dead"] and ev["failed_at"] > p["resubmitted_at"] * 1000:
+            p.update(ev, tries=p["tries"] + 1, resubmitted_at=0)  # riconsegnato e scartato di nuovo
+        elif not p["resubmitted_at"]:
+            p.update(ev)
+    for eid, status in statuses([e for e in pending if e not in found]).items():
+        if status in ("completed", None):  # None: OpenClaw l'ha gia' tolto dalla tabella
+            log(f"consegnato: {eid} ({pending[eid]['key']})", dry)
+            known.add(eid)
+            del pending[eid]
+
+    stuck = {e: p for e, p in pending.items() if not p["resubmitted_at"] and p["tries"] < MAX_TRIES}
+    started = gateway_started_at()
+    if stuck:
+        first = min(since_ms(p) for p in stuck.values())
+        keys = sorted({p["key"] for p in stuck.values()})
+        if not (started and started * 1000 > first) and not st["restart_at"] * 1000 > first:
+            if now - st["restart_at"] >= COOLDOWN_S:
+                for key in keys:
+                    mine = [p for p in stuck.values() if p["key"] == key]
+                    n = sum(p["dead"] for p in mine)
+                    what = (f"ha scartato {n} {'messaggio' if n == 1 else 'messaggi'} qui" if n
+                            else "non riesce a consegnare i messaggi qui")
+                    notify(key, mine[0]["account"], f"⚠️ OpenClaw {what} (sessione bloccata dalle "
+                           f"{hhmm(min(p['received_at'] for p in mine))}, bug noto): riavvio il gateway e li "
+                           "riconsegno tra un paio di minuti.", dry)
+                log(f"sessione bloccata: {', '.join(keys)} ({len(stuck)} ingressi) -> oc-restart --now", dry)
+                if not dry:
+                    out = LOG.parent / f"oc-unstick-restart-{time.strftime('%Y%m%d-%H%M%S')}.log"
+                    subprocess.Popen([OC_RESTART, "--now"], stdout=out.open("w"), stderr=subprocess.STDOUT,
+                                     stdin=subprocess.DEVNULL, start_new_session=True)
+                    st["restart_at"] = now
+            elif now - st["warned_at"] >= COOLDOWN_S:
+                notify(keys[0], next(iter(stuck.values()))["account"], "⚠️ Sessione di nuovo bloccata dopo il "
+                       f"riavvio delle {hhmm(st['restart_at'] * 1000)}: non riavvio ancora da solo, i messaggi "
+                       "restano da riconsegnare.", dry)
+                st["warned_at"] = now
+        elif started and started * 1000 > first and now - started >= SETTLE_S:
+            for eid, p in sorted(stuck.items(), key=lambda x: x[1]["received_at"]):
+                if not p["dead"]:
+                    continue  # ancora in coda: il gateway nuovo lo riprova da solo
+                if dry:
+                    print(f"[dry] resubmit {p['channel']}/{p['account']} {eid} ({p['key']})")
+                    continue
+                r = run([OPENCLAW, "channels", "dead-letters", "resubmit", "--channel", p["channel"],
+                         "--account", p["account"], eid, "--json"], 60)
+                if r and r.returncode == 0:
+                    p["resubmitted_at"] = now
+                    log(f"riconsegnato {eid} ({p['key']})", dry)
+                else:
+                    p["tries"] += 1
+                    log(f"riconsegna fallita {eid}: {((r.stderr or r.stdout) if r else 'timeout').strip()[:200]}", dry)
+    for p in pending.values():
+        if p["tries"] >= MAX_TRIES and not p.get("gave_up"):
+            p["gave_up"] = True
+            notify(p["key"], p["account"], f"❌ Un messaggio delle {hhmm(p['received_at'])} non sono riuscito a "
+                   "riconsegnarlo dopo 3 tentativi: va riscritto.", dry)
+    if not dry:
+        st["known"], st["pending"] = sorted(known), pending
+        STATE.write_text(json.dumps(st, indent=1))
+    return 0
+
+
+def selftest():
+    """Scenari su un DB finto: storia, blocco -> riavvio, attesa, riconsegna, consegna, riposo, coda."""
+    global DB, STATE, LOG, OPENCLAW, OC_RESTART
+    tmp = Path(tempfile.mkdtemp(prefix="oc-unstick-"))
+    calls, fake = tmp / "calls.txt", tmp / "fake.sh"
+    fake.write_text(f'#!/bin/sh\necho "$*" >> {calls}\n')
+    fake.chmod(0o755)
+    DB, STATE, LOG, OPENCLAW, OC_RESTART = tmp / "db.sqlite", tmp / "st.json", tmp / "log", str(fake), str(fake)
+    con = sqlite3.connect(DB)
+    con.execute("create table channel_ingress_events (event_id text, channel_id text, account_id text, status text, "
+                "attempts int, last_error text, failed_reason text, failed_at int, received_at int)")
+    err = 'Session "agent:main:discord:channel:42" changed while starting work. Retry. | SESSION_WORK_START_CHANGED'
+
+    def add(eid, status, reason, age_s, attempts=7):
+        t = int((time.time() - age_s) * 1000)
+        con.execute("insert into channel_ingress_events values (?,?,?,?,?,?,?,?,?)",
+                    (eid, "discord", "default", status, attempts, err, reason, t if status == "failed" else None,
+                     t - 150000))
+        con.commit()
+
+    def gw(age_s):
+        os.environ["OC_UNSTICK_GW_START"] = str(time.time() - age_s)
+
+    def past(sec):
+        """Fa passare il tempo: arrivi e scarti indietro di sec secondi."""
+        con.execute("update channel_ingress_events set received_at=received_at-?, "
+                    "failed_at=case when failed_at is null then null else failed_at-? end", (sec * 1000, sec * 1000))
+        con.commit()
+
+    def n(word):
+        time.sleep(0.2)  # il riavvio parte staccato
+        return sum(word in l for l in calls.read_text().splitlines()) if calls.exists() else 0
+
+    def shift_restart(age_s, **extra):
+        st = json.loads(STATE.read_text())
+        st.update(restart_at=time.time() - age_s, **extra)
+        STATE.write_text(json.dumps(st))
+
+    results = []
+
+    def check(name, cond):
+        results.append(bool(cond))
+        print(("ok   " if cond else "FAIL ") + name)
+
+    gw(7200)
+    add("old", "failed", REASON, 3600)
+    add("other", "failed", "retry-limit-exceeded", 30)
+    tick(False)
+    check("primo giro: lo scarto vecchio e' storia, nessuna azione", n(" ") == 0)
+    add("new1", "failed", REASON, 30)
+    tick(False)
+    check("scarto nuovo: un avviso nel canale e un riavvio --now", n("message send") == 1 and n("--now") == 1
+          and "channel:42" in calls.read_text())
+    tick(False)
+    check("gateway non ancora ripartito: nessun secondo riavvio", n("--now") == 1 and n("resubmit") == 0)
+    past(600)
+    shift_restart(590)
+    gw(30)
+    tick(False)
+    check("ripartito da 30 s: la riconsegna aspetta", n("resubmit") == 0)
+    gw(300)
+    tick(False)
+    check("ripartito da 5 min: riconsegna solo lo scarto nuovo", n("resubmit") == 1 and " new1 " in calls.read_text()
+          and " old " not in calls.read_text())
+    tick(False)
+    check("gia' riconsegnato: non lo rimanda", n("resubmit") == 1)
+    con.execute("update channel_ingress_events set status='completed' where event_id='new1'")
+    con.commit()
+    tick(False)
+    st = json.loads(STATE.read_text())
+    check("consegnato: esce dal pending", "new1" in st["known"] and not st["pending"])
+    add("new2", "failed", REASON, 5)
+    tick(False)
+    check("nuovo blocco dentro i 30 min: niente riavvio, un avviso", n("--now") == 1 and n("message send") == 2)
+    tick(False)
+    check("l'avviso del riposo non si ripete", n("message send") == 2)
+    con.execute("update channel_ingress_events set status='completed' where event_id='new2'")
+    add("q1", "pending", None, 5, attempts=6)
+    shift_restart(4000, warned_at=0)
+    gw(7200)
+    tick(False)
+    check("in coda con 6 conflitti: riavvio senza aspettare lo scarto", n("--now") == 2)
+    past(600)
+    shift_restart(590)
+    gw(300)
+    tick(False)
+    check("quello in coda non si riconsegna: lo riprova il gateway", n("resubmit") == 1)
+    print(f"selftest {'verde' if all(results) else 'ROSSO'}: {sum(results)}/{len(results)} ({tmp})")
+    return 0 if all(results) else 1
+
+
+if __name__ == "__main__":
+    a = sys.argv[1:]
+    if a and a[0] not in ("--dry-run", "--selftest"):
+        print(__doc__)
+        sys.exit(0 if a[0] in ("-h", "--help") else 2)
+    sys.exit(selftest() if "--selftest" in a else tick("--dry-run" in a))
