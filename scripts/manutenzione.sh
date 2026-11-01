@@ -82,6 +82,8 @@ step riflessione "Riflessione sulle regole e guasti dalle parole di Attilio" 30 
 # 6f. Commit di jarvis che push-guard tiene fuori dal pubblico (26/10: 197 commit solo su questo Mac, 61 dati in
 #     tools/usage-hub). Finché la storia non è ripulita, una copia va su un ramo del repo privato.
 step jarvis-copia "Copia dei commit di jarvis nel privato" 10 git -C "$HOME/.claude/jarvis" push -q --force https://github.com/zorahrel/jarvis-private.git HEAD:refs/heads/backup/jarvis-public-main
+# 6g. Registro di ciò che manuteniamo e di chi paga (31/10): i numeri cambiano col mese, si rifanno prima del backup che lo cifra.
+step registro-manutenzioni "Registro di chi paga e chi no" 5 /usr/bin/python3 -I "$HOME/.claude/jarvis/private/manutenzioni/registry.py"
 # 7. Backup nel repo privato: per ultimo, così prende anche quello che i passi prima hanno scritto
 step private-backup "Backup nel repo privato" 30 /bin/bash "$HOME/.claude/jarvis/private/sync.sh" --commit
 

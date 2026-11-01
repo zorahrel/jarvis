@@ -34,20 +34,23 @@ class RiflessioneNotteTest(unittest.TestCase):
         os.chmod(path, 0o755)
         return path
 
-    def run_script(self, proposals, openclaw_rc=0, verify_rc=0, board_rc=0, openclaw_msg="", ran="true", reason="", run_status="ok"):
+    def run_script(self, proposals, openclaw_rc=0, verify_rc=0, board_rc=0, openclaw_msg="", ran="true", reason="", run_status="ok", enqueued="false", first_unreachable=False):
         if proposals is not None:
             with open(os.path.join(self.rifl, today() + ".md"), "w") as f:
                 f.write(proposals)
         # cron run risponde subito (non aspetta la run); cron runs dà la run finita, con l'ora di adesso
+        # first_unreachable: il primo «cron run» risponde come il gateway spento (1/11), il secondo parte
+        flaky = (f'if [ "$2" = "run" ] && [ ! -f "{self.root}/visto" ]; then touch "{self.root}/visto"; '
+                 f'echo "Gateway not reachable at ws://127.0.0.1:18789 (ETIMEDOUT)" >&2; exit 1; fi\n') if first_unreachable else ""
         openclaw = self.fake("openclaw", (
-            f'if [ "$2" = "runs" ]; then python3 -c \'import json,time;print(json.dumps({{"entries":[{{"action":"finished","status":"{run_status}","ts":int(time.time()*1000)}}]}}))\'; exit 0; fi\n'
-            f'echo "{openclaw_msg}" >&2; echo \'{{"ok": true, "ran": {ran}, "reason": "{reason}"}}\'; exit {openclaw_rc}'))
+            flaky + f'if [ "$2" = "runs" ]; then python3 -c \'import json,time;print(json.dumps({{"entries":[{{"action":"finished","status":"{run_status}","ts":int(time.time()*1000)}}]}}))\'; exit 0; fi\n'
+            f'echo "{openclaw_msg}" >&2; echo \'{{"ok": true, "ran": {ran}, "enqueued": {enqueued}, "reason": "{reason}"}}\'; exit {openclaw_rc}'))
         # la verifica vera è uno script python: qui un finto eseguito da /usr/bin/python3
         verify = os.path.join(self.root, "verifica.py")
         with open(verify, "w") as f:
             f.write(f'import sys\nprint("verifica finta")\nsys.exit({verify_rc})\n')
         board = self.fake("board-card", f'python3 -c \'import json,sys;print(json.dumps(sys.argv[1:]))\' "$@" >> "{self.calls}"; exit {board_rc}')
-        env = dict(os.environ, OPENCLAW_BIN=openclaw, RIFL_VERIFY_BIN=verify, RIFL_DIR=self.rifl, BOARD_CARD_BIN=board)
+        env = dict(os.environ, OPENCLAW_BIN=openclaw, RIFL_VERIFY_BIN=verify, RIFL_DIR=self.rifl, BOARD_CARD_BIN=board, RIFL_RETRY_S="0")
         return subprocess.run(["/usr/bin/python3", SCRIPT], env=env, capture_output=True, text=True)
 
     def board_calls(self):
@@ -86,6 +89,18 @@ class RiflessioneNotteTest(unittest.TestCase):
         r = self.run_script(self.doc([]), openclaw_rc=1, openclaw_msg="cron job disabled", ran="false", reason="disabled")
         self.assertEqual(r.returncode, 1)
         self.assertIn("disabilitato", r.stderr)
+
+    def test_enqueued_without_ran_is_started(self):
+        # openclaw 1/11: «enqueued: true» senza «ran» vuol dire messa in coda, non rifiutata
+        r = self.run_script(self.doc([]), ran="false", enqueued="true", openclaw_rc=1)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertNotIn("non è partito", r.stderr)
+
+    def test_gateway_unreachable_then_back_retries(self):
+        # gateway che non risponde al primo tentativo (ETIMEDOUT del 1/11): il secondo parte e la notte è ok
+        r = self.run_script(self.doc([]), first_unreachable=True)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertNotIn("non è partito", r.stderr)
 
     def test_already_running_waits_for_that_run(self):
         r = self.run_script(self.doc([]), ran="false", reason="already-running", openclaw_rc=1)

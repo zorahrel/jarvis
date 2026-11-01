@@ -1,0 +1,58 @@
+#!/bin/bash
+# Barra di backup-mac su un repository finto: un giro riuscito, un permesso negato, la lista esclusioni, la copia coerente.
+set -u
+SELF="$(cd "$(dirname "$0")" && pwd)"
+T="$(mktemp -d)"; trap '[ -n "${BACKUP_MAC_KEEP:-}" ] && echo "$T" || /usr/bin/trash "$T" 2>/dev/null' EXIT
+fails=0
+say() { if [ "$2" = 0 ]; then echo "ok   $1"; else echo "FAIL $1"; fails=$((fails + 1)); fi; }
+
+export HOME="$T/home"; mkdir -p "$HOME/src/node_modules" "$HOME/noperm"
+echo dato > "$HOME/src/file.txt"; echo x > "$HOME/src/node_modules/dep.js"
+sqlite3 "$T/vivo.db" "PRAGMA journal_mode=WAL; CREATE TABLE t(a); INSERT INTO t VALUES (1);" > /dev/null
+
+cat > "$T/helper" <<'H'
+#!/bin/bash
+[ "$1" = status ] && echo '{"files":3,"bytes":10,"uploaded":1,"uploaded_bytes":1,"local":3,"local_bytes":10,"error":""}'
+exit 0
+H
+cat > "$T/board" <<'H'
+#!/bin/bash
+echo "$*" >> "$BACKUP_MAC_BOARD_LOG"
+H
+chmod +x "$T/helper" "$T/board"
+export BACKUP_MAC_ROOT="$T/repo" BACKUP_MAC_PASSWORD_COMMAND="echo prova" BACKUP_MAC_HELPER="$T/helper" BACKUP_MAC_LOGDIR="$T/log" \
+  BACKUP_MAC_STATE="$T/state.json" BACKUP_MAC_STAGE="$T/stage" BACKUP_MAC_BOARD_CARD="$T/board" BACKUP_MAC_BOARD_LOG="$T/board.log" \
+  BACKUP_MAC_SOURCES="$HOME/src:$T/stage" BACKUP_MAC_DBS="$T/vivo.db|vivo.db" BACKUP_MAC_FLOOR_PCT=0 BACKUP_MAC_GUARD_S=1
+mkdir -p "$T/repo"; RESTIC_REPOSITORY="$T/repo/restic" RESTIC_PASSWORD_COMMAND="echo prova" restic init > /dev/null
+state() { /usr/bin/python3 -I -c 'import json,sys;print(json.load(open(sys.argv[1])).get(sys.argv[2]))' "$T/state.json" "$1"; }
+
+"$SELF/backup-mac" run; say "giro riuscito esce 0" $?
+[ "$(state last_rc)" = 0 ]; say "lo stato registra il giro" $?
+[ "$(state pending_since)" != None ]; say "file non caricati: parte il conto" $?
+L="$(RESTIC_REPOSITORY="$T/repo/restic" RESTIC_PASSWORD_COMMAND="echo prova" restic ls latest)"
+echo "$L" | /usr/bin/grep -q "src/file.txt"; say "il file entra" $?
+echo "$L" | /usr/bin/grep -q "node_modules"; [ $? = 1 ]; say "node_modules resta fuori" $?
+echo "$L" | /usr/bin/grep -q "vivo.db$"; say "la copia del database entra" $?
+
+chmod 000 "$HOME/noperm"
+BACKUP_MAC_SOURCES="$HOME/noperm:$HOME/src" "$SELF/backup-mac" run; [ $? = 1 ]; say "cartella negata: fallisce, non salta in silenzio" $?
+chmod 700 "$HOME/noperm"
+state last_error | /usr/bin/grep -q noperm; say "lo stato dice quale" $?
+/usr/bin/grep -q -- "--key backup-mac" "$T/board.log"; say "il guasto apre la card" $?
+[ "$(state last_ok)" != None ]; say "l'ultimo ok sopravvive al fallimento" $?
+
+"$SELF/backup-mac" run; say "torna verde" $?
+[ "$(state last_error)" = None ]; say "l'errore si cancella" $?
+/usr/bin/grep -q -- "--risolta backup-mac" "$T/board.log"; say "la card si chiude da sola" $?
+
+"$SELF/backup-mac" status | /usr/bin/grep -q "^STATO: tutto ok"; say "stato: tutto ok dopo un giro riuscito" $?
+/usr/bin/lockf -s -t 0 "$T/log/.lock" /bin/sleep 3 & sleep 1
+"$SELF/backup-mac" status | /usr/bin/grep -q "^STATO: sta lavorando adesso, partito alle [0-9]"; say "stato: dice che sta lavorando" $?
+wait
+/usr/bin/python3 -I -c 'import json,sys;p=sys.argv[1];d=json.load(open(p));d["last_error"]="prova";json.dump(d,open(p,"w"))' "$T/state.json"
+"$SELF/backup-mac" status | /usr/bin/grep -q "^STATO: PROBLEMA"; say "stato: dice che c'è un problema" $?
+/usr/bin/python3 -I -c 'import json,sys;p=sys.argv[1];d=json.load(open(p));d["last_error"]=None;d["last_ok"]-=40*3600;json.dump(d,open(p,"w"))' "$T/state.json"
+"$SELF/backup-mac" status | /usr/bin/grep -q "^STATO: PROBLEMA"; say "stato: giro troppo vecchio è un problema" $?
+
+[ "$fails" = 0 ] && echo "tutto verde" || echo "$fails rossi"
+exit "$fails"

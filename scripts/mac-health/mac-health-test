@@ -90,6 +90,12 @@ check("disco al 14%: segnalato", f(disk=dict(free_gb=140, total_gb=1000)), "lo s
 check("disco al 16%: zitto", f(disk=dict(free_gb=160, total_gb=1000)), None)
 
 check("Time Machine assente", f(backup__tm_dest=0), "Time Machine non e' configurato")
+check("backup su iCloud sano: Time Machine assente non si dice", f(backup__tm_dest=0, backup__restic=dict(last_ok=NOW - DAY)), None)
+check("backup su iCloud fermo da 4 giorni", f(backup__restic=dict(last_ok=NOW - 4 * DAY)), "fermo da 4 giorni")
+check("backup su iCloud: ultimo giro fallito", f(backup__restic=dict(last_ok=NOW - DAY, last_error="restic check non passa")), "restic check non passa")
+check("backup su iCloud: mai riuscito, anche senza Time Machine", f(backup__tm_dest=0, backup__restic=dict(last_error="non riesco a leggere")), "non ha mai finito")
+check("backup su iCloud: carica da 49 ore", f(backup__restic=dict(last_ok=NOW - DAY, pending_since=NOW - 49 * 3600)), "da 49 ore")
+check("backup su iCloud: carica da 47 ore, zitto", f(backup__restic=dict(last_ok=NOW - DAY, pending_since=NOW - 47 * 3600)), None)
 check("Time Machine di 8 giorni", f(backup__tm_last=NOW - 8 * DAY), "8 giorni fa")
 check("private fermo da 49 ore", f(backup__private_last=NOW - 49 * 3600), "fermo da 49 ore")
 check("private di 47 ore: zitto", f(backup__private_last=NOW - 47 * 3600), None)
@@ -371,7 +377,7 @@ todo = mh.cards(facts, keep, Path("/x/r.md"))
 by = {c["key"]: c for c in todo}
 say("card: quelle degli agenti; sicurezza e root (job, demone, elemento in /Library/LaunchDaemons) no",
     sorted(by) == sorted("mac-health:" + k for k in (
-        "avvio:loop:com.microsoft.teams2.agent", "avvio:loop:com.jcode.llamacpp-3090-tunnel", "avvio:failed:com.x.other", "avvio:failed:com.jarvis.gone",
+        "avvio:loop:com.microsoft.teams2.agent", "avvio:loop:com.jcode.llamacpp-3090-tunnel", "avvio:failed:com.x.other", "avvio:failed:com.armonia.topics-db-snapshot", "avvio:failed:com.jarvis.gone",
         "avvio:failed:com.jarvis.manutenzione", "avvio:killed:com.x.killed", "avvio:orphan:com.omnara.daemon",
         "avvio:missing:8.com.x.login", "avvio:missing:8.com.x.agent", "backup:private", "processi:resti", "cieco:sfltool")))
 say("card: job di sistema fallito ed elemento d'avvio in /Library/LaunchDaemons restano ad Attilio",
@@ -385,10 +391,8 @@ say("card: servizio fermo che riparte a vuoto di notte, ma solo diagnosi",
 say("card: job fallito d'altri: di giorno, nella sua cartella, con l'ultima riga del log",
     safe(lambda: (lambda c: not c["notte"] and c["dir"] == "/Users/u/Projects/other" and "RED: no off-disk copy (altro)" in c["desc"]
                   and "Cartella: /Users/u/Projects/other" in c["desc"])(card("avvio:failed:com.x.other"))))
-say("card: topics-db-snapshot (una scelta di Attilio) NON diventa card e resta nel messaggio, con la cura che lo dice",
-    safe(lambda: not any("topics-db-snapshot" in k for k in by)
-         and any("topics-db-snapshot" in k[2] and "una tua scelta" in k[2] and "~/.topics/backup-offsite.json" in k[2] and "RED: no off-disk copy" in k[2]
-                 for k in mh.for_attilio(keep, todo, {c["key"]: "id" for c in todo}))))
+say("card: topics-db-snapshot fallito e' un guasto, non piu' una scelta di Attilio (30/10: la copia fuori disco c'e')",
+    safe(lambda: (lambda c: not c["notte"] and c["dir"] == "/Users/u/Projects/topics-app")(card("avvio:failed:com.armonia.topics-db-snapshot"))))
 say("card: cartella di lavoro cancellata = niente --notte e la card lo dice",
     safe(lambda: (lambda c: not c["notte"] and "non esiste piu'" in c["desc"] and "Projects/sparita" in c["desc"]
                   and "non e' nella coda notturna" in c["desc"])(card("avvio:failed:com.jarvis.gone"))))
@@ -422,7 +426,7 @@ with tempfile.TemporaryDirectory() as d:
     del os.environ["MAC_HEALTH_BOARD_CARD"]
     rows = open(calls).read().splitlines()
     say("board-card: una chiamata per card, --notte con --dir solo dove serve",
-        len(rows) == len(todo) == 12 and all("--key|mac-health:" in r for r in rows)
+        len(rows) == len(todo) == 13 and all("--key|mac-health:" in r for r in rows)
         and sum("--notte|--dir|" in r for r in rows) == 5 and not any("--notte" in r and ("processi:resti" in r or "com.jarvis.gone" in r) for r in rows))
     say("board-card: la coda notturna lavora nella cartella del job",
         any("com.jarvis.manutenzione" in r and "--notte|--dir|/Users/u/.claude/jarvis|" in r for r in rows))

@@ -1,0 +1,41 @@
+# Cosa non entra nel backup: si ricrea, oppure sta già altrove.
+# Dipendenze e build
+node_modules
+dist
+build
+.next
+.turbo
+target
+.venv
+venv
+__pycache__
+.cache
+DerivedData
+test-results
+.npm
+.bun
+.build
+.wrangler
+venv-*
+embed-cache
+# Worktree degli agenti: i commit stanno nel .git del repo
+**/.claude/worktrees
+$HOME/.topics/worktrees
+$HOME/.openclaw/worktrees
+# Il DB vivo di Topics si salva dalla copia coerente; backups/ sono i suoi snapshot, restic ha già la sua storia
+$HOME/Projects/topics-app/data/topics.db
+$HOME/Projects/topics-app/data/topics.db-wal
+$HOME/Projects/topics-app/data/topics.db-shm
+$HOME/Projects/topics-app/data/backups
+# Darkroom: stesso discorso per il DB; generations e graded sono render AI e color grade rigenerabili
+$HOME/Projects/darkroom/photos.db
+$HOME/Projects/darkroom/photos.db-wal
+$HOME/Projects/darkroom/photos.db-shm
+$HOME/Projects/darkroom/data/generations
+$HOME/Projects/darkroom/data/graded
+$HOME/Darkroom/projects/*/data/generations
+$HOME/Darkroom/projects/*/data/graded
+$HOME/Darkroom/projects/*/data/derivate
+# Prove e render di lavoro: si rifanno dai brief e dagli script, stanno nel repo
+$HOME/Projects/armonia-agency/_brief-scena-t1b/out
+$HOME/Projects/armonia-agency/armonia-site/artifacts

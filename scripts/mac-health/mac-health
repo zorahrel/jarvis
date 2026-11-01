@@ -60,10 +60,6 @@ RESTI_MB = 500
 RESTO_OBSERVE = "osservo: "
 RESTO_COUNTED = ("si chiude ora", "si chiuderebbe ora", "aspetta")
 RESTO_BLIND = "lsof non risponde"
-# job che falliscono per una scelta di Attilio, non per un guasto: niente card per gli agenti, la riga resta a lui
-ATTILIO_CHOICES = {
-    "com.armonia.topics-db-snapshot": "dove tenere la copia fuori disco del DB di Topics (~/.topics/backup-offsite.json)",
-}
 BLIND_SFL = "sfltool non ha risposto: elementi d'avvio NON controllati"
 PLIST_DIRS = (HOME + "/Library/LaunchAgents", "/Library/LaunchAgents", "/Library/LaunchDaemons")
 DISK_FREE_PCT = 15     # lo swap vive sullo stesso disco: senza spazio non cresce e il Mac si pianta
@@ -80,6 +76,8 @@ MEMLOG_SWAP_SHARE = 0.75  # swap oltre l'85% E letta da disco in almeno 3 campio
 PRIVATE_MAX_H = 48     # private/sync.sh gira ogni notte alle 04:32
 UNPUSHED_DAYS = 7      # senza Time Machine un commit non spinto esiste solo su questo disco
 TM_MAX_DAYS = 7
+RESTIC_MAX_DAYS = 3    # backup-mac gira ogni notte: due notti saltate sono un caso, tre un guasto
+UPLOAD_MAX_H = 48      # file del backup non ancora su iCloud: la copia esiste solo su questo disco
 # Lavori lunghi degli agenti: Topics contro Claude Code (claude -p lanciato da OpenClaw).
 # Nato il 24/10 dalla domanda «Topics e' meglio, e lo resta?»: la riga c'e' sempre nel
 # rapporto, il messaggio parte solo se Topics peggiora.
@@ -739,6 +737,14 @@ def icloud_docs():
     return True if p.returncode == 0 else (False if "No such file" in p.stderr else None)
 
 
+def restic_state():
+    """Lo stato che scrive scripts/backup-mac/backup-mac; None se il backup non e' mai partito."""
+    try:
+        return json.loads((JARVIS / "state/backup-mac.json").read_text())
+    except (OSError, ValueError):
+        return None
+
+
 def backup():
     dest = run(["tmutil", "destinationinfo"])
     tm_dest = len(re.findall(r"^Name\s*:", dest, re.M))
@@ -757,7 +763,7 @@ def backup():
         ts = git_ts(repo, "@{u}..HEAD")
         if ts and "fatal" not in run(["git", "-C", repo, "rev-parse", "@{u}"], 10):
             unpushed.append((os.path.basename(repo), len(ts), min(ts)))
-    return dict(tm_dest=tm_dest, tm_last=tm_last, private_last=priv[0] if priv else None,
+    return dict(tm_dest=tm_dest, tm_last=tm_last, restic=restic_state(), private_last=priv[0] if priv else None,
                 icloud_docs=icloud_docs(),
                 unpushed=sorted(unpushed, key=lambda x: -x[1]), noremote=sorted(noremote))
 
@@ -769,8 +775,13 @@ def read_facts(weekly):
     boot = re.search(r"sec = (\d+)", run(["sysctl", "-n", "kern.boottime"]))
     uptime_h = (time.time() - int(boot.group(1))) / 3600 if boot else 1
     st = os.statvfs(HOME)
+    # Conta anche lo spazio che macOS libera da solo: statvfs lascia fuori i file già liberati da iCloud (31/10: 76 contro 108 GiB)
+    usable = run(["osascript", "-l", "JavaScript", "-e",
+                  'ObjC.import("Foundation");const r=Ref();$.NSURL.fileURLWithPath("/System/Volumes/Data")'
+                  '.getResourceValueForKeyError(r,$.NSURLVolumeAvailableCapacityForImportantUsageKey,null);String(ObjC.unwrap(r[0]))']).strip()
+    free_bytes = int(usable) if usable.isdigit() and int(usable) > 0 else st.f_bavail * st.f_frsize
     f = dict(now=time.time(), weekly=weekly, ram_mb=ram_mb, uptime_h=uptime_h,
-             disk=dict(free_gb=st.f_bavail * st.f_frsize / 1e9, total_gb=st.f_blocks * st.f_frsize / 1e9),
+             disk=dict(free_gb=free_bytes / 1e9, total_gb=st.f_blocks * st.f_frsize / 1e9),
              startup=btm_items(), failures=launchd_failures(uptime_h), orphans=orphan_plists(),
              resti=resti(devreap_list()), memlog=memlog_report(), posture=posture(),
              extensions=extensions(), backup=backup(), agents=agents(time.time()), blind=[], blind_keys=[])
@@ -913,12 +924,6 @@ def findings(f):
         if not x.get("periodic") and x["exit"] > 0 and (x["rate"] >= LOOP_PER_HOUR or x["runs"] >= RESPAWN_RUNS):
             add("avvio", f"loop:{x['label']}", f"{x['label']}: servizio che riparte a vuoto, {num(x['runs'])} avvii in {round(f['uptime_h'] / 24)} giorni, "
                 f"ultima uscita {x['exit']}{why(x)}", f"{x['label']} riparte a vuoto ({num(x['runs'])} avvii)")
-        elif not x["running"] and x["exit"] > 0 and x["label"] in ATTILIO_CHOICES:
-            # non e' un guasto: il job chiede una scelta che solo Attilio puo' fare, quindi riga per lui e nessuna card
-            tail = f" Ultima riga del log: «{short(x['log_tail'])}»." if x.get("log_tail") else ""
-            add("avvio", f"failed:{x['label']}", f"{x['label']}: fermo (uscita {x['exit']}), ma non e' un guasto: aspetta una tua scelta, "
-                f"{ATTILIO_CHOICES[x['label']]}. Cura: decidere dove, poi `launchctl kickstart gui/{os.getuid()}/{x['label']}`.{tail}",
-                f"{x['label']} aspetta una tua scelta: {ATTILIO_CHOICES[x['label']].split(' (')[0]}")
         elif not x["running"] and x["exit"] > 0:  # un segnale (uscita negativa) e' qualcuno che l'ha fermato
             add("avvio", f"failed:{x['label']}", f"{x['label']}: fermo, l'ultimo giro e' fallito (uscita {x['exit']}{why(x)})",
                 f"{x['label']} fermo (uscita {x['exit']})")
@@ -957,7 +962,20 @@ def findings(f):
             add("sicurezza", f"ext-new:{e['id']}", f"estensione nuova in {e['browser']}: {e['name']}", f"estensione nuova {e['name']}")
     # backup
     b, now = f["backup"], f["now"]
-    if not b["tm_dest"]:
+    r = b.get("restic")
+    if r and r.get("last_ok"):
+        # il backup cifrato su iCloud sostituisce Time Machine (30/10): qui contano i suoi guasti
+        if now - r["last_ok"] > RESTIC_MAX_DAYS * DAY:
+            dd = int((now - r["last_ok"]) / DAY)
+            add("backup", "restic-old", f"backup del Mac fermo da {dd} giorni (`backup-mac status`, log in logs/backup-mac/run.log)", f"backup del Mac fermo da {dd} gg")
+        if r.get("last_error"):
+            add("backup", "restic-error", f"ultimo giro del backup del Mac fallito: {r['last_error']}", "backup del Mac: ultimo giro fallito")
+        if r.get("pending_since") and now - r["pending_since"] > UPLOAD_MAX_H * 3600:
+            hh = int((now - r["pending_since"]) / 3600)
+            add("backup", "restic-upload", f"iCloud non finisce di caricare il backup del Mac da {hh} ore: quella parte esiste solo su questo disco", f"backup: iCloud non carica da {hh} ore")
+    elif r and r.get("last_error"):
+        add("backup", "restic-error", f"il backup del Mac non ha mai finito un giro: {r['last_error']}", "backup del Mac: mai riuscito")
+    elif not b["tm_dest"]:
         add("backup", "tm", "Time Machine non e' configurato: dei file fuori da iCloud e da git c'e' una copia sola" +
             (", e Scrivania e Documenti non sono su iCloud" if b["icloud_docs"] is False else ""), "Time Machine assente")
     elif b["tm_last"] is None:
@@ -1088,8 +1106,6 @@ def cards(f, keep, report):
         kind, _, name = key.partition(":")[2].partition(":")
         plain_bar = False
         job, notte = f"gui/{uid}/{name}", True  # notte: reversibile e non aspetta Attilio (board-card --notte)
-        if kind in ("loop", "failed", "killed") and name in ATTILIO_CHOICES:
-            continue  # la cura e' una scelta di Attilio: la riga resta nel messaggio per lui
         x = fail.get(name, {})
         where = JARVIS  # dove lavora la coda notturna; per i job, la loro cartella
         gone = x.get("gone") if kind in ("loop", "failed", "killed") and x.get("domain") == "gui" else None
@@ -1109,7 +1125,6 @@ def cards(f, keep, report):
                         f"e la proposta in un commento sulla card. Di giorno: {fix}")
             bar = f"`launchctl print {job} | grep runs` fermo per 10 minuti, o il servizio non c'e' piu'"
         elif kind == "failed" and x.get("domain") == "gui":
-            # un job d'altri puo' fallire per una scelta di Attilio (topics-db-snapshot: dove tenere il backup esterno)
             notte = name.startswith("com.jarvis.")
             title = f"Riparare {name}: l'ultimo giro e' fallito"
             cure = f"Leggere il log (stdout/stderr path in `launchctl print {job}`), correggere la causa, riprovare con `launchctl kickstart {job}`."
@@ -1321,6 +1336,7 @@ def report_md(f, keep, quiet, todo=(), ids=None):
     b = f["backup"]
     L += ["", "## Backup",
           f"- Time Machine: {'non configurato' if not b['tm_dest'] else (datetime.datetime.fromtimestamp(b['tm_last']).strftime('%d/%m/%Y %H:%M') if b['tm_last'] else 'data illeggibile')}",
+          f"- Backup cifrato su iCloud (backup-mac): {datetime.datetime.fromtimestamp(b['restic']['last_ok']).strftime('%d/%m/%Y %H:%M') if (b.get('restic') or {}).get('last_ok') else 'mai riuscito'}",
           f"- iCloud Scrivania e Documenti: {({True: 'si', False: 'no'}).get(b['icloud_docs'], 'non leggibile')}",
           f"- jarvis-private spinto: {datetime.datetime.fromtimestamp(b['private_last']).strftime('%d/%m/%Y %H:%M') if b['private_last'] else 'mai'}",
           f"- repo con commit non spinti: {len(b['unpushed'])}"]

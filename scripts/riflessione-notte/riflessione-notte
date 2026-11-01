@@ -30,6 +30,7 @@ VERIFY = os.environ.get("RIFL_VERIFY_BIN") or os.path.join(HOME, ".openclaw/bin/
 BOARD_CARD = os.environ.get("BOARD_CARD_BIN") or os.path.join(HOME, ".claude/jarvis/scripts/board-card")
 RIFL_DIR = os.environ.get("RIFL_DIR") or os.path.join(HOME, ".openclaw/memory/proposte-regole")
 RUN_TIMEOUT_MS = 1500000
+GATEWAY_RETRY_S = float(os.environ.get("RIFL_RETRY_S") or 60)
 
 # launchd ha un PATH povero: i figli (openclaw è uno script node) devono trovare /opt/homebrew/bin
 os.environ["PATH"] = "/opt/homebrew/bin:/usr/local/bin:" + os.environ.get("PATH", "/usr/bin:/bin")
@@ -53,15 +54,22 @@ def run_reflection(poll_s=15):
     `cron run` non aspetta la fine della run (29/10: il primo giro dal vivo è uscito in 3 s e ha controllato un file
     non ancora scritto), quindi dopo l'avvio si legge `cron runs` finché compare la run finita dopo l'avvio."""
     t0 = time.time() * 1000 - 5000
-    try:
-        p = subprocess.run([OPENCLAW, "cron", "run", JOB, "--json"], capture_output=True, text=True, timeout=120)
-    except (OSError, subprocess.TimeoutExpired) as e:
-        err(f"riflessione: openclaw cron run non è andato a buon fine ({e})")
-        return False
-    out = (p.stdout or "") + (p.stderr or "")
+    # il gateway può non rispondere per qualche minuto (1/11: ETIMEDOUT alle 14:13, con lui sotto memoria alta):
+    # riprova solo su quel guasto di connessione, tre volte a un minuto, poi si arrende come prima
+    for attempt in range(3):
+        try:
+            p = subprocess.run([OPENCLAW, "cron", "run", JOB, "--json"], capture_output=True, text=True, timeout=120)
+        except (OSError, subprocess.TimeoutExpired) as e:
+            err(f"riflessione: openclaw cron run non è andato a buon fine ({e})")
+            return False
+        out = (p.stdout or "") + (p.stderr or "")
+        if "Gateway not reachable" not in out or attempt == 2:
+            break
+        time.sleep(GATEWAY_RETRY_S)
     # con una run già in corso openclaw esce 1 ma risponde ok + already-running: decide la risposta, non l'exit code
     d = _json(p.stdout or "") or _json(out)
-    if not d.get("ok") or not (d.get("ran") or d.get("reason") == "already-running"):
+    # openclaw ora risponde «enqueued» (messa in coda, 1/11) senza «ran»: anche quella è una partenza
+    if not d.get("ok") or not (d.get("ran") or d.get("enqueued") or d.get("reason") == "already-running"):
         # un job spento va detto chiaro: altrimenti sembra un guasto qualunque
         if re.search(r"disabled|disabilitat", out, re.I):
             err(f"riflessione: il cron {JOB} è disabilitato e cron run lo rifiuta")

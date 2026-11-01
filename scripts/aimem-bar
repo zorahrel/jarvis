@@ -63,11 +63,12 @@ done
 # Una voce raccolta sotto 0,7 entra in tutti i digest (29/10: un pezzo del preambolo delle side session, a 0,6, in 24
 # su 24). La soglia la tiene min_projects = 3 in config.toml; qui si guarda cosa si inietta davvero.
 low=$(awk 'FNR==1{fm=0} /^---$/{fm++; next} fm==1 && /^generated_by: profile-harvest/{h[FILENAME]=1} fm==1 && /^confidence:/{c[FILENAME]=$2+0} END{for(f in h) if(c[f]<0.7) print f}' "$DATA"/wiki/*/*/profile/*/*.md 2>/dev/null)
-[ -z "$low" ] && ok "profilo: nessuna voce raccolta sotto 0,7" || ko "profilo: voci raccolte sotto 0,7: $(echo "$low" | xargs -n1 basename | tr '\n' ' ')"
+[ -z "$low" ] && ok "profilo: nessuna voce raccolta sotto 0,7" || ko "profilo: voci raccolte sotto 0,7: $(echo "$low" | sed 's#.*/##' | tr '\n' ' ')"
 # Quel preambolo ha poi superato anche la soglia (31/10, 4 progetti, 0,8): la soglia non basta, è testo della app e non un'abitudine.
-# Si toglie con `ai-memory profile forget`, che ne tiene la storia e ferma il raccoglitore su quel tema.
+# `ai-memory profile forget` regge solo finché una side session nuova non lo ripete (tornato il 31/10 alle 12:08): la cura è nel
+# raccoglitore, `SCRIPTED_PROMPT_MARKERS` nel fork. Il binario ufficiale non ce l'ha: `upgrade` o `install.sh` riportano la voce.
 app=$(/usr/bin/grep -l "side-session-notes" "$DATA"/wiki/*/*/profile/*/*.md 2>/dev/null)
-[ -z "$app" ] && ok "profilo: niente testo della app preso per abitudine" || ko "profilo: testo della app nel profilo: $(echo "$app" | xargs -n1 basename | tr '\n' ' ')"
+[ -z "$app" ] && ok "profilo: niente testo della app preso per abitudine" || ko "profilo: testo della app nel profilo: $(echo "$app" | sed 's#.*/##' | tr '\n' ' ')"
 
 # 2. niente gruppi in memoria (le prove vere sono sessioni openclaw: chi legge questo script in una sessione
 #    di Claude Code ne lascia il testo fra le osservazioni di quella sessione, non è una prova entrata): ogni sessione openclaw deve avere un titolo di chat diretta

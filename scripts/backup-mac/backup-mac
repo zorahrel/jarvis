@@ -1,0 +1,270 @@
+#!/bin/bash
+# Backup notturno del Mac: restic cifrato dentro iCloud Drive, solo ciò che non si ricrea (30/10, scelta di Attilio).
+# launchd com.jarvis.backup-mac, ogni notte alle 5:00: dopo la manutenzione (2:30) e dopo l'update di OpenClaw (4:20).
+#   backup-mac run [--first]   il giro; --first per la prima copia: può fermarsi giorni aspettando che iCloud carichi
+#   backup-mac status          stato di repository, caricamento, ultimo giro
+#   backup-mac check [N/M]     restic check; con N/M rilegge anche quella fetta dei dati
+#   backup-mac evict           libera dal disco i pacchi già caricati su iCloud
+#   backup-mac install         costruisce «Backup Mac.app» e carica launchd
+# Guida: memory/tools/backup-mac.md
+set -u
+export PATH=/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin
+
+# Sotto launchd macOS vieta di scaricare i file di iCloud non presenti sul disco: leggerli dà «resource deadlock
+# avoided» (misurato 01/11: politica 1 sotto launchd, 2 da terminale). Senza, il controllo della domenica falliva
+# dicendo «repository danneggiato» con i dati integri, e un ripristino o un prune dalla notte cadrebbero uguali.
+# La politica è del processo e passa ai figli, restic compreso. 3, 0, 2 = tipo «dataless», scope processo, acceso.
+if [ -z "${BACKUP_MAC_MATERIALIZE:-}" ]; then
+  export BACKUP_MAC_MATERIALIZE=1
+  exec /usr/bin/python3 -I -c 'import ctypes, os, sys
+ctypes.CDLL(None).setiopolicy_np(3, 0, 2)
+os.execv(sys.argv[1], sys.argv[1:])' "$0" "$@"
+fi
+
+SELF_DIR="$(cd "$(dirname "$(readlink -f "$0")")" && pwd)"
+JARVIS="$(cd "$SELF_DIR/../.." && pwd)"
+ROOT="${BACKUP_MAC_ROOT:-$HOME/Library/Mobile Documents/com~apple~CloudDocs/Backup-Mac}"
+export RESTIC_REPOSITORY="$ROOT/restic"
+export RESTIC_PASSWORD_COMMAND="${BACKUP_MAC_PASSWORD_COMMAND:-security find-generic-password -s restic-backup -a mac -w}"
+export RESTIC_PROGRESS_FPS=0.0167
+APP="$HOME/Applications/Backup Mac.app"
+HELPER="${BACKUP_MAC_HELPER:-$APP/Contents/MacOS/backup-mac-helper}"
+LOGDIR="${BACKUP_MAC_LOGDIR:-$JARVIS/logs/backup-mac}"
+STATE="${BACKUP_MAC_STATE:-$JARVIS/state/backup-mac.json}"
+STAGE="${BACKUP_MAC_STAGE:-$HOME/.local/state/backup-mac/db}"
+BOARD_CARD="${BACKUP_MAC_BOARD_CARD:-$JARVIS/scripts/board-card}"
+FLOOR_PCT="${BACKUP_MAC_FLOOR_PCT:-10}"     # 10% e non il 15% di mac-health (ok di Attilio, 31/10): il disco oscilla di 10 GB col lavoro degli agenti e al 15% il backup non scriveva mai
+STOP_GIB=4                                  # ferma con questo margine sopra la soglia: il 31/10 restic ha scritto 10 GB in 90 s, fra due controlli ne passano 3
+RESUME_GIB=6                                # riparte solo con più margine, o si ferma ogni minuto
+PACK_MIB=64                                 # 16 di default vorrebbe dire 5.000 file per iCloud invece di 1.200
+
+if [ -n "${BACKUP_MAC_SOURCES:-}" ]; then
+  IFS=: read -r -a SOURCES <<< "$BACKUP_MAC_SOURCES"
+else
+  SOURCES=("$HOME/Library/Keychains/login.keychain-db" "$HOME/Projects" "$HOME/Documents" "$HOME/Desktop" "$HOME/Darkroom"
+           "$HOME/.topics" "$HOME/.ssh" "$HOME/.openclaw/privato" "$STAGE")
+fi
+# copia coerente di un database vivo: <origine> <nome nella cartella di appoggio>
+DBS=("$HOME/Projects/topics-app/data/topics.db|topics.db" "$HOME/Projects/darkroom/photos.db|darkroom-photos.db")
+[ -n "${BACKUP_MAC_DBS+x}" ] && IFS=: read -r -a DBS <<< "$BACKUP_MAC_DBS"
+
+mkdir -p "$LOGDIR" "$(dirname "$STATE")" "$STAGE"
+LOG="$LOGDIR/run.log"
+say() { echo "$(date '+%F %T') $*" >> "$LOG"; }
+
+# Lo spazio che macOS libera da solo quando serve: df non lo conta, e i file già caricati e liberati da iCloud restano lì.
+# Il 31/10 df diceva 75,9 GiB e il sistema 108,6: col solo df il backup si fermava per colpa dei file che aveva appena scritto.
+free_gib() {
+  local v=""
+  if [ -z "${BACKUP_MAC_DISK:-}" ]; then
+    v="$(/usr/bin/osascript -l JavaScript -e 'ObjC.import("Foundation");const r=Ref();$.NSURL.fileURLWithPath("/System/Volumes/Data").getResourceValueForKeyError(r,$.NSURLVolumeAvailableCapacityForImportantUsageKey,null);(ObjC.unwrap(r[0])/1073741824).toFixed(2)' 2>/dev/null)"
+  fi
+  case "$v" in
+    ''|0|0.00|*[!0-9.]*) df -k "${BACKUP_MAC_DISK:-/System/Volumes/Data}" | awk 'NR==2{printf "%.2f",$4/1048576}' ;;
+    *) printf '%s' "$v" ;;
+  esac
+}
+floor_gib() { df -k "${BACKUP_MAC_DISK:-/System/Volumes/Data}" | awk -v p="$FLOOR_PCT" 'NR==2{printf "%.2f",$2/1048576*p/100}'; }
+below() { awk -v a="$1" -v b="$2" 'BEGIN{exit !(a<b)}'; }
+
+# aggiorna lo stato: coppie chiave valore (valori JSON). Il vecchio resta, così «ultimo ok» sopravvive a un fallimento.
+state_set() {
+  /usr/bin/python3 -I - "$STATE" "$@" <<'P'
+import json, os, sys
+path, kv = sys.argv[1], sys.argv[2:]
+try: d = json.load(open(path))
+except Exception: d = {}
+for k, v in zip(kv[::2], kv[1::2]): d[k] = json.loads(v)
+tmp = path + ".tmp"
+json.dump(d, open(tmp, "w"), indent=1)
+os.replace(tmp, path)
+P
+}
+jstr() { /usr/bin/python3 -I -c 'import json,sys;print(json.dumps(sys.argv[1]))' "$1"; }
+
+# Un guasto arriva ad Attilio per due vie: la riga di mac-health (dallo stato) e subito una card su cui un agente lavora.
+fail() {
+  local why="$1" rc="${2:-1}"
+  say "FALLITO: $why"
+  state_set last_run "$(date +%s)" last_rc "$rc" last_error "$(jstr "$why")"
+  "$BOARD_CARD" --key backup-mac --title "Backup del Mac fallito: $why" >> "$LOG" 2>&1 || say "card non aperta"
+  exit "$rc"
+}
+
+# con un tetto: il 31/10 una liberazione è rimasta appesa su iCloud a 0% di CPU, e appesa qui lascerebbe il disco senza guardia
+evict() { [ -d "$RESTIC_REPOSITORY/data" ] && "$JARVIS/scripts/group-timeout/group-timeout" 300 "$HELPER" evict "$RESTIC_REPOSITORY/data"; }
+
+upload_state() {
+  local s; s="$("$HELPER" status "$RESTIC_REPOSITORY" 2>/dev/null)" || return 0
+  [ -n "$s" ] || return 0
+  # da quanto tempo c'è qualcosa non caricato: serve a dire «iCloud è fermo», un singolo giro non basta a dirlo
+  /usr/bin/python3 -I - "$STATE" "$s" <<'P'
+import json, os, sys, time
+path, s = sys.argv[1], json.loads(sys.argv[2])
+try: d = json.load(open(path))
+except Exception: d = {}
+d["icloud"] = s
+if s["uploaded"] >= s["files"]: d["pending_since"] = None
+elif not d.get("pending_since"): d["pending_since"] = int(time.time())
+tmp = path + ".tmp"
+json.dump(d, open(tmp, "w"), indent=1)
+os.replace(tmp, path)
+P
+}
+
+# Prende fiato sul disco: libera ciò che è già su iCloud; se non basta tiene restic fermo finché iCloud non carica.
+guard_disk() {
+  local pid="$1" max_pause="$2" stopped=0 paused=0 floor free
+  floor="$(floor_gib)"
+  while kill -0 "$pid" 2>/dev/null; do
+    free="$(free_gib)"
+    if below "$free" "$(awk -v f="$floor" -v r="$RESUME_GIB" 'BEGIN{print f+r}')"; then
+      evict >> "$LOG" 2>&1
+      free="$(free_gib)"
+    fi
+    if [ "$stopped" = 0 ] && below "$free" "$(awk -v f="$floor" -v r="$STOP_GIB" 'BEGIN{print f+r}')"; then
+      say "disco a $free GiB, soglia $floor: restic fermo in attesa di iCloud"
+      kill -STOP "$pid" 2>/dev/null; stopped=1; paused=0
+    elif [ "$stopped" = 1 ] && ! below "$free" "$(awk -v f="$floor" -v r="$RESUME_GIB" 'BEGIN{print f+r}')"; then
+      say "disco a $free GiB: restic riparte"
+      kill -CONT "$pid" 2>/dev/null; stopped=0
+    fi
+    if [ "$stopped" = 1 ]; then
+      paused=$((paused + 30))
+      if [ "$paused" -ge "$max_pause" ]; then
+        say "fermo da $((paused / 60)) min senza spazio"
+        kill -CONT "$pid" 2>/dev/null; kill -TERM "$pid" 2>/dev/null
+        return 75
+      fi
+    fi
+    sleep "${BACKUP_MAC_GUARD_S:-30}"
+  done
+}
+
+snapshot_dbs() {
+  local entry src name
+  for entry in "${DBS[@]}"; do
+    [ -n "$entry" ] || continue
+    src="${entry%%|*}"; name="${entry##*|}"
+    [ -f "$src" ] || fail "manca il database $src"
+    # .backup e non il file: quello vivo, con WAL a parte, copiato com'è può non riaprirsi
+    sqlite3 "$src" ".timeout 30000" ".backup '$STAGE/$name.tmp'" 2>> "$LOG" || fail "copia coerente di $name non riuscita"
+    [ "$(sqlite3 "$STAGE/$name.tmp" 'PRAGMA quick_check;' 2>&1 | head -1)" = ok ] || fail "copia di $name rovinata: quick_check non ok"
+    mv -f "$STAGE/$name.tmp" "$STAGE/$name"
+  done
+}
+
+cmd_run() {
+  local first=0 nice_level=15 procs=2 max_pause=$((6 * 3600))
+  if [ "${1:-}" = --first ]; then first=1; procs=3; max_pause=$((96 * 3600)); fi
+  if [ -z "${BACKUP_MAC_LOCKED:-}" ]; then
+    export BACKUP_MAC_LOCKED=1
+    # chi arriva secondo esce con 75: una notte che si accavalla alla prima copia non è un guasto
+    exec /usr/bin/lockf -s -t 0 "$LOGDIR/.lock" "$SELF_DIR/backup-mac" run "$@"
+  fi
+  local t0; t0=$(date +%s)
+  say "== parto (first=$first), disco libero $(free_gib) GiB"
+  state_set run_started "$t0"
+
+  local src denied=""
+  for src in "${SOURCES[@]}"; do
+    # senza questa prova restic esce 3 e salta in silenzio la cartella negata: un backup verde a cui manca Documenti
+    if [ -d "$src" ]; then /bin/ls "$src" > /dev/null 2>&1 || denied="$denied $src"
+    else /usr/bin/head -c 1 "$src" > /dev/null 2>&1 || denied="$denied $src"; fi
+  done
+  [ -z "$denied" ] || fail "non riesco a leggere:$denied (permesso di macOS per Backup Mac?)"
+  /bin/ls "$RESTIC_REPOSITORY/config" > /dev/null 2>&1 || fail "non raggiungo il repository in iCloud Drive (permesso di macOS?)"
+
+  snapshot_dbs
+
+  local err="$LOGDIR/ultimo-giro.err" out="$LOGDIR/ultimo-giro.json" excl="$LOGDIR/excludes.txt"
+  sed "s#\$HOME#$HOME#" "$SELF_DIR/excludes.txt" > "$excl"
+  GOMAXPROCS=$procs nice -n "$nice_level" restic backup --json --tag nightly --host mac --pack-size "$PACK_MIB" \
+    --exclude-file "$excl" --exclude-caches "${SOURCES[@]}" > "$out" 2> "$err" &
+  local pid=$!
+  guard_disk "$pid" "$max_pause"; local guard_rc=$?
+  wait "$pid"; local rc=$?
+  [ "$guard_rc" = 75 ] && fail "disco sotto il $FLOOR_PCT% per ore e iCloud non libera spazio" 75
+  # 3 = alcuni file non letti, di solito spariti nel frattempo: lo dico nello stato ma la copia c'è e vale
+  [ "$rc" = 0 ] || [ "$rc" = 3 ] || fail "restic backup uscito $rc: $(tail -1 "$err" | cut -c1-200)" "$rc"
+  local unread; unread=$(/usr/bin/grep -c '"message_type":"error"' "$out")
+  local id bytes
+  id=$(/usr/bin/grep '"message_type":"summary"' "$out" | tail -1 | /usr/bin/python3 -I -c 'import json,sys;print(json.loads(sys.stdin.read())["snapshot_id"][:8])' 2>/dev/null)
+  bytes=$(/usr/bin/grep '"message_type":"summary"' "$out" | tail -1 | /usr/bin/python3 -I -c 'import json,sys;print(json.loads(sys.stdin.read())["data_added_packed"])' 2>/dev/null)
+  [ -n "$id" ] || fail "restic non ha scritto la copia"
+  say "copia $id, $bytes byte nuovi, $unread file non letti"
+
+  restic forget --host mac --keep-daily 7 --keep-weekly 4 --keep-monthly 12 >> "$LOG" 2>&1 || fail "restic forget non riuscito"
+  local dow subset=""
+  dow=$(date +%u)
+  if [ "$dow" = 7 ]; then
+    # una volta a settimana: pulizia e rilettura di una fetta, un anno per rileggere tutto
+    restic prune --max-unused 15% --max-repack-size 2G >> "$LOG" 2>&1 || fail "restic prune non riuscito"
+    subset="$((10#$(date +%V) % 52 + 1))/52"
+  fi
+  cmd_check $subset >> "$LOG" 2>&1 || fail "restic check non passa"
+
+  evict >> "$LOG" 2>&1
+  upload_state
+  state_set last_run "$(date +%s)" last_ok "$(date +%s)" last_rc 0 last_error null last_snapshot "\"$id\"" \
+    last_added_bytes "${bytes:-0}" last_unread "$unread" last_seconds "$(( $(date +%s) - t0 ))"
+  say "== finito in $(( $(date +%s) - t0 )) s, disco libero $(free_gib) GiB"
+  "$BOARD_CARD" --risolta backup-mac --nota "giro riuscito, copia $id" >/dev/null 2>&1 || true
+}
+
+cmd_check() {
+  if [ -n "${1:-}" ]; then restic check --with-cache --read-data-subset="$1"
+  else restic check --with-cache; fi
+}
+
+cmd_status() {
+  upload_state
+  # chi tiene il lucchetto sta facendo il giro: 75 = occupato
+  local since=""
+  /usr/bin/lockf -s -t 0 "$LOGDIR/.lock" /usr/bin/true
+  [ $? = 75 ] && since="$(/usr/bin/grep '== parto' "$LOG" | tail -1 | cut -c12-16)" && since="${since:-ora}"
+  /usr/bin/python3 -I - "$STATE" "$since" <<'P'
+import datetime, json, sys, time
+d = json.load(open(sys.argv[1]))
+since = sys.argv[2]
+when = lambda t: datetime.datetime.fromtimestamp(t).strftime("%d/%m %H:%M") if t else "mai"
+i = d.get("icloud") or {}
+age_h = (time.time() - d["last_ok"]) / 3600 if d.get("last_ok") else None
+if since: print(f"STATO: sta lavorando adesso, partito alle {since}")
+elif d.get("last_error"): print("STATO: PROBLEMA, l'ultimo giro è fallito")
+elif age_h is None or age_h > 36: print("STATO: PROBLEMA, nessun giro riuscito nelle ultime 36 ore")
+else: print("STATO: tutto ok, prossimo giro alle 5:00")
+print(f"ultimo giro riuscito: {when(d.get('last_ok'))}, copia {d.get('last_snapshot')}")
+if d.get("last_error"): print(f"ultimo errore: {d['last_error']}")
+print(f"iCloud: {i.get('uploaded', 0)}/{i.get('files', 0)} file caricati, "
+      f"{i.get('uploaded_bytes', 0) / 2**30:.1f}/{i.get('bytes', 0) / 2**30:.1f} GiB; "
+      f"{i.get('local_bytes', 0) / 2**30:.1f} GiB ancora sul disco")
+if i.get("error"): print(f"errore iCloud: {i['error']}")
+P
+  echo "disco libero: $(free_gib) GiB, soglia $(floor_gib)"
+  [ -e "$JARVIS/private/.git" ] && echo "archivio privato (configurazioni e memoria degli agenti): ultimo salvataggio $(git -C "$JARVIS/private" log -1 --format=%ad --date=format:'%d/%m %H:%M')"
+}
+
+cmd_install() {
+  local macos="$APP/Contents/MacOS"
+  # Solo se il sorgente è cambiato: ricostruire cambia la firma e macOS dimentica i permessi già dati
+  if [ ! -x "$HELPER" ] || [ "$SELF_DIR/BackupMacHelper.swift" -nt "$HELPER" ]; then
+    mkdir -p "$macos"
+    swiftc -O "$SELF_DIR/BackupMacHelper.swift" -o "$macos/backup-mac-helper" || exit 1
+    cp "$SELF_DIR/Info.plist" "$APP/Contents/Info.plist"
+    codesign --force --sign - --identifier com.jarvis.backup-mac "$APP" || exit 1
+  fi
+  local plist="$HOME/Library/LaunchAgents/com.jarvis.backup-mac.plist"
+  sed "s#__HOME__#$HOME#g" "$SELF_DIR/com.jarvis.backup-mac.plist" > "$plist"
+  launchctl bootout "gui/$(id -u)/com.jarvis.backup-mac" 2>/dev/null
+  launchctl bootstrap "gui/$(id -u)" "$plist"
+}
+
+case "${1:-}" in
+  run) shift; cmd_run "$@" ;;
+  status) cmd_status ;;
+  check) shift; cmd_check "$@" ;;
+  evict) evict ;;
+  install) cmd_install ;;
+  *) sed -n 3,8p "$0"; exit 64 ;;
+esac
