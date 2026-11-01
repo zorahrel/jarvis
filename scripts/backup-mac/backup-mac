@@ -255,7 +255,7 @@ cmd_install() {
     codesign --force --sign - --identifier com.jarvis.backup-mac "$APP" || exit 1
   fi
   local plist="$HOME/Library/LaunchAgents/com.jarvis.backup-mac.plist"
-  sed "s#__HOME__#$HOME#g" "$SELF_DIR/com.jarvis.backup-mac.plist" > "$plist"
+  sed "s#__HOME__#$HOME#g" "$SELF_DIR/launchd.plist" > "$plist"
   launchctl bootout "gui/$(id -u)/com.jarvis.backup-mac" 2>/dev/null
   launchctl bootstrap "gui/$(id -u)" "$plist"
 }
