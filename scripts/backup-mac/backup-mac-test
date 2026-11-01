@@ -45,6 +45,13 @@ state last_error | /usr/bin/grep -q noperm; say "lo stato dice quale" $?
 [ "$(state last_error)" = None ]; say "l'errore si cancella" $?
 /usr/bin/grep -q -- "--risolta backup-mac" "$T/board.log"; say "la card si chiude da sola" $?
 
+BACKUP_MAC_FORCE_WEEKLY=1 "$SELF/backup-mac" run; say "giro settimanale riuscito" $?
+[ "$(state last_read_check)" != None ]; say "registra la rilettura dei dati" $?
+[ "$(state last_restore_ok)" != None ]; say "registra la prova di ripristino" $?
+/usr/bin/grep -q "prova di ripristino: vivo.db riaperto" "$T/log/run.log"; say "il database si riapre dal backup" $?
+[ ! -e "$T/stage/.prova-ripristino" ]; say "la prova non lascia file" $?
+/usr/bin/python3 -I -c 'import json,sys;r=json.load(open(sys.argv[1]))["runs"];sys.exit(0 if any(not x["ok"] for x in r) and r[-1]["ok"] else 1)' "$T/state.json"; say "lo storico ha giri riusciti e falliti" $?
+
 "$SELF/backup-mac" status | /usr/bin/grep -q "^STATO: tutto ok"; say "stato: tutto ok dopo un giro riuscito" $?
 /usr/bin/lockf -s -t 0 "$T/log/.lock" /bin/sleep 3 & sleep 1
 "$SELF/backup-mac" status | /usr/bin/grep -q "^STATO: sta lavorando adesso, partito alle [0-9]"; say "stato: dice che sta lavorando" $?

@@ -81,12 +81,26 @@ os.replace(tmp, path)
 P
 }
 jstr() { /usr/bin/python3 -I -c 'import json,sys;print(json.dumps(sys.argv[1]))' "$1"; }
+# un giro nello storico: la tray ne fa una tacchetta al giorno
+run_record() {
+  /usr/bin/python3 -I - "$STATE" "$1" <<'P'
+import json, os, sys, time
+path, ok = sys.argv[1], sys.argv[2] == "ok"
+try: d = json.load(open(path))
+except Exception: d = {}
+d["runs"] = (d.get("runs") or [])[-59:] + [{"at": int(time.time()), "ok": ok}]
+tmp = path + ".tmp"
+json.dump(d, open(tmp, "w"), indent=1)
+os.replace(tmp, path)
+P
+}
 
 # Un guasto arriva ad Attilio per due vie: la riga di mac-health (dallo stato) e subito una card su cui un agente lavora.
 fail() {
   local why="$1" rc="${2:-1}"
   say "FALLITO: $why"
   state_set last_run "$(date +%s)" last_rc "$rc" last_error "$(jstr "$why")"
+  run_record failed
   "$BOARD_CARD" --key backup-mac --title "Backup del Mac fallito: $why" >> "$LOG" 2>&1 || say "card non aperta"
   exit "$rc"
 }
@@ -147,8 +161,10 @@ snapshot_dbs() {
     [ -n "$entry" ] || continue
     src="${entry%%|*}"; name="${entry##*|}"
     [ -f "$src" ] || fail "manca il database $src"
-    # .backup e non il file: quello vivo, con WAL a parte, copiato com'è può non riaprirsi
-    sqlite3 "$src" ".timeout 30000" ".backup '$STAGE/$name.tmp'" 2>> "$LOG" || fail "copia coerente di $name non riuscita"
+    # VACUUM INTO e non il file: quello vivo, con WAL a parte, copiato com'è può non riaprirsi. E non .backup, che riparte da capo
+    # a ogni scrittura: su Topics vivo non aveva finito dopo 17 minuti, VACUUM INTO ci mette 3 secondi (misurato 01/11).
+    /bin/rm -f "$STAGE/$name".tmp*
+    sqlite3 "$src" ".timeout 30000" "VACUUM INTO '$STAGE/$name.tmp'" 2>> "$LOG" || fail "copia coerente di $name non riuscita"
     [ "$(sqlite3 "$STAGE/$name.tmp" 'PRAGMA quick_check;' 2>&1 | head -1)" = ok ] || fail "copia di $name rovinata: quick_check non ok"
     mv -f "$STAGE/$name.tmp" "$STAGE/$name"
   done
@@ -164,7 +180,7 @@ cmd_run() {
   fi
   local t0; t0=$(date +%s)
   say "== parto (first=$first), disco libero $(free_gib) GiB"
-  state_set run_started "$t0"
+  state_set run_started "$t0" run_phase '"sta salvando"'
 
   local src denied=""
   for src in "${SOURCES[@]}"; do
@@ -194,22 +210,42 @@ cmd_run() {
   [ -n "$id" ] || fail "restic non ha scritto la copia"
   say "copia $id, $bytes byte nuovi, $unread file non letti"
 
+  state_set run_phase '"sta pulendo le copie vecchie"'
   restic forget --host mac --keep-daily 7 --keep-weekly 4 --keep-monthly 12 >> "$LOG" 2>&1 || fail "restic forget non riuscito"
   local dow subset=""
   dow=$(date +%u)
-  if [ "$dow" = 7 ]; then
+  if [ "$dow" = 7 ] || [ -n "${BACKUP_MAC_FORCE_WEEKLY:-}" ]; then
     # una volta a settimana: pulizia e rilettura di una fetta, un anno per rileggere tutto
     restic prune --max-unused 15% --max-repack-size 2G >> "$LOG" 2>&1 || fail "restic prune non riuscito"
     subset="$((10#$(date +%V) % 52 + 1))/52"
   fi
+  state_set run_phase '"sta controllando i dati"'
   cmd_check $subset >> "$LOG" 2>&1 || fail "restic check non passa"
+  if [ -n "$subset" ]; then
+    state_set last_read_check "$(date +%s)" run_phase '"sta provando il ripristino"'
+    restore_test
+    state_set last_restore_ok "$(date +%s)"
+  fi
 
   evict >> "$LOG" 2>&1
   upload_state
+  run_record ok
   state_set last_run "$(date +%s)" last_ok "$(date +%s)" last_rc 0 last_error null last_snapshot "\"$id\"" \
     last_added_bytes "${bytes:-0}" last_unread "$unread" last_seconds "$(( $(date +%s) - t0 ))"
   say "== finito in $(( $(date +%s) - t0 )) s, disco libero $(free_gib) GiB"
   "$BOARD_CARD" --risolta backup-mac --nota "giro riuscito, copia $id" >/dev/null 2>&1 || true
+}
+
+# Una copia vale se si riapre: ogni settimana riprende dal backup l'ultimo database dell'elenco e controlla che sia sano.
+restore_test() {
+  local entry name="" tmp="$STAGE/.prova-ripristino"
+  for entry in "${DBS[@]}"; do [ -n "$entry" ] && name="${entry##*|}"; done
+  [ -n "$name" ] || return 0
+  restic dump latest "$STAGE/$name" > "$tmp" 2>> "$LOG" || { /bin/rm -f "$tmp"; fail "prova di ripristino: $name non si riprende dal backup"; }
+  local check; check="$(sqlite3 "$tmp" 'PRAGMA quick_check;' 2>&1 | head -1)"
+  /bin/rm -f "$tmp"
+  [ "$check" = ok ] || fail "prova di ripristino: $name ripreso ma rovinato ($check)"
+  say "prova di ripristino: $name riaperto, quick_check ok"
 }
 
 cmd_check() {
