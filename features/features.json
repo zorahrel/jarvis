@@ -1,0 +1,5429 @@
+{
+ "systems": [
+  {
+   "id": "jarvis",
+   "name": "Jarvis (jarvis-canali)",
+   "version": "own",
+   "released": "2026-11-03",
+   "releases_feed": "(local git log)",
+   "homepage": "local"
+  },
+  {
+   "id": "openclaw",
+   "name": "OpenClaw",
+   "version": "v2026.10.9 (beta v2026.10.10-beta.5)",
+   "released": "2026-10-29",
+   "releases_feed": "https://github.com/openclaw/openclaw/releases.atom",
+   "homepage": "https://openclaw.ai"
+  },
+  {
+   "id": "hermes",
+   "name": "Hermes Agent (Nous Research)",
+   "version": "v0.22.6",
+   "released": "2026-11-02",
+   "releases_feed": "https://github.com/NousResearch/hermes-agent/releases.atom",
+   "homepage": "https://hermes-agent.nousresearch.com"
+  },
+  {
+   "id": "claude",
+   "name": "Claude Code + Agent SDK + Managed Agents",
+   "version": "Claude Code v2.1.317; Agent SDK py v0.2.176",
+   "released": "2026-11-03",
+   "releases_feed": "https://github.com/anthropics/claude-code/releases.atom",
+   "homepage": "https://code.claude.com/docs"
+  },
+  {
+   "id": "codex",
+   "name": "OpenAI Codex (CLI/cloud)",
+   "version": "rust-v0.166.0 stable (0.167.0-alpha.3)",
+   "released": "2026-10-29",
+   "releases_feed": "https://github.com/openai/codex/releases.atom",
+   "homepage": "https://developers.openai.com/codex"
+  },
+  {
+   "id": "goose",
+   "name": "Goose (Block / AAIF)",
+   "version": "v1.57.0",
+   "released": "2026-10-28",
+   "releases_feed": "https://github.com/aaif-goose/goose/releases.atom",
+   "homepage": "https://goose-docs.ai"
+  },
+  {
+   "id": "openhands",
+   "name": "OpenHands",
+   "version": "v1.34.0",
+   "released": "2026-10-27",
+   "releases_feed": "https://github.com/OpenHands/OpenHands/releases.atom",
+   "homepage": "https://openhands.dev"
+  },
+  {
+   "id": "letta",
+   "name": "Letta (MemGPT)",
+   "version": "0.16.8",
+   "released": "2026-05-14",
+   "releases_feed": "https://github.com/letta-ai/letta/releases.atom",
+   "homepage": "https://letta.com"
+  },
+  {
+   "id": "crewai",
+   "name": "CrewAI",
+   "version": "1.15.34",
+   "released": "2026-11-01",
+   "releases_feed": "https://github.com/crewAIInc/crewAI/releases.atom",
+   "homepage": "https://crewai.com"
+  },
+  {
+   "id": "langgraph",
+   "name": "LangGraph",
+   "version": "1.2.19",
+   "released": "2026-10-30",
+   "releases_feed": "https://github.com/langchain-ai/langgraph/releases.atom",
+   "homepage": "https://langchain.com/langgraph"
+  },
+  {
+   "id": "ag2",
+   "name": "AG2 (AutoGen fork; Microsoft AutoGen is in maintenance, last py-v0.7.5 2025-09-30)",
+   "version": "v1.2.2",
+   "released": "2026-10-27",
+   "releases_feed": "https://github.com/ag2ai/ag2/releases.atom",
+   "homepage": "https://ag2.ai"
+  },
+  {
+   "id": "manus",
+   "name": "Manus",
+   "version": "unknown (closed SaaS)",
+   "released": "unknown",
+   "releases_feed": "https://manus.im/blog",
+   "homepage": "https://manus.im"
+  },
+  {
+   "id": "devin",
+   "name": "Devin (Cognition)",
+   "version": "unknown (closed SaaS)",
+   "released": "unknown",
+   "releases_feed": "https://docs.devin.ai/release-notes/overview",
+   "homepage": "https://devin.ai"
+  },
+  {
+   "id": "cursor",
+   "name": "Cursor (background agents)",
+   "version": "unknown (closed)",
+   "released": "unknown",
+   "releases_feed": "https://cursor.com/changelog",
+   "homepage": "https://cursor.com"
+  },
+  {
+   "id": "n8n",
+   "name": "n8n AI agents",
+   "version": "n8n@1.123.92",
+   "released": "2026-11-02",
+   "releases_feed": "https://github.com/n8n-io/n8n/releases.atom",
+   "homepage": "https://n8n.io"
+  },
+  {
+   "id": "agno",
+   "name": "Agno",
+   "version": "v3.1.12",
+   "released": "2026-10-29",
+   "releases_feed": "https://github.com/agno-agi/agno/releases.atom",
+   "homepage": "https://agno.com"
+  }
+ ],
+ "areas": [
+  {
+   "id": "channels",
+   "name": "Channels and messaging",
+   "children": [
+    {
+     "id": "ch.chat",
+     "name": "Chat platforms",
+     "children": [
+      {
+       "id": "ch.wa",
+       "name": "WhatsApp",
+       "desc": "Native WhatsApp bridge (DM+groups)",
+       "status": {
+        "jarvis": "yes",
+        "openclaw": "yes",
+        "hermes": "yes",
+        "claude": "partial",
+        "codex": "partial",
+        "goose": "no",
+        "openhands": "no",
+        "letta": "no",
+        "crewai": "no",
+        "langgraph": "no",
+        "ag2": "no",
+        "manus": "partial",
+        "devin": "partial",
+        "cursor": "yes",
+        "n8n": "yes",
+        "agno": "partial"
+       },
+       "sources": [
+        "https://docs.openclaw.ai/channels"
+       ],
+       "keywords": [
+        "whatsapp",
+        "baileys"
+       ]
+      },
+      {
+       "id": "ch.dc",
+       "name": "Discord",
+       "desc": "Discord bot with threads/DM",
+       "status": {
+        "jarvis": "yes",
+        "openclaw": "yes",
+        "hermes": "yes",
+        "claude": "partial",
+        "codex": "no",
+        "goose": "no",
+        "openhands": "no",
+        "letta": "partial",
+        "crewai": "no",
+        "langgraph": "no",
+        "ag2": "partial",
+        "manus": "no",
+        "devin": "no",
+        "cursor": "no",
+        "n8n": "yes",
+        "agno": "yes"
+       },
+       "sources": [
+        "https://docs.openclaw.ai/channels"
+       ],
+       "keywords": [
+        "discord"
+       ]
+      },
+      {
+       "id": "ch.tg",
+       "name": "Telegram",
+       "desc": "Telegram bot",
+       "status": {
+        "jarvis": "yes",
+        "openclaw": "yes",
+        "hermes": "yes",
+        "claude": "partial",
+        "codex": "no",
+        "goose": "no",
+        "openhands": "no",
+        "letta": "partial",
+        "crewai": "no",
+        "langgraph": "no",
+        "ag2": "partial",
+        "manus": "no",
+        "devin": "no",
+        "cursor": "no",
+        "n8n": "yes",
+        "agno": "yes"
+       },
+       "sources": [
+        "https://docs.openclaw.ai/channels"
+       ],
+       "keywords": [
+        "telegram"
+       ]
+      },
+      {
+       "id": "ch.sl",
+       "name": "Slack / Teams",
+       "desc": "Workspace chat as agent surface",
+       "status": {
+        "jarvis": "no",
+        "openclaw": "yes",
+        "hermes": "yes",
+        "claude": "yes",
+        "codex": "yes",
+        "goose": "unknown",
+        "openhands": "no",
+        "letta": "partial",
+        "crewai": "no",
+        "langgraph": "no",
+        "ag2": "partial",
+        "manus": "yes",
+        "devin": "yes",
+        "cursor": "yes",
+        "n8n": "yes",
+        "agno": "yes"
+       },
+       "sources": [
+        "https://code.claude.com/docs/en/slack",
+        "https://developers.openai.com/codex"
+       ],
+       "keywords": [
+        "slack",
+        "microsoft teams"
+       ]
+      },
+      {
+       "id": "ch.imsg",
+       "name": "iMessage / Signal / SMS",
+       "desc": "Other consumer messengers",
+       "status": {
+        "jarvis": "no",
+        "openclaw": "yes",
+        "hermes": "yes",
+        "claude": "partial",
+        "codex": "no",
+        "goose": "no",
+        "openhands": "no",
+        "letta": "no",
+        "crewai": "no",
+        "langgraph": "no",
+        "ag2": "no",
+        "manus": "no",
+        "devin": "no",
+        "cursor": "no",
+        "n8n": "no",
+        "agno": "no"
+       },
+       "sources": [
+        "https://docs.openclaw.ai/channels"
+       ],
+       "note": "niente iMessage/Signal/SMS come canale: Beeper è solo uno strumento",
+       "keywords": [
+        "imessage",
+        "signal",
+        "sms",
+        "bluebubbles"
+       ]
+      },
+      {
+       "id": "ch.count",
+       "name": "20+ channels from one gateway",
+       "desc": "Single process serves many channels",
+       "status": {
+        "jarvis": "no",
+        "openclaw": "yes",
+        "hermes": "yes",
+        "claude": "no",
+        "codex": "no",
+        "goose": "no",
+        "openhands": "no",
+        "letta": "no",
+        "crewai": "no",
+        "langgraph": "no",
+        "ag2": "no",
+        "manus": "no",
+        "devin": "no",
+        "cursor": "no",
+        "n8n": "yes",
+        "agno": "partial"
+       },
+       "sources": [
+        "https://docs.openclaw.ai",
+        "https://hermes-agent.nousresearch.com/docs/"
+       ],
+       "keywords": [
+        "new channel",
+        "channel adapter",
+        "matrix",
+        "line channel"
+       ]
+      }
+     ]
+    },
+    {
+     "id": "ch.sem",
+     "name": "Channel semantics",
+     "children": [
+      {
+       "id": "ch.group",
+       "name": "Group chat handling",
+       "desc": "Mention gating, per-group policy, participant-aware",
+       "status": {
+        "jarvis": "yes",
+        "openclaw": "yes",
+        "hermes": "yes",
+        "claude": "unknown",
+        "codex": "no",
+        "goose": "no",
+        "openhands": "no",
+        "letta": "no",
+        "crewai": "no",
+        "langgraph": "no",
+        "ag2": "no",
+        "manus": "no",
+        "devin": "no",
+        "cursor": "no",
+        "n8n": "no",
+        "agno": "unknown"
+       },
+       "sources": [],
+       "keywords": [
+        "group chat",
+        "group mention",
+        "mention gating",
+        "guild"
+       ]
+      },
+      {
+       "id": "ch.pair",
+       "name": "DM pairing / allowlist",
+       "desc": "Unknown senders must be approved before talking to the agent",
+       "status": {
+        "jarvis": "yes",
+        "openclaw": "yes",
+        "hermes": "yes",
+        "claude": "no",
+        "codex": "no",
+        "goose": "no",
+        "openhands": "no",
+        "letta": "no",
+        "crewai": "no",
+        "langgraph": "no",
+        "ag2": "no",
+        "manus": "no",
+        "devin": "no",
+        "cursor": "no",
+        "n8n": "no",
+        "agno": "no"
+       },
+       "sources": [
+        "https://docs.openclaw.ai/gateway/security"
+       ],
+       "keywords": [
+        "pairing",
+        "allowlist",
+        "dm policy"
+       ]
+      },
+      {
+       "id": "ch.thread",
+       "name": "Threads / per-chat sessions",
+       "desc": "Session keyed per chat/thread with isolation",
+       "status": {
+        "jarvis": "yes",
+        "openclaw": "yes",
+        "hermes": "yes",
+        "claude": "partial",
+        "codex": "partial",
+        "goose": "partial",
+        "openhands": "partial",
+        "letta": "partial",
+        "crewai": "partial",
+        "langgraph": "partial",
+        "ag2": "partial",
+        "manus": "partial",
+        "devin": "partial",
+        "cursor": "partial",
+        "n8n": "yes",
+        "agno": "yes"
+       },
+       "sources": [],
+       "keywords": [
+        "thread",
+        "per-chat session"
+       ]
+      },
+      {
+       "id": "ch.stream",
+       "name": "Streaming / edits / typing indicators",
+       "desc": "Live-edit replies, typing, reactions",
+       "status": {
+        "jarvis": "partial",
+        "openclaw": "yes",
+        "hermes": "yes",
+        "claude": "partial",
+        "codex": "no",
+        "goose": "no",
+        "openhands": "no",
+        "letta": "no",
+        "crewai": "no",
+        "langgraph": "no",
+        "ag2": "no",
+        "manus": "no",
+        "devin": "no",
+        "cursor": "no",
+        "n8n": "partial",
+        "agno": "partial"
+       },
+       "sources": [],
+       "note": "«sta scrivendo» e reazioni 👀/✅, niente messaggi che si aggiornano in streaming",
+       "keywords": [
+        "streaming reply",
+        "typing indicator",
+        "draft stream",
+        "edit message"
+       ]
+      },
+      {
+       "id": "ch.xplat",
+       "name": "Cross-platform continuity",
+       "desc": "Same conversation continues across channels",
+       "status": {
+        "jarvis": "partial",
+        "openclaw": "yes",
+        "hermes": "yes",
+        "claude": "unknown",
+        "codex": "no",
+        "goose": "no",
+        "openhands": "no",
+        "letta": "partial",
+        "crewai": "no",
+        "langgraph": "no",
+        "ag2": "no",
+        "manus": "partial",
+        "devin": "no",
+        "cursor": "no",
+        "n8n": "partial",
+        "agno": "unknown"
+       },
+       "sources": [
+        "https://hermes-agent.nousresearch.com/docs/"
+       ],
+       "note": "stessa identità e memoria su WhatsApp, Discord, Telegram; sessioni separate per chat",
+       "keywords": [
+        "cross-channel",
+        "cross-platform",
+        "identity link"
+       ]
+      },
+      {
+       "id": "ch.outbox",
+       "name": "Durable outbound queue",
+       "desc": "Outgoing messages queued, retried, deduped",
+       "status": {
+        "jarvis": "yes",
+        "openclaw": "partial",
+        "hermes": "unknown",
+        "claude": "no",
+        "codex": "no",
+        "goose": "no",
+        "openhands": "no",
+        "letta": "no",
+        "crewai": "no",
+        "langgraph": "partial",
+        "ag2": "no",
+        "manus": "no",
+        "devin": "no",
+        "cursor": "no",
+        "n8n": "partial",
+        "agno": "no"
+       },
+       "sources": [],
+       "note": "outbox su SQLite, ritentativi, ripresa dopo crash (tests/core.rs)",
+       "keywords": [
+        "outbox",
+        "delivery queue",
+        "dead-letter",
+        "redeliver"
+       ]
+      }
+     ]
+    },
+    {
+     "id": "ch.remote",
+     "name": "Remote control and apps",
+     "children": [
+      {
+       "id": "ch.rc",
+       "name": "Remote control of local session",
+       "desc": "Drive local agent from phone/web",
+       "status": {
+        "jarvis": "partial",
+        "openclaw": "yes",
+        "hermes": "yes",
+        "claude": "yes",
+        "codex": "no",
+        "goose": "no",
+        "openhands": "no",
+        "letta": "no",
+        "crewai": "no",
+        "langgraph": "no",
+        "ag2": "no",
+        "manus": "no",
+        "devin": "no",
+        "cursor": "no",
+        "n8n": "no",
+        "agno": "no"
+       },
+       "sources": [
+        "https://code.claude.com/docs/en/remote-control"
+       ],
+       "keywords": [
+        "remote control",
+        "remote session"
+       ]
+      },
+      {
+       "id": "ch.app",
+       "name": "Native companion apps",
+       "desc": "macOS/iOS/Android apps incl. voice, camera, canvas",
+       "status": {
+        "jarvis": "partial",
+        "openclaw": "yes",
+        "hermes": "yes",
+        "claude": "yes",
+        "codex": "yes",
+        "goose": "yes",
+        "openhands": "no",
+        "letta": "no",
+        "crewai": "no",
+        "langgraph": "no",
+        "ag2": "no",
+        "manus": "yes",
+        "devin": "yes",
+        "cursor": "yes",
+        "n8n": "no",
+        "agno": "yes"
+       },
+       "sources": [
+        "https://docs.openclaw.ai/platforms"
+       ],
+       "keywords": [
+        "ios app",
+        "android app",
+        "macos app",
+        "menu bar app"
+       ]
+      },
+      {
+       "id": "ch.api",
+       "name": "HTTP/WebSocket/ACP API for clients",
+       "desc": "Programmatic access to sessions",
+       "status": {
+        "jarvis": "partial",
+        "openclaw": "yes",
+        "hermes": "yes",
+        "claude": "yes",
+        "codex": "yes",
+        "goose": "yes",
+        "openhands": "yes",
+        "letta": "yes",
+        "crewai": "yes",
+        "langgraph": "yes",
+        "ag2": "yes",
+        "manus": "yes",
+        "devin": "yes",
+        "cursor": "yes",
+        "n8n": "yes",
+        "agno": "yes"
+       },
+       "sources": [],
+       "note": "riga di comando (invia, message send, cron) e hub :3360, niente API HTTP del servizio canali",
+       "keywords": [
+        "websocket api",
+        "http api",
+        "acp",
+        "openai-compatible"
+       ]
+      },
+      {
+       "id": "ch.email",
+       "name": "Email as channel",
+       "desc": "Inbound/outbound mail triage",
+       "status": {
+        "jarvis": "partial",
+        "openclaw": "yes",
+        "hermes": "yes",
+        "claude": "no",
+        "codex": "no",
+        "goose": "no",
+        "openhands": "no",
+        "letta": "no",
+        "crewai": "no",
+        "langgraph": "no",
+        "ag2": "no",
+        "manus": "no",
+        "devin": "no",
+        "cursor": "no",
+        "n8n": "yes",
+        "agno": "yes"
+       },
+       "sources": [],
+       "keywords": [
+        "email channel",
+        "gmail",
+        "imap"
+       ]
+      },
+      {
+       "id": "ch.voicecall",
+       "name": "Phone call channel",
+       "desc": "Voice calls in/out",
+       "status": {
+        "jarvis": "no",
+        "openclaw": "yes",
+        "hermes": "unknown",
+        "claude": "no",
+        "codex": "no",
+        "goose": "no",
+        "openhands": "no",
+        "letta": "no",
+        "crewai": "no",
+        "langgraph": "no",
+        "ag2": "no",
+        "manus": "no",
+        "devin": "no",
+        "cursor": "no",
+        "n8n": "yes",
+        "agno": "unknown"
+       },
+       "sources": [],
+       "keywords": [
+        "phone call",
+        "twilio",
+        "voice call",
+        "sip"
+       ]
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "engine",
+   "name": "Engine and runtime",
+   "children": [
+    {
+     "id": "en.loop",
+     "name": "Agent loop",
+     "children": [
+      {
+       "id": "en.model",
+       "name": "Multi-provider models",
+       "desc": "Switch provider/model without code changes",
+       "status": {
+        "jarvis": "partial",
+        "openclaw": "yes",
+        "hermes": "yes",
+        "claude": "partial",
+        "codex": "partial",
+        "goose": "yes",
+        "openhands": "yes",
+        "letta": "yes",
+        "crewai": "yes",
+        "langgraph": "yes",
+        "ag2": "yes",
+        "manus": "yes",
+        "devin": "yes",
+        "cursor": "yes",
+        "n8n": "yes",
+        "agno": "yes"
+       },
+       "sources": [
+        "https://hermes-agent.nousresearch.com/docs/"
+       ],
+       "keywords": [
+        "provider",
+        "openrouter",
+        "bedrock",
+        "vertex"
+       ]
+      },
+      {
+       "id": "en.harness",
+       "name": "Pluggable harness (Claude/Codex/local)",
+       "desc": "Agent engine is swappable plugin",
+       "status": {
+        "jarvis": "partial",
+        "openclaw": "yes",
+        "hermes": "yes",
+        "claude": "unknown",
+        "codex": "no",
+        "goose": "no",
+        "openhands": "no",
+        "letta": "no",
+        "crewai": "no",
+        "langgraph": "no",
+        "ag2": "no",
+        "manus": "no",
+        "devin": "no",
+        "cursor": "no",
+        "n8n": "no",
+        "agno": "no"
+       },
+       "sources": [
+        "https://docs.openclaw.ai"
+       ],
+       "keywords": [
+        "harness",
+        "codex backend",
+        "claude code backend"
+       ]
+      },
+      {
+       "id": "en.sdk",
+       "name": "Embeddable SDK",
+       "desc": "Library to build custom agents on the same loop",
+       "status": {
+        "jarvis": "partial",
+        "openclaw": "partial",
+        "hermes": "no",
+        "claude": "yes",
+        "codex": "yes",
+        "goose": "yes",
+        "openhands": "no",
+        "letta": "yes",
+        "crewai": "yes",
+        "langgraph": "yes",
+        "ag2": "yes",
+        "manus": "yes",
+        "devin": "no",
+        "cursor": "yes",
+        "n8n": "no",
+        "agno": "partial"
+       },
+       "sources": [
+        "https://code.claude.com/docs/en/agent-sdk/overview"
+       ],
+       "keywords": [
+        "agent sdk",
+        "sdk"
+       ]
+      },
+      {
+       "id": "en.headless",
+       "name": "Headless / non-interactive mode",
+       "desc": "Run unattended with structured output",
+       "status": {
+        "jarvis": "yes",
+        "openclaw": "yes",
+        "hermes": "yes",
+        "claude": "yes",
+        "codex": "yes",
+        "goose": "yes",
+        "openhands": "yes",
+        "letta": "yes",
+        "crewai": "yes",
+        "langgraph": "yes",
+        "ag2": "yes",
+        "manus": "yes",
+        "devin": "yes",
+        "cursor": "yes",
+        "n8n": "yes",
+        "agno": "yes"
+       },
+       "sources": [],
+       "keywords": [
+        "headless",
+        "non-interactive",
+        "exec mode"
+       ]
+      },
+      {
+       "id": "en.stream",
+       "name": "Streaming events / structured output",
+       "desc": "Typed event stream, JSON schema output",
+       "status": {
+        "jarvis": "yes",
+        "openclaw": "yes",
+        "hermes": "yes",
+        "claude": "yes",
+        "codex": "yes",
+        "goose": "yes",
+        "openhands": "yes",
+        "letta": "yes",
+        "crewai": "yes",
+        "langgraph": "yes",
+        "ag2": "yes",
+        "manus": "yes",
+        "devin": "yes",
+        "cursor": "no",
+        "n8n": "yes",
+        "agno": "yes"
+       },
+       "sources": [],
+       "keywords": [
+        "stream-json",
+        "structured output",
+        "json schema output"
+       ]
+      },
+      {
+       "id": "en.plan",
+       "name": "Plan mode / approval of plan",
+       "desc": "Read-only plan then execute",
+       "status": {
+        "jarvis": "partial",
+        "openclaw": "partial",
+        "hermes": "no",
+        "claude": "yes",
+        "codex": "no",
+        "goose": "no",
+        "openhands": "yes",
+        "letta": "partial",
+        "crewai": "no",
+        "langgraph": "no",
+        "ag2": "no",
+        "manus": "yes",
+        "devin": "yes",
+        "cursor": "yes",
+        "n8n": "no",
+        "agno": "yes"
+       },
+       "sources": [],
+       "keywords": [
+        "plan mode"
+       ]
+      },
+      {
+       "id": "en.interrupt",
+       "name": "Interrupt and redirect mid-turn",
+       "desc": "Steer a running turn",
+       "status": {
+        "jarvis": "partial",
+        "openclaw": "yes",
+        "hermes": "yes",
+        "claude": "yes",
+        "codex": "yes",
+        "goose": "yes",
+        "openhands": "yes",
+        "letta": "yes",
+        "crewai": "no",
+        "langgraph": "no",
+        "ag2": "no",
+        "manus": "yes",
+        "devin": "yes",
+        "cursor": "yes",
+        "n8n": "no",
+        "agno": "yes"
+       },
+       "sources": [],
+       "keywords": [
+        "interrupt",
+        "steer",
+        "mid-turn",
+        "queue message"
+       ]
+      }
+     ]
+    },
+    {
+     "id": "en.lang",
+     "name": "Implementation",
+     "children": [
+      {
+       "id": "en.rust",
+       "name": "Native compiled core",
+       "desc": "Rust/Go binary, small footprint",
+       "status": {
+        "jarvis": "yes",
+        "openclaw": "no",
+        "hermes": "no",
+        "claude": "no",
+        "codex": "yes",
+        "goose": "no",
+        "openhands": "no",
+        "letta": "no",
+        "crewai": "no",
+        "langgraph": "no",
+        "ag2": "no",
+        "manus": "no",
+        "devin": "no",
+        "cursor": "no",
+        "n8n": "no",
+        "agno": "no"
+       },
+       "sources": [],
+       "note": "jarvis-canali in Rust (tokio, rusqlite, whatsapp-rust, serenity)",
+       "keywords": [
+        "rust rewrite",
+        "native binary"
+       ]
+      },
+      {
+       "id": "en.lsp",
+       "name": "Code intelligence (LSP / repo map)",
+       "desc": "Language-server or AST awareness",
+       "status": {
+        "jarvis": "no",
+        "openclaw": "partial",
+        "hermes": "partial",
+        "claude": "yes",
+        "codex": "yes",
+        "goose": "partial",
+        "openhands": "partial",
+        "letta": "no",
+        "crewai": "no",
+        "langgraph": "no",
+        "ag2": "no",
+        "manus": "no",
+        "devin": "partial",
+        "cursor": "partial",
+        "n8n": "no",
+        "agno": "no"
+       },
+       "sources": [],
+       "keywords": [
+        "lsp",
+        "language server",
+        "repo map"
+       ]
+      },
+      {
+       "id": "en.browser",
+       "name": "Built-in browser use",
+       "desc": "Headless/real browser control",
+       "status": {
+        "jarvis": "partial",
+        "openclaw": "yes",
+        "hermes": "yes",
+        "claude": "yes",
+        "codex": "yes",
+        "goose": "yes",
+        "openhands": "yes",
+        "letta": "yes",
+        "crewai": "no",
+        "langgraph": "no",
+        "ag2": "no",
+        "manus": "yes",
+        "devin": "yes",
+        "cursor": "partial",
+        "n8n": "yes",
+        "agno": "partial"
+       },
+       "sources": [],
+       "keywords": [
+        "browser tool",
+        "playwright",
+        "cdp"
+       ]
+      },
+      {
+       "id": "en.computer",
+       "name": "Computer use (desktop)",
+       "desc": "Screenshot+mouse/keyboard control",
+       "status": {
+        "jarvis": "partial",
+        "openclaw": "yes",
+        "hermes": "yes",
+        "claude": "partial",
+        "codex": "no",
+        "goose": "no",
+        "openhands": "partial",
+        "letta": "no",
+        "crewai": "no",
+        "langgraph": "no",
+        "ag2": "no",
+        "manus": "yes",
+        "devin": "yes",
+        "cursor": "unknown",
+        "n8n": "no",
+        "agno": "no"
+       },
+       "sources": [],
+       "keywords": [
+        "computer use",
+        "desktop control"
+       ]
+      }
+     ]
+    },
+    {
+     "id": "en.managed",
+     "name": "Managed / hosted runtime",
+     "children": [
+      {
+       "id": "en.cloud",
+       "name": "Cloud agent sessions",
+       "desc": "Agent runs in vendor cloud sandbox",
+       "status": {
+        "jarvis": "partial",
+        "openclaw": "no",
+        "hermes": "partial",
+        "claude": "yes",
+        "codex": "yes",
+        "goose": "unknown",
+        "openhands": "no",
+        "letta": "no",
+        "crewai": "no",
+        "langgraph": "partial",
+        "ag2": "no",
+        "manus": "partial",
+        "devin": "yes",
+        "cursor": "yes",
+        "n8n": "yes",
+        "agno": "partial"
+       },
+       "sources": [
+        "https://code.claude.com/docs/en/claude-code-on-the-web",
+        "https://developers.openai.com/codex"
+       ],
+       "keywords": [
+        "cloud session",
+        "cloud agent",
+        "remote agent"
+       ]
+      },
+      {
+       "id": "en.managed",
+       "name": "Managed agents API",
+       "desc": "Server-hosted agents with managed sandbox",
+       "status": {
+        "jarvis": "no",
+        "openclaw": "no",
+        "hermes": "no",
+        "claude": "yes",
+        "codex": "yes",
+        "goose": "unknown",
+        "openhands": "no",
+        "letta": "yes",
+        "crewai": "yes",
+        "langgraph": "no",
+        "ag2": "no",
+        "manus": "no",
+        "devin": "yes",
+        "cursor": "yes",
+        "n8n": "unknown",
+        "agno": "yes"
+       },
+       "sources": [
+        "https://platform.claude.com/docs/en/managed-agents/overview"
+       ],
+       "keywords": [
+        "managed agent"
+       ]
+      },
+      {
+       "id": "en.worktree",
+       "name": "Git worktree isolation per task",
+       "desc": "Parallel tasks in separate worktrees",
+       "status": {
+        "jarvis": "partial",
+        "openclaw": "no",
+        "hermes": "no",
+        "claude": "yes",
+        "codex": "yes",
+        "goose": "yes",
+        "openhands": "no",
+        "letta": "yes",
+        "crewai": "no",
+        "langgraph": "no",
+        "ag2": "no",
+        "manus": "no",
+        "devin": "yes",
+        "cursor": "yes",
+        "n8n": "yes",
+        "agno": "no"
+       },
+       "sources": [],
+       "keywords": [
+        "worktree"
+       ]
+      },
+      {
+       "id": "en.pr",
+       "name": "PR / code-review automation",
+       "desc": "Opens PRs, reviews, responds to comments",
+       "status": {
+        "jarvis": "partial",
+        "openclaw": "no",
+        "hermes": "no",
+        "claude": "yes",
+        "codex": "yes",
+        "goose": "yes",
+        "openhands": "no",
+        "letta": "yes",
+        "crewai": "yes",
+        "langgraph": "no",
+        "ag2": "no",
+        "manus": "no",
+        "devin": "yes",
+        "cursor": "yes",
+        "n8n": "no",
+        "agno": "no"
+       },
+       "sources": [],
+       "keywords": [
+        "pull request",
+        "code review",
+        "pr review"
+       ]
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "tools",
+   "name": "Tools and extensibility",
+   "children": [
+    {
+     "id": "tl.mcp",
+     "name": "MCP",
+     "children": [
+      {
+       "id": "tl.mcpc",
+       "name": "MCP client",
+       "desc": "Consumes MCP servers",
+       "status": {
+        "jarvis": "yes",
+        "openclaw": "yes",
+        "hermes": "yes",
+        "claude": "yes",
+        "codex": "yes",
+        "goose": "yes",
+        "openhands": "yes",
+        "letta": "yes",
+        "crewai": "yes",
+        "langgraph": "yes",
+        "ag2": "yes",
+        "manus": "yes",
+        "devin": "yes",
+        "cursor": "yes",
+        "n8n": "yes",
+        "agno": "yes"
+       },
+       "sources": [],
+       "keywords": [
+        "mcp client",
+        "mcp server support"
+       ]
+      },
+      {
+       "id": "tl.mcps",
+       "name": "Exposes itself as MCP server",
+       "desc": "Other agents can call it",
+       "status": {
+        "jarvis": "partial",
+        "openclaw": "yes",
+        "hermes": "yes",
+        "claude": "yes",
+        "codex": "yes",
+        "goose": "yes",
+        "openhands": "yes",
+        "letta": "yes",
+        "crewai": "yes",
+        "langgraph": "yes",
+        "ag2": "yes",
+        "manus": "no",
+        "devin": "yes",
+        "cursor": "no",
+        "n8n": "yes",
+        "agno": "yes"
+       },
+       "sources": [
+        "https://code.claude.com/docs/en/mcp"
+       ],
+       "keywords": [
+        "mcp server mode",
+        "serve as mcp",
+        "expose mcp"
+       ]
+      },
+      {
+       "id": "tl.gw",
+       "name": "MCP gateway with hot mount/unmount",
+       "desc": "Mount child servers on demand",
+       "status": {
+        "jarvis": "yes",
+        "openclaw": "partial",
+        "hermes": "no",
+        "claude": "partial",
+        "codex": "no",
+        "goose": "no",
+        "openhands": "no",
+        "letta": "no",
+        "crewai": "no",
+        "langgraph": "no",
+        "ag2": "no",
+        "manus": "no",
+        "devin": "no",
+        "cursor": "no",
+        "n8n": "no",
+        "agno": "no"
+       },
+       "sources": [],
+       "keywords": [
+        "mcp gateway",
+        "hot reload mcp",
+        "mount"
+       ]
+      },
+      {
+       "id": "tl.oauth",
+       "name": "MCP OAuth / remote servers",
+       "desc": "Streamable HTTP + OAuth",
+       "status": {
+        "jarvis": "partial",
+        "openclaw": "yes",
+        "hermes": "yes",
+        "claude": "yes",
+        "codex": "yes",
+        "goose": "yes",
+        "openhands": "yes",
+        "letta": "yes",
+        "crewai": "yes",
+        "langgraph": "yes",
+        "ag2": "yes",
+        "manus": "yes",
+        "devin": "yes",
+        "cursor": "yes",
+        "n8n": "yes",
+        "agno": "yes"
+       },
+       "sources": [],
+       "keywords": [
+        "mcp oauth",
+        "remote mcp"
+       ]
+      },
+      {
+       "id": "tl.reg",
+       "name": "Connector registry / marketplace",
+       "desc": "Discover and install tools",
+       "status": {
+        "jarvis": "partial",
+        "openclaw": "yes",
+        "hermes": "yes",
+        "claude": "yes",
+        "codex": "yes",
+        "goose": "yes",
+        "openhands": "unknown",
+        "letta": "unknown",
+        "crewai": "unknown",
+        "langgraph": "unknown",
+        "ag2": "unknown",
+        "manus": "yes",
+        "devin": "yes",
+        "cursor": "yes",
+        "n8n": "yes",
+        "agno": "yes"
+       },
+       "sources": [],
+       "keywords": [
+        "registry",
+        "marketplace",
+        "connector"
+       ]
+      }
+     ]
+    },
+    {
+     "id": "tl.dyn",
+     "name": "Dynamic loading and discovery",
+     "children": [
+      {
+       "id": "tl.search",
+       "name": "Tool search (deferred schemas)",
+       "desc": "Load tool schemas on demand to save context",
+       "status": {
+        "jarvis": "yes",
+        "openclaw": "yes",
+        "hermes": "partial",
+        "claude": "partial",
+        "codex": "no",
+        "goose": "no",
+        "openhands": "no",
+        "letta": "no",
+        "crewai": "no",
+        "langgraph": "no",
+        "ag2": "no",
+        "manus": "no",
+        "devin": "partial",
+        "cursor": "unknown",
+        "n8n": "unknown",
+        "agno": "no"
+       },
+       "sources": [
+        "https://code.claude.com/docs/en/mcp"
+       ],
+       "note": "schemi MCP differiti con ricerca (ENABLE_TOOL_SEARCH) e gateway a caldo",
+       "keywords": [
+        "tool search",
+        "deferred tools",
+        "defer_loading",
+        "lazy tool"
+       ]
+      },
+      {
+       "id": "tl.cm",
+       "name": "Code mode (agent writes code that calls tools)",
+       "desc": "Tools called from generated scripts, not one by one",
+       "status": {
+        "jarvis": "partial",
+        "openclaw": "yes",
+        "hermes": "yes",
+        "claude": "no",
+        "codex": "no",
+        "goose": "no",
+        "openhands": "no",
+        "letta": "no",
+        "crewai": "no",
+        "langgraph": "no",
+        "ag2": "no",
+        "manus": "no",
+        "devin": "no",
+        "cursor": "no",
+        "n8n": "no",
+        "agno": "no"
+       },
+       "sources": [
+        "https://hermes-agent.nousresearch.com/docs/"
+       ],
+       "keywords": [
+        "code mode",
+        "programmatic tool",
+        "tool rpc",
+        "execute_code"
+       ]
+      },
+      {
+       "id": "tl.plug",
+       "name": "Plugin system",
+       "desc": "Installable bundles of tools/skills/hooks",
+       "status": {
+        "jarvis": "partial",
+        "openclaw": "yes",
+        "hermes": "yes",
+        "claude": "yes",
+        "codex": "yes",
+        "goose": "yes",
+        "openhands": "yes",
+        "letta": "yes",
+        "crewai": "yes",
+        "langgraph": "no",
+        "ag2": "no",
+        "manus": "no",
+        "devin": "yes",
+        "cursor": "yes",
+        "n8n": "yes",
+        "agno": "yes"
+       },
+       "sources": [
+        "https://docs.openclaw.ai/plugins",
+        "https://code.claude.com/docs/en/plugins"
+       ],
+       "keywords": [
+        "plugin"
+       ]
+      },
+      {
+       "id": "tl.forge",
+       "name": "Agent creates its own tools",
+       "desc": "Drafts new tools from repeated manual work",
+       "status": {
+        "jarvis": "yes",
+        "openclaw": "yes",
+        "hermes": "yes",
+        "claude": "partial",
+        "codex": "partial",
+        "goose": "no",
+        "openhands": "partial",
+        "letta": "yes",
+        "crewai": "partial",
+        "langgraph": "partial",
+        "ag2": "no",
+        "manus": "partial",
+        "devin": "no",
+        "cursor": "no",
+        "n8n": "no",
+        "agno": "no"
+       },
+       "sources": [],
+       "keywords": [
+        "create tool",
+        "tool creation",
+        "self-authored tool"
+       ]
+      },
+      {
+       "id": "tl.perm",
+       "name": "Per-agent tool allow/deny lists",
+       "desc": "Restrict which tools each agent sees",
+       "status": {
+        "jarvis": "yes",
+        "openclaw": "yes",
+        "hermes": "yes",
+        "claude": "yes",
+        "codex": "yes",
+        "goose": "yes",
+        "openhands": "yes",
+        "letta": "yes",
+        "crewai": "yes",
+        "langgraph": "yes",
+        "ag2": "yes",
+        "manus": "yes",
+        "devin": "yes",
+        "cursor": "yes",
+        "n8n": "yes",
+        "agno": "yes"
+       },
+       "sources": [],
+       "keywords": [
+        "tool allowlist",
+        "tool policy",
+        "allowedtools",
+        "disallowed"
+       ]
+      }
+     ]
+    },
+    {
+     "id": "tl.builtin",
+     "name": "Built-in tools",
+     "children": [
+      {
+       "id": "tl.shell",
+       "name": "Shell / file edit",
+       "desc": "Bash and file tools",
+       "status": {
+        "jarvis": "yes",
+        "openclaw": "yes",
+        "hermes": "yes",
+        "claude": "yes",
+        "codex": "yes",
+        "goose": "yes",
+        "openhands": "yes",
+        "letta": "yes",
+        "crewai": "yes",
+        "langgraph": "yes",
+        "ag2": "yes",
+        "manus": "yes",
+        "devin": "yes",
+        "cursor": "yes",
+        "n8n": "yes",
+        "agno": "yes"
+       },
+       "sources": [],
+       "keywords": [
+        "bash tool",
+        "shell tool",
+        "apply_patch"
+       ]
+      },
+      {
+       "id": "tl.web",
+       "name": "Web search and fetch",
+       "desc": "Search + page fetch",
+       "status": {
+        "jarvis": "yes",
+        "openclaw": "yes",
+        "hermes": "yes",
+        "claude": "yes",
+        "codex": "yes",
+        "goose": "no",
+        "openhands": "yes",
+        "letta": "yes",
+        "crewai": "yes",
+        "langgraph": "yes",
+        "ag2": "yes",
+        "manus": "yes",
+        "devin": "yes",
+        "cursor": "yes",
+        "n8n": "yes",
+        "agno": "yes"
+       },
+       "sources": [],
+       "keywords": [
+        "web search",
+        "web fetch"
+       ]
+      },
+      {
+       "id": "tl.cli",
+       "name": "CLI tools as first-class",
+       "desc": "Agent drives local CLIs rather than MCP",
+       "status": {
+        "jarvis": "yes",
+        "openclaw": "yes",
+        "hermes": "yes",
+        "claude": "yes",
+        "codex": "yes",
+        "goose": "yes",
+        "openhands": "yes",
+        "letta": "yes",
+        "crewai": "yes",
+        "langgraph": "yes",
+        "ag2": "yes",
+        "manus": "yes",
+        "devin": "yes",
+        "cursor": "yes",
+        "n8n": "yes",
+        "agno": "yes"
+       },
+       "sources": [],
+       "keywords": [
+        "cli tool"
+       ]
+      },
+      {
+       "id": "tl.hooks",
+       "name": "Lifecycle hooks",
+       "desc": "Pre/post tool-use hooks to block or rewrite",
+       "status": {
+        "jarvis": "yes",
+        "openclaw": "yes",
+        "hermes": "yes",
+        "claude": "yes",
+        "codex": "yes",
+        "goose": "unknown",
+        "openhands": "no",
+        "letta": "no",
+        "crewai": "yes",
+        "langgraph": "yes",
+        "ag2": "yes",
+        "manus": "unknown",
+        "devin": "no",
+        "cursor": "yes",
+        "n8n": "yes",
+        "agno": "partial"
+       },
+       "sources": [
+        "https://code.claude.com/docs/en/hooks"
+       ],
+       "keywords": [
+        "hook",
+        "pretooluse",
+        "posttooluse"
+       ]
+      },
+      {
+       "id": "tl.ask",
+       "name": "Ask-user question tool",
+       "desc": "Structured multiple-choice questions",
+       "status": {
+        "jarvis": "partial",
+        "openclaw": "yes",
+        "hermes": "yes",
+        "claude": "yes",
+        "codex": "yes",
+        "goose": "yes",
+        "openhands": "unknown",
+        "letta": "no",
+        "crewai": "no",
+        "langgraph": "yes",
+        "ag2": "no",
+        "manus": "yes",
+        "devin": "yes",
+        "cursor": "yes",
+        "n8n": "yes",
+        "agno": "no"
+       },
+       "sources": [],
+       "keywords": [
+        "ask user",
+        "askuserquestion",
+        "elicitation"
+       ]
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "memory",
+   "name": "Memory",
+   "children": [
+    {
+     "id": "mem.short",
+     "name": "Short-term / context",
+     "children": [
+      {
+       "id": "mem.sess",
+       "name": "Persistent sessions",
+       "desc": "Resume past conversations",
+       "status": {
+        "jarvis": "yes",
+        "openclaw": "yes",
+        "hermes": "yes",
+        "claude": "yes",
+        "codex": "yes",
+        "goose": "yes",
+        "openhands": "yes",
+        "letta": "yes",
+        "crewai": "yes",
+        "langgraph": "yes",
+        "ag2": "yes",
+        "manus": "yes",
+        "devin": "yes",
+        "cursor": "yes",
+        "n8n": "yes",
+        "agno": "yes"
+       },
+       "sources": [],
+       "keywords": [
+        "session persistence",
+        "resume session"
+       ]
+      },
+      {
+       "id": "mem.fork",
+       "name": "Session fork / branch",
+       "desc": "Fork a conversation",
+       "status": {
+        "jarvis": "partial",
+        "openclaw": "no",
+        "hermes": "no",
+        "claude": "yes",
+        "codex": "yes",
+        "goose": "yes",
+        "openhands": "no",
+        "letta": "no",
+        "crewai": "no",
+        "langgraph": "yes",
+        "ag2": "yes",
+        "manus": "no",
+        "devin": "no",
+        "cursor": "no",
+        "n8n": "no",
+        "agno": "no"
+       },
+       "sources": [],
+       "keywords": [
+        "fork session",
+        "branch conversation"
+       ]
+      },
+      {
+       "id": "mem.rewind",
+       "name": "Checkpoints / rewind",
+       "desc": "Undo code and conversation to a point",
+       "status": {
+        "jarvis": "no",
+        "openclaw": "no",
+        "hermes": "no",
+        "claude": "yes",
+        "codex": "yes",
+        "goose": "yes",
+        "openhands": "no",
+        "letta": "no",
+        "crewai": "no",
+        "langgraph": "yes",
+        "ag2": "yes",
+        "manus": "no",
+        "devin": "yes",
+        "cursor": "yes",
+        "n8n": "yes",
+        "agno": "no"
+       },
+       "sources": [
+        "https://code.claude.com/docs/en/checkpointing"
+       ],
+       "keywords": [
+        "checkpoint",
+        "rewind",
+        "undo"
+       ]
+      }
+     ]
+    },
+    {
+     "id": "mem.long",
+     "name": "Long-term memory",
+     "children": [
+      {
+       "id": "mem.files",
+       "name": "Memory as plain files",
+       "desc": "Markdown memory the agent reads/writes",
+       "status": {
+        "jarvis": "yes",
+        "openclaw": "yes",
+        "hermes": "yes",
+        "claude": "yes",
+        "codex": "yes",
+        "goose": "yes",
+        "openhands": "yes",
+        "letta": "no",
+        "crewai": "no",
+        "langgraph": "no",
+        "ag2": "no",
+        "manus": "no",
+        "devin": "no",
+        "cursor": "yes",
+        "n8n": "yes",
+        "agno": "partial"
+       },
+       "sources": [
+        "https://docs.openclaw.ai",
+        "https://code.claude.com/docs/en/memory"
+       ],
+       "keywords": [
+        "memory.md",
+        "memory file"
+       ]
+      },
+      {
+       "id": "mem.curate",
+       "name": "Agent-curated memory with nudges",
+       "desc": "Agent periodically decides what to persist",
+       "status": {
+        "jarvis": "partial",
+        "openclaw": "yes",
+        "hermes": "yes",
+        "claude": "no",
+        "codex": "partial",
+        "goose": "no",
+        "openhands": "no",
+        "letta": "yes",
+        "crewai": "yes",
+        "langgraph": "no",
+        "ag2": "no",
+        "manus": "yes",
+        "devin": "unknown",
+        "cursor": "unknown",
+        "n8n": "unknown",
+        "agno": "no"
+       },
+       "sources": [
+        "https://hermes-agent.nousresearch.com/docs/"
+       ],
+       "keywords": [
+        "memory curation",
+        "memory nudge"
+       ]
+      },
+      {
+       "id": "mem.sem",
+       "name": "Semantic / vector search",
+       "desc": "Embedding retrieval over memory",
+       "status": {
+        "jarvis": "partial",
+        "openclaw": "yes",
+        "hermes": "yes",
+        "claude": "unknown",
+        "codex": "no",
+        "goose": "partial",
+        "openhands": "no",
+        "letta": "yes",
+        "crewai": "yes",
+        "langgraph": "yes",
+        "ag2": "yes",
+        "manus": "yes",
+        "devin": "yes",
+        "cursor": "yes",
+        "n8n": "yes",
+        "agno": "yes"
+       },
+       "sources": [],
+       "keywords": [
+        "embedding",
+        "vector",
+        "semantic search"
+       ]
+      },
+      {
+       "id": "mem.fts",
+       "name": "Full-text session search",
+       "desc": "Search past transcripts (FTS/BM25)",
+       "status": {
+        "jarvis": "yes",
+        "openclaw": "yes",
+        "hermes": "yes",
+        "claude": "no",
+        "codex": "no",
+        "goose": "no",
+        "openhands": "no",
+        "letta": "partial",
+        "crewai": "partial",
+        "langgraph": "no",
+        "ag2": "no",
+        "manus": "unknown",
+        "devin": "unknown",
+        "cursor": "unknown",
+        "n8n": "no",
+        "agno": "unknown"
+       },
+       "sources": [
+        "https://hermes-agent.nousresearch.com/docs/"
+       ],
+       "keywords": [
+        "fts5",
+        "full-text",
+        "session search"
+       ]
+      },
+      {
+       "id": "mem.user",
+       "name": "User modeling",
+       "desc": "Deepening model of the user (Honcho etc.)",
+       "status": {
+        "jarvis": "partial",
+        "openclaw": "no",
+        "hermes": "yes",
+        "claude": "no",
+        "codex": "no",
+        "goose": "no",
+        "openhands": "no",
+        "letta": "yes",
+        "crewai": "yes",
+        "langgraph": "no",
+        "ag2": "no",
+        "manus": "yes",
+        "devin": "unknown",
+        "cursor": "unknown",
+        "n8n": "no",
+        "agno": "no"
+       },
+       "sources": [
+        "https://hermes-agent.nousresearch.com/docs/"
+       ],
+       "keywords": [
+        "user model",
+        "honcho",
+        "user profile"
+       ]
+      },
+      {
+       "id": "mem.proj",
+       "name": "Per-project instruction files",
+       "desc": "CLAUDE.md / AGENTS.md style",
+       "status": {
+        "jarvis": "yes",
+        "openclaw": "yes",
+        "hermes": "yes",
+        "claude": "yes",
+        "codex": "yes",
+        "goose": "yes",
+        "openhands": "yes",
+        "letta": "partial",
+        "crewai": "partial",
+        "langgraph": "no",
+        "ag2": "no",
+        "manus": "yes",
+        "devin": "yes",
+        "cursor": "yes",
+        "n8n": "no",
+        "agno": "yes"
+       },
+       "sources": [],
+       "keywords": [
+        "agents.md",
+        "claude.md",
+        "project instructions"
+       ]
+      }
+     ]
+    },
+    {
+     "id": "mem.self",
+     "name": "Self-editing / stateful agents",
+     "children": [
+      {
+       "id": "mem.blocks",
+       "name": "Memory blocks edited by agent",
+       "desc": "MemGPT-style core memory",
+       "status": {
+        "jarvis": "no",
+        "openclaw": "no",
+        "hermes": "partial",
+        "claude": "no",
+        "codex": "no",
+        "goose": "no",
+        "openhands": "no",
+        "letta": "yes",
+        "crewai": "no",
+        "langgraph": "no",
+        "ag2": "no",
+        "manus": "no",
+        "devin": "no",
+        "cursor": "no",
+        "n8n": "no",
+        "agno": "partial"
+       },
+       "sources": [
+        "https://docs.letta.com"
+       ],
+       "keywords": [
+        "memory block",
+        "core memory"
+       ]
+      },
+      {
+       "id": "mem.sleep",
+       "name": "Background consolidation ('sleep-time')",
+       "desc": "Offline memory reorganisation",
+       "status": {
+        "jarvis": "partial",
+        "openclaw": "no",
+        "hermes": "partial",
+        "claude": "unknown",
+        "codex": "no",
+        "goose": "no",
+        "openhands": "no",
+        "letta": "yes",
+        "crewai": "unknown",
+        "langgraph": "no",
+        "ag2": "no",
+        "manus": "no",
+        "devin": "unknown",
+        "cursor": "unknown",
+        "n8n": "unknown",
+        "agno": "no"
+       },
+       "sources": [],
+       "keywords": [
+        "sleep-time",
+        "consolidation",
+        "dreaming"
+       ]
+      },
+      {
+       "id": "mem.graph",
+       "name": "Knowledge graph memory",
+       "desc": "Entity/relation memory",
+       "status": {
+        "jarvis": "partial",
+        "openclaw": "no",
+        "hermes": "partial",
+        "claude": "no",
+        "codex": "no",
+        "goose": "no",
+        "openhands": "no",
+        "letta": "partial",
+        "crewai": "partial",
+        "langgraph": "no",
+        "ag2": "partial",
+        "manus": "no",
+        "devin": "no",
+        "cursor": "no",
+        "n8n": "no",
+        "agno": "partial"
+       },
+       "sources": [],
+       "keywords": [
+        "knowledge graph",
+        "graph memory"
+       ]
+      },
+      {
+       "id": "mem.shared",
+       "name": "Shared memory across agents",
+       "desc": "Multiple agents read/write one store",
+       "status": {
+        "jarvis": "partial",
+        "openclaw": "partial",
+        "hermes": "partial",
+        "claude": "partial",
+        "codex": "no",
+        "goose": "no",
+        "openhands": "no",
+        "letta": "yes",
+        "crewai": "yes",
+        "langgraph": "yes",
+        "ag2": "yes",
+        "manus": "unknown",
+        "devin": "unknown",
+        "cursor": "no",
+        "n8n": "yes",
+        "agno": "partial"
+       },
+       "sources": [],
+       "keywords": [
+        "shared memory"
+       ]
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "sched",
+   "name": "Scheduling, automation, proactivity",
+   "children": [
+    {
+     "id": "sc.cron",
+     "name": "Scheduled jobs",
+     "children": [
+      {
+       "id": "sc.cron",
+       "name": "Cron / interval jobs",
+       "desc": "Agent runs on schedule",
+       "status": {
+        "jarvis": "yes",
+        "openclaw": "yes",
+        "hermes": "yes",
+        "claude": "yes",
+        "codex": "yes",
+        "goose": "unknown",
+        "openhands": "partial",
+        "letta": "unknown",
+        "crewai": "unknown",
+        "langgraph": "unknown",
+        "ag2": "unknown",
+        "manus": "partial",
+        "devin": "yes",
+        "cursor": "partial",
+        "n8n": "yes",
+        "agno": "partial"
+       },
+       "sources": [
+        "https://docs.openclaw.ai",
+        "https://hermes-agent.nousresearch.com/docs/",
+        "https://code.claude.com/docs/en/scheduled-tasks"
+       ],
+       "keywords": [
+        "cron",
+        "schedule"
+       ]
+      },
+      {
+       "id": "sc.nl",
+       "name": "Natural-language schedule creation",
+       "desc": "Create jobs by chatting",
+       "status": {
+        "jarvis": "partial",
+        "openclaw": "yes",
+        "hermes": "yes",
+        "claude": "yes",
+        "codex": "yes",
+        "goose": "unknown",
+        "openhands": "no",
+        "letta": "unknown",
+        "crewai": "unknown",
+        "langgraph": "unknown",
+        "ag2": "unknown",
+        "manus": "unknown",
+        "devin": "unknown",
+        "cursor": "yes",
+        "n8n": "yes",
+        "agno": "no"
+       },
+       "sources": [],
+       "keywords": [
+        "natural language schedule"
+       ]
+      },
+      {
+       "id": "sc.deliver",
+       "name": "Deliver results to any channel",
+       "desc": "Cron output to chat platform",
+       "status": {
+        "jarvis": "yes",
+        "openclaw": "yes",
+        "hermes": "yes",
+        "claude": "unknown",
+        "codex": "no",
+        "goose": "no",
+        "openhands": "no",
+        "letta": "no",
+        "crewai": "no",
+        "langgraph": "no",
+        "ag2": "no",
+        "manus": "no",
+        "devin": "no",
+        "cursor": "yes",
+        "n8n": "yes",
+        "agno": "partial"
+       },
+       "sources": [],
+       "keywords": [
+        "cron delivery",
+        "announce"
+       ]
+      },
+      {
+       "id": "sc.loop",
+       "name": "Self-paced loop / wakeup",
+       "desc": "Agent re-schedules itself",
+       "status": {
+        "jarvis": "partial",
+        "openclaw": "no",
+        "hermes": "no",
+        "claude": "yes",
+        "codex": "unknown",
+        "goose": "unknown",
+        "openhands": "no",
+        "letta": "no",
+        "crewai": "no",
+        "langgraph": "no",
+        "ag2": "no",
+        "manus": "no",
+        "devin": "no",
+        "cursor": "no",
+        "n8n": "no",
+        "agno": "no"
+       },
+       "sources": [
+        "https://code.claude.com/docs/en/scheduled-tasks"
+       ],
+       "keywords": [
+        "loop",
+        "wakeup",
+        "self-paced"
+       ]
+      }
+     ]
+    },
+    {
+     "id": "sc.trig",
+     "name": "Event triggers",
+     "children": [
+      {
+       "id": "sc.web",
+       "name": "Webhooks / API triggers",
+       "desc": "External event starts a run",
+       "status": {
+        "jarvis": "yes",
+        "openclaw": "yes",
+        "hermes": "yes",
+        "claude": "yes",
+        "codex": "yes",
+        "goose": "unknown",
+        "openhands": "no",
+        "letta": "yes",
+        "crewai": "yes",
+        "langgraph": "yes",
+        "ag2": "yes",
+        "manus": "yes",
+        "devin": "yes",
+        "cursor": "yes",
+        "n8n": "yes",
+        "agno": "yes"
+       },
+       "sources": [],
+       "keywords": [
+        "webhook"
+       ]
+      },
+      {
+       "id": "sc.gh",
+       "name": "GitHub/Slack/Linear triggers",
+       "desc": "Run on issue/PR/mention",
+       "status": {
+        "jarvis": "partial",
+        "openclaw": "no",
+        "hermes": "no",
+        "claude": "yes",
+        "codex": "yes",
+        "goose": "yes",
+        "openhands": "no",
+        "letta": "yes",
+        "crewai": "yes",
+        "langgraph": "no",
+        "ag2": "no",
+        "manus": "no",
+        "devin": "yes",
+        "cursor": "yes",
+        "n8n": "yes",
+        "agno": "partial"
+       },
+       "sources": [],
+       "keywords": [
+        "github trigger",
+        "slack trigger",
+        "linear"
+       ]
+      },
+      {
+       "id": "sc.watch",
+       "name": "Background monitors",
+       "desc": "Watch process/file/log and wake agent",
+       "status": {
+        "jarvis": "partial",
+        "openclaw": "no",
+        "hermes": "partial",
+        "claude": "yes",
+        "codex": "unknown",
+        "goose": "no",
+        "openhands": "no",
+        "letta": "no",
+        "crewai": "no",
+        "langgraph": "no",
+        "ag2": "no",
+        "manus": "no",
+        "devin": "no",
+        "cursor": "no",
+        "n8n": "partial",
+        "agno": "no"
+       },
+       "sources": [],
+       "keywords": [
+        "monitor",
+        "watcher"
+       ]
+      },
+      {
+       "id": "sc.heart",
+       "name": "Heartbeat / proactive check-in",
+       "desc": "Agent checks in without prompt",
+       "status": {
+        "jarvis": "yes",
+        "openclaw": "yes",
+        "hermes": "yes",
+        "claude": "unknown",
+        "codex": "no",
+        "goose": "no",
+        "openhands": "no",
+        "letta": "no",
+        "crewai": "no",
+        "langgraph": "no",
+        "ag2": "no",
+        "manus": "no",
+        "devin": "no",
+        "cursor": "no",
+        "n8n": "no",
+        "agno": "no"
+       },
+       "sources": [
+        "https://docs.openclaw.ai"
+       ],
+       "note": "salute dei canali ogni 15 min, giro sorveglianza",
+       "keywords": [
+        "heartbeat"
+       ]
+      }
+     ]
+    },
+    {
+     "id": "sc.work",
+     "name": "Workflows",
+     "children": [
+      {
+       "id": "sc.wf",
+       "name": "Declarative workflows / DAGs",
+       "desc": "Graph or script of steps",
+       "status": {
+        "jarvis": "partial",
+        "openclaw": "no",
+        "hermes": "no",
+        "claude": "partial",
+        "codex": "no",
+        "goose": "no",
+        "openhands": "no",
+        "letta": "no",
+        "crewai": "yes",
+        "langgraph": "yes",
+        "ag2": "yes",
+        "manus": "unknown",
+        "devin": "no",
+        "cursor": "no",
+        "n8n": "yes",
+        "agno": "partial"
+       },
+       "sources": [],
+       "keywords": [
+        "workflow",
+        "dag"
+       ]
+      },
+      {
+       "id": "sc.queue",
+       "name": "Task board / queue",
+       "desc": "Kanban or queue the agent works from",
+       "status": {
+        "jarvis": "yes",
+        "openclaw": "partial",
+        "hermes": "partial",
+        "claude": "no",
+        "codex": "no",
+        "goose": "no",
+        "openhands": "no",
+        "letta": "no",
+        "crewai": "no",
+        "langgraph": "no",
+        "ag2": "no",
+        "manus": "no",
+        "devin": "no",
+        "cursor": "no",
+        "n8n": "no",
+        "agno": "no"
+       },
+       "sources": [],
+       "keywords": [
+        "task board",
+        "kanban",
+        "task queue"
+       ]
+      },
+      {
+       "id": "sc.night",
+       "name": "Overnight batch queue with placement",
+       "desc": "Run heavy work off-hours on best host",
+       "status": {
+        "jarvis": "yes",
+        "openclaw": "no",
+        "hermes": "no",
+        "claude": "no",
+        "codex": "no",
+        "goose": "no",
+        "openhands": "no",
+        "letta": "no",
+        "crewai": "no",
+        "langgraph": "no",
+        "ag2": "no",
+        "manus": "no",
+        "devin": "no",
+        "cursor": "no",
+        "n8n": "no",
+        "agno": "no"
+       },
+       "sources": [],
+       "keywords": [
+        "overnight",
+        "batch queue"
+       ]
+      },
+      {
+       "id": "sc.hitl",
+       "name": "Human-in-the-loop pause/resume",
+       "desc": "Interrupt for approval then continue",
+       "status": {
+        "jarvis": "partial",
+        "openclaw": "yes",
+        "hermes": "yes",
+        "claude": "yes",
+        "codex": "yes",
+        "goose": "yes",
+        "openhands": "yes",
+        "letta": "yes",
+        "crewai": "yes",
+        "langgraph": "yes",
+        "ag2": "yes",
+        "manus": "yes",
+        "devin": "yes",
+        "cursor": "yes",
+        "n8n": "yes",
+        "agno": "yes"
+       },
+       "sources": [],
+       "keywords": [
+        "human-in-the-loop",
+        "approval pause",
+        "interrupt resume"
+       ]
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "multi",
+   "name": "Multi-agent, teams, delegation",
+   "children": [
+    {
+     "id": "ma.sub",
+     "name": "Subagents",
+     "children": [
+      {
+       "id": "ma.spawn",
+       "name": "Spawn subagent with own context",
+       "desc": "Isolated child for a subtask",
+       "status": {
+        "jarvis": "yes",
+        "openclaw": "yes",
+        "hermes": "yes",
+        "claude": "yes",
+        "codex": "yes",
+        "goose": "yes",
+        "openhands": "yes",
+        "letta": "yes",
+        "crewai": "yes",
+        "langgraph": "yes",
+        "ag2": "yes",
+        "manus": "yes",
+        "devin": "yes",
+        "cursor": "yes",
+        "n8n": "yes",
+        "agno": "yes"
+       },
+       "sources": [],
+       "keywords": [
+        "subagent",
+        "sub-agent"
+       ]
+      },
+      {
+       "id": "ma.bg",
+       "name": "Background / parallel subagents",
+       "desc": "Run many concurrently",
+       "status": {
+        "jarvis": "yes",
+        "openclaw": "yes",
+        "hermes": "yes",
+        "claude": "yes",
+        "codex": "yes",
+        "goose": "yes",
+        "openhands": "yes",
+        "letta": "yes",
+        "crewai": "yes",
+        "langgraph": "yes",
+        "ag2": "yes",
+        "manus": "yes",
+        "devin": "yes",
+        "cursor": "yes",
+        "n8n": "yes",
+        "agno": "yes"
+       },
+       "sources": [],
+       "keywords": [
+        "background agent",
+        "parallel agent"
+       ]
+      },
+      {
+       "id": "ma.model",
+       "name": "Per-subagent model and effort",
+       "desc": "Cheaper model for mechanical work",
+       "status": {
+        "jarvis": "yes",
+        "openclaw": "yes",
+        "hermes": "yes",
+        "claude": "yes",
+        "codex": "yes",
+        "goose": "yes",
+        "openhands": "yes",
+        "letta": "no",
+        "crewai": "yes",
+        "langgraph": "yes",
+        "ag2": "yes",
+        "manus": "unknown",
+        "devin": "yes",
+        "cursor": "yes",
+        "n8n": "yes",
+        "agno": "yes"
+       },
+       "sources": [],
+       "keywords": [
+        "subagent model"
+       ]
+      },
+      {
+       "id": "ma.route",
+       "name": "Auto-routing of tasks to cheapest capable engine",
+       "desc": "Decider picks free/cheap/premium backend",
+       "status": {
+        "jarvis": "yes",
+        "openclaw": "partial",
+        "hermes": "no",
+        "claude": "no",
+        "codex": "no",
+        "goose": "no",
+        "openhands": "no",
+        "letta": "no",
+        "crewai": "no",
+        "langgraph": "no",
+        "ag2": "no",
+        "manus": "no",
+        "devin": "no",
+        "cursor": "no",
+        "n8n": "no",
+        "agno": "no"
+       },
+       "sources": [],
+       "keywords": [
+        "model routing",
+        "router"
+       ]
+      },
+      {
+       "id": "ma.defs",
+       "name": "Declarative subagent definitions",
+       "desc": "Agents as files with prompt+tools",
+       "status": {
+        "jarvis": "yes",
+        "openclaw": "yes",
+        "hermes": "yes",
+        "claude": "yes",
+        "codex": "yes",
+        "goose": "yes",
+        "openhands": "no",
+        "letta": "yes",
+        "crewai": "yes",
+        "langgraph": "yes",
+        "ag2": "yes",
+        "manus": "unknown",
+        "devin": "no",
+        "cursor": "yes",
+        "n8n": "yes",
+        "agno": "yes"
+       },
+       "sources": [],
+       "keywords": [
+        "agent definition",
+        "agents/"
+       ]
+      }
+     ]
+    },
+    {
+     "id": "ma.team",
+     "name": "Agent teams",
+     "children": [
+      {
+       "id": "ma.lead",
+       "name": "Lead + teammates with shared task list",
+       "desc": "Team members coordinate via shared tasks",
+       "status": {
+        "jarvis": "partial",
+        "openclaw": "no",
+        "hermes": "partial",
+        "claude": "yes",
+        "codex": "no",
+        "goose": "no",
+        "openhands": "no",
+        "letta": "no",
+        "crewai": "yes",
+        "langgraph": "yes",
+        "ag2": "no",
+        "manus": "no",
+        "devin": "no",
+        "cursor": "no",
+        "n8n": "no",
+        "agno": "partial"
+       },
+       "sources": [
+        "https://code.claude.com/docs/en/agent-teams"
+       ],
+       "note": "i team di Claude Code ci sono in Claude Code, non ancora nei canali",
+       "keywords": [
+        "agent team",
+        "teammate",
+        "team lead"
+       ]
+      },
+      {
+       "id": "ma.msg",
+       "name": "Inter-agent messaging",
+       "desc": "Agents message each other",
+       "status": {
+        "jarvis": "yes",
+        "openclaw": "yes",
+        "hermes": "yes",
+        "claude": "yes",
+        "codex": "yes",
+        "goose": "no",
+        "openhands": "no",
+        "letta": "yes",
+        "crewai": "partial",
+        "langgraph": "yes",
+        "ag2": "yes",
+        "manus": "no",
+        "devin": "no",
+        "cursor": "no",
+        "n8n": "no",
+        "agno": "partial"
+       },
+       "sources": [],
+       "keywords": [
+        "agent message",
+        "inter-agent",
+        "message board"
+       ]
+      },
+      {
+       "id": "ma.role",
+       "name": "Role-based crews",
+       "desc": "Roles/goals/backstory abstraction",
+       "status": {
+        "jarvis": "no",
+        "openclaw": "no",
+        "hermes": "no",
+        "claude": "no",
+        "codex": "no",
+        "goose": "no",
+        "openhands": "no",
+        "letta": "no",
+        "crewai": "yes",
+        "langgraph": "yes",
+        "ag2": "yes",
+        "manus": "no",
+        "devin": "no",
+        "cursor": "no",
+        "n8n": "no",
+        "agno": "yes"
+       },
+       "sources": [],
+       "keywords": [
+        "crew",
+        "role"
+       ]
+      },
+      {
+       "id": "ma.graph",
+       "name": "Graph orchestration of agents",
+       "desc": "Explicit state machine between agents",
+       "status": {
+        "jarvis": "no",
+        "openclaw": "no",
+        "hermes": "no",
+        "claude": "no",
+        "codex": "no",
+        "goose": "no",
+        "openhands": "no",
+        "letta": "no",
+        "crewai": "partial",
+        "langgraph": "yes",
+        "ag2": "yes",
+        "manus": "no",
+        "devin": "no",
+        "cursor": "no",
+        "n8n": "partial",
+        "agno": "partial"
+       },
+       "sources": [],
+       "keywords": [
+        "graph orchestration",
+        "stategraph"
+       ]
+      },
+      {
+       "id": "ma.handoff",
+       "name": "Handoffs / swarm pattern",
+       "desc": "Transfer control between agents",
+       "status": {
+        "jarvis": "no",
+        "openclaw": "no",
+        "hermes": "partial",
+        "claude": "partial",
+        "codex": "no",
+        "goose": "no",
+        "openhands": "no",
+        "letta": "no",
+        "crewai": "yes",
+        "langgraph": "yes",
+        "ag2": "yes",
+        "manus": "no",
+        "devin": "no",
+        "cursor": "no",
+        "n8n": "yes",
+        "agno": "yes"
+       },
+       "sources": [],
+       "keywords": [
+        "handoff",
+        "swarm"
+       ]
+      },
+      {
+       "id": "ma.debate",
+       "name": "Group chat / debate patterns",
+       "desc": "Multi-agent conversation managers",
+       "status": {
+        "jarvis": "no",
+        "openclaw": "no",
+        "hermes": "no",
+        "claude": "no",
+        "codex": "no",
+        "goose": "no",
+        "openhands": "no",
+        "letta": "no",
+        "crewai": "partial",
+        "langgraph": "partial",
+        "ag2": "partial",
+        "manus": "no",
+        "devin": "no",
+        "cursor": "no",
+        "n8n": "no",
+        "agno": "partial"
+       },
+       "sources": [],
+       "keywords": [
+        "group chat pattern",
+        "debate"
+       ]
+      },
+      {
+       "id": "ma.display",
+       "name": "Teammate panes (tmux/iTerm) UI",
+       "desc": "Watch/steer each teammate",
+       "status": {
+        "jarvis": "partial",
+        "openclaw": "no",
+        "hermes": "no",
+        "claude": "yes",
+        "codex": "no",
+        "goose": "no",
+        "openhands": "no",
+        "letta": "no",
+        "crewai": "no",
+        "langgraph": "no",
+        "ag2": "no",
+        "manus": "no",
+        "devin": "no",
+        "cursor": "partial",
+        "n8n": "no",
+        "agno": "no"
+       },
+       "sources": [],
+       "keywords": [
+        "tmux",
+        "iterm",
+        "split pane"
+       ]
+      }
+     ]
+    },
+    {
+     "id": "ma.xagent",
+     "name": "Cross-agent interop",
+     "children": [
+      {
+       "id": "ma.a2a",
+       "name": "A2A / ACP protocol",
+       "desc": "Standard agent-to-agent protocol",
+       "status": {
+        "jarvis": "partial",
+        "openclaw": "yes",
+        "hermes": "unknown",
+        "claude": "yes",
+        "codex": "yes",
+        "goose": "yes",
+        "openhands": "unknown",
+        "letta": "unknown",
+        "crewai": "yes",
+        "langgraph": "yes",
+        "ag2": "yes",
+        "manus": "unknown",
+        "devin": "unknown",
+        "cursor": "no",
+        "n8n": "yes",
+        "agno": "yes"
+       },
+       "sources": [],
+       "keywords": [
+        "a2a",
+        "agent2agent",
+        "acp"
+       ]
+      },
+      {
+       "id": "ma.term",
+       "name": "Drive other agents' terminals",
+       "desc": "Read/send to other running agent sessions",
+       "status": {
+        "jarvis": "yes",
+        "openclaw": "partial",
+        "hermes": "partial",
+        "claude": "yes",
+        "codex": "no",
+        "goose": "no",
+        "openhands": "no",
+        "letta": "no",
+        "crewai": "no",
+        "langgraph": "no",
+        "ag2": "no",
+        "manus": "no",
+        "devin": "no",
+        "cursor": "no",
+        "n8n": "no",
+        "agno": "no"
+       },
+       "sources": [],
+       "keywords": [
+        "terminal control",
+        "send-keys"
+       ]
+      },
+      {
+       "id": "ma.verify",
+       "name": "Verifier on different model than writer",
+       "desc": "Independent checking",
+       "status": {
+        "jarvis": "yes",
+        "openclaw": "unknown",
+        "hermes": "unknown",
+        "claude": "yes",
+        "codex": "unknown",
+        "goose": "unknown",
+        "openhands": "no",
+        "letta": "unknown",
+        "crewai": "no",
+        "langgraph": "no",
+        "ag2": "no",
+        "manus": "no",
+        "devin": "unknown",
+        "cursor": "unknown",
+        "n8n": "unknown",
+        "agno": "no"
+       },
+       "sources": [],
+       "keywords": [
+        "verifier",
+        "reviewer agent"
+       ]
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "safety",
+   "name": "Safety, permissions, sandboxing",
+   "children": [
+    {
+     "id": "sf.perm",
+     "name": "Permissions",
+     "children": [
+      {
+       "id": "sf.modes",
+       "name": "Permission modes (ask/auto/bypass)",
+       "desc": "Tiered approval of actions",
+       "status": {
+        "jarvis": "yes",
+        "openclaw": "yes",
+        "hermes": "yes",
+        "claude": "yes",
+        "codex": "yes",
+        "goose": "yes",
+        "openhands": "yes",
+        "letta": "unknown",
+        "crewai": "unknown",
+        "langgraph": "partial",
+        "ag2": "unknown",
+        "manus": "partial",
+        "devin": "yes",
+        "cursor": "yes",
+        "n8n": "yes",
+        "agno": "partial"
+       },
+       "sources": [
+        "https://code.claude.com/docs/en/permissions"
+       ],
+       "keywords": [
+        "permission mode",
+        "auto mode",
+        "bypass"
+       ]
+      },
+      {
+       "id": "sf.rules",
+       "name": "Allow/deny rules per command",
+       "desc": "Pattern rules",
+       "status": {
+        "jarvis": "yes",
+        "openclaw": "yes",
+        "hermes": "yes",
+        "claude": "yes",
+        "codex": "yes",
+        "goose": "yes",
+        "openhands": "yes",
+        "letta": "unknown",
+        "crewai": "unknown",
+        "langgraph": "no",
+        "ag2": "no",
+        "manus": "unknown",
+        "devin": "yes",
+        "cursor": "yes",
+        "n8n": "yes",
+        "agno": "no"
+       },
+       "sources": [],
+       "keywords": [
+        "allow rule",
+        "deny rule",
+        "exec policy"
+       ]
+      },
+      {
+       "id": "sf.auto",
+       "name": "Classifier-based auto approval",
+       "desc": "Model decides if action is safe",
+       "status": {
+        "jarvis": "partial",
+        "openclaw": "unknown",
+        "hermes": "no",
+        "claude": "yes",
+        "codex": "yes",
+        "goose": "unknown",
+        "openhands": "no",
+        "letta": "no",
+        "crewai": "no",
+        "langgraph": "no",
+        "ag2": "no",
+        "manus": "unknown",
+        "devin": "unknown",
+        "cursor": "unknown",
+        "n8n": "unknown",
+        "agno": "unknown"
+       },
+       "sources": [],
+       "keywords": [
+        "auto-approve",
+        "classifier"
+       ]
+      },
+      {
+       "id": "sf.appr",
+       "name": "Approvals routed to chat",
+       "desc": "Approve risky action from phone",
+       "status": {
+        "jarvis": "yes",
+        "openclaw": "yes",
+        "hermes": "yes",
+        "claude": "partial",
+        "codex": "partial",
+        "goose": "no",
+        "openhands": "no",
+        "letta": "no",
+        "crewai": "no",
+        "langgraph": "no",
+        "ag2": "no",
+        "manus": "no",
+        "devin": "unknown",
+        "cursor": "unknown",
+        "n8n": "no",
+        "agno": "no"
+       },
+       "sources": [],
+       "keywords": [
+        "approval",
+        "exec approval"
+       ]
+      }
+     ]
+    },
+    {
+     "id": "sf.sand",
+     "name": "Sandboxing",
+     "children": [
+      {
+       "id": "sf.os",
+       "name": "OS-level sandbox (seatbelt/bwrap)",
+       "desc": "Filesystem/network isolation of shell",
+       "status": {
+        "jarvis": "yes",
+        "openclaw": "yes",
+        "hermes": "yes",
+        "claude": "yes",
+        "codex": "yes",
+        "goose": "no",
+        "openhands": "partial",
+        "letta": "partial",
+        "crewai": "no",
+        "langgraph": "no",
+        "ag2": "no",
+        "manus": "no",
+        "devin": "unknown",
+        "cursor": "unknown",
+        "n8n": "no",
+        "agno": "no"
+       },
+       "sources": [
+        "https://code.claude.com/docs/en/sandboxing",
+        "https://developers.openai.com/codex"
+       ],
+       "note": "muro: profilo seatbelt + hook PreToolUse per gli ospiti dei gruppi (tests/barra.rs)",
+       "keywords": [
+        "seatbelt",
+        "bubblewrap",
+        "landlock",
+        "sandbox"
+       ]
+      },
+      {
+       "id": "sf.docker",
+       "name": "Container/remote backends",
+       "desc": "Docker, SSH, Modal, Daytona",
+       "status": {
+        "jarvis": "no",
+        "openclaw": "yes",
+        "hermes": "yes",
+        "claude": "yes",
+        "codex": "yes",
+        "goose": "yes",
+        "openhands": "yes",
+        "letta": "yes",
+        "crewai": "yes",
+        "langgraph": "no",
+        "ag2": "yes",
+        "manus": "no",
+        "devin": "yes",
+        "cursor": "yes",
+        "n8n": "yes",
+        "agno": "yes"
+       },
+       "sources": [],
+       "keywords": [
+        "docker",
+        "container",
+        "daytona",
+        "modal"
+       ]
+      },
+      {
+       "id": "sf.sig",
+       "name": "Signal cage for subagents",
+       "desc": "Prevent kill/pkill from agent shells",
+       "status": {
+        "jarvis": "yes",
+        "openclaw": "no",
+        "hermes": "no",
+        "claude": "no",
+        "codex": "no",
+        "goose": "no",
+        "openhands": "no",
+        "letta": "no",
+        "crewai": "no",
+        "langgraph": "no",
+        "ag2": "no",
+        "manus": "no",
+        "devin": "no",
+        "cursor": "no",
+        "n8n": "no",
+        "agno": "no"
+       },
+       "sources": [],
+       "keywords": [
+        "signal"
+       ]
+      },
+      {
+       "id": "sf.net",
+       "name": "Network egress allowlist",
+       "desc": "Limit outbound domains",
+       "status": {
+        "jarvis": "partial",
+        "openclaw": "partial",
+        "hermes": "partial",
+        "claude": "yes",
+        "codex": "yes",
+        "goose": "unknown",
+        "openhands": "no",
+        "letta": "no",
+        "crewai": "no",
+        "langgraph": "no",
+        "ag2": "no",
+        "manus": "unknown",
+        "devin": "yes",
+        "cursor": "yes",
+        "n8n": "unknown",
+        "agno": "unknown"
+       },
+       "sources": [],
+       "keywords": [
+        "egress",
+        "network allowlist",
+        "proxy"
+       ]
+      }
+     ]
+    },
+    {
+     "id": "sf.group",
+     "name": "Group and sender safety",
+     "children": [
+      {
+       "id": "sf.wall",
+       "name": "Group walls (tools denied in multi-sender chats)",
+       "desc": "Owner-only tools stripped in groups",
+       "status": {
+        "jarvis": "yes",
+        "openclaw": "partial",
+        "hermes": "unknown",
+        "claude": "no",
+        "codex": "no",
+        "goose": "no",
+        "openhands": "no",
+        "letta": "no",
+        "crewai": "no",
+        "langgraph": "no",
+        "ag2": "no",
+        "manus": "no",
+        "devin": "no",
+        "cursor": "no",
+        "n8n": "no",
+        "agno": "no"
+       },
+       "sources": [
+        "https://docs.openclaw.ai/gateway/security"
+       ],
+       "note": "group-guard: ospiti nel muro, invio solo esplicito, memoria spenta dove serve",
+       "keywords": [
+        "group policy",
+        "tools.deny",
+        "untrusted sender"
+       ]
+      },
+      {
+       "id": "sf.owner",
+       "name": "Owner/trust levels per sender",
+       "desc": "Different trust per identity",
+       "status": {
+        "jarvis": "yes",
+        "openclaw": "yes",
+        "hermes": "yes",
+        "claude": "unknown",
+        "codex": "no",
+        "goose": "no",
+        "openhands": "no",
+        "letta": "no",
+        "crewai": "no",
+        "langgraph": "no",
+        "ag2": "no",
+        "manus": "no",
+        "devin": "no",
+        "cursor": "no",
+        "n8n": "partial",
+        "agno": "partial"
+       },
+       "sources": [],
+       "keywords": [
+        "owner",
+        "trust level",
+        "authorized sender"
+       ]
+      },
+      {
+       "id": "sf.inj",
+       "name": "Prompt-injection defences",
+       "desc": "Untrusted content boundary rules",
+       "status": {
+        "jarvis": "yes",
+        "openclaw": "yes",
+        "hermes": "yes",
+        "claude": "yes",
+        "codex": "yes",
+        "goose": "unknown",
+        "openhands": "unknown",
+        "letta": "unknown",
+        "crewai": "unknown",
+        "langgraph": "unknown",
+        "ag2": "unknown",
+        "manus": "unknown",
+        "devin": "unknown",
+        "cursor": "unknown",
+        "n8n": "unknown",
+        "agno": "unknown"
+       },
+       "sources": [],
+       "keywords": [
+        "prompt injection",
+        "injection"
+       ]
+      },
+      {
+       "id": "sf.secret",
+       "name": "Secrets in keychain/vault",
+       "desc": "No plaintext credentials",
+       "status": {
+        "jarvis": "yes",
+        "openclaw": "yes",
+        "hermes": "yes",
+        "claude": "partial",
+        "codex": "no",
+        "goose": "no",
+        "openhands": "no",
+        "letta": "no",
+        "crewai": "no",
+        "langgraph": "no",
+        "ag2": "no",
+        "manus": "no",
+        "devin": "no",
+        "cursor": "yes",
+        "n8n": "yes",
+        "agno": "no"
+       },
+       "sources": [],
+       "keywords": [
+        "keychain",
+        "secret",
+        "vault"
+       ]
+      },
+      {
+       "id": "sf.audit",
+       "name": "Security audit command",
+       "desc": "Self-check of exposure",
+       "status": {
+        "jarvis": "partial",
+        "openclaw": "yes",
+        "hermes": "yes",
+        "claude": "no",
+        "codex": "no",
+        "goose": "no",
+        "openhands": "no",
+        "letta": "no",
+        "crewai": "no",
+        "langgraph": "no",
+        "ag2": "no",
+        "manus": "no",
+        "devin": "no",
+        "cursor": "no",
+        "n8n": "no",
+        "agno": "no"
+       },
+       "sources": [],
+       "keywords": [
+        "security audit",
+        "doctor security"
+       ]
+      },
+      {
+       "id": "sf.guard",
+       "name": "Push/privacy guards",
+       "desc": "Block leaking personal data on publish",
+       "status": {
+        "jarvis": "yes",
+        "openclaw": "no",
+        "hermes": "no",
+        "claude": "no",
+        "codex": "no",
+        "goose": "no",
+        "openhands": "no",
+        "letta": "no",
+        "crewai": "no",
+        "langgraph": "no",
+        "ag2": "no",
+        "manus": "no",
+        "devin": "no",
+        "cursor": "no",
+        "n8n": "no",
+        "agno": "no"
+       },
+       "sources": [],
+       "keywords": [
+        "secret scan",
+        "privacy guard"
+       ]
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "reliab",
+   "name": "Reliability",
+   "children": [
+    {
+     "id": "rl.dur",
+     "name": "Durability",
+     "children": [
+      {
+       "id": "rl.outbox",
+       "name": "Durable outbox",
+       "desc": "Messages survive crashes",
+       "status": {
+        "jarvis": "yes",
+        "openclaw": "partial",
+        "hermes": "unknown",
+        "claude": "no",
+        "codex": "no",
+        "goose": "no",
+        "openhands": "no",
+        "letta": "no",
+        "crewai": "no",
+        "langgraph": "no",
+        "ag2": "no",
+        "manus": "no",
+        "devin": "no",
+        "cursor": "no",
+        "n8n": "partial",
+        "agno": "no"
+       },
+       "sources": [],
+       "keywords": [
+        "outbox",
+        "delivery queue"
+       ]
+      },
+      {
+       "id": "rl.dur",
+       "name": "Durable execution / checkpointed state",
+       "desc": "Resume graph/run after crash",
+       "status": {
+        "jarvis": "partial",
+        "openclaw": "no",
+        "hermes": "partial",
+        "claude": "no",
+        "codex": "no",
+        "goose": "no",
+        "openhands": "partial",
+        "letta": "yes",
+        "crewai": "yes",
+        "langgraph": "yes",
+        "ag2": "no",
+        "manus": "unknown",
+        "devin": "no",
+        "cursor": "no",
+        "n8n": "yes",
+        "agno": "yes"
+       },
+       "sources": [
+        "https://docs.langchain.com/oss/python/langgraph/persistence"
+       ],
+       "keywords": [
+        "durable execution",
+        "checkpointer"
+       ]
+      },
+      {
+       "id": "rl.resume",
+       "name": "Resume session after restart",
+       "desc": "Reopen with full context",
+       "status": {
+        "jarvis": "yes",
+        "openclaw": "yes",
+        "hermes": "yes",
+        "claude": "yes",
+        "codex": "yes",
+        "goose": "yes",
+        "openhands": "yes",
+        "letta": "yes",
+        "crewai": "yes",
+        "langgraph": "yes",
+        "ag2": "yes",
+        "manus": "yes",
+        "devin": "yes",
+        "cursor": "yes",
+        "n8n": "yes",
+        "agno": "yes"
+       },
+       "sources": [],
+       "keywords": [
+        "resume",
+        "restart recovery"
+       ]
+      },
+      {
+       "id": "rl.idem",
+       "name": "Idempotent sends / dedupe",
+       "desc": "No double messages",
+       "status": {
+        "jarvis": "yes",
+        "openclaw": "partial",
+        "hermes": "partial",
+        "claude": "no",
+        "codex": "no",
+        "goose": "no",
+        "openhands": "no",
+        "letta": "no",
+        "crewai": "no",
+        "langgraph": "no",
+        "ag2": "no",
+        "manus": "no",
+        "devin": "no",
+        "cursor": "no",
+        "n8n": "partial",
+        "agno": "no"
+       },
+       "sources": [],
+       "note": "chiave di idempotenza per turno, 409 gestito, outbox senza doppioni",
+       "keywords": [
+        "idempotency",
+        "dedupe",
+        "duplicate"
+       ]
+      }
+     ]
+    },
+    {
+     "id": "rl.fail",
+     "name": "Failure handling",
+     "children": [
+      {
+       "id": "rl.retry",
+       "name": "Model retries and fallback chain",
+       "desc": "Retry and failover between providers",
+       "status": {
+        "jarvis": "yes",
+        "openclaw": "yes",
+        "hermes": "yes",
+        "claude": "partial",
+        "codex": "partial",
+        "goose": "partial",
+        "openhands": "no",
+        "letta": "yes",
+        "crewai": "yes",
+        "langgraph": "yes",
+        "ag2": "yes",
+        "manus": "unknown",
+        "devin": "unknown",
+        "cursor": "yes",
+        "n8n": "yes",
+        "agno": "partial"
+       },
+       "sources": [],
+       "keywords": [
+        "retry",
+        "fallback model",
+        "failover"
+       ]
+      },
+      {
+       "id": "rl.dead",
+       "name": "Dead-letter queue and resubmit",
+       "desc": "Failed inbound messages recoverable",
+       "status": {
+        "jarvis": "yes",
+        "openclaw": "partial",
+        "hermes": "unknown",
+        "claude": "no",
+        "codex": "no",
+        "goose": "no",
+        "openhands": "no",
+        "letta": "no",
+        "crewai": "no",
+        "langgraph": "no",
+        "ag2": "no",
+        "manus": "no",
+        "devin": "no",
+        "cursor": "no",
+        "n8n": "partial",
+        "agno": "no"
+       },
+       "sources": [
+        "https://docs.openclaw.ai"
+       ],
+       "keywords": [
+        "dead-letter",
+        "dead letter"
+       ]
+      },
+      {
+       "id": "rl.stuck",
+       "name": "Stuck-session watchdog",
+       "desc": "Detects and unsticks hung sessions",
+       "status": {
+        "jarvis": "yes",
+        "openclaw": "partial",
+        "hermes": "partial",
+        "claude": "unknown",
+        "codex": "no",
+        "goose": "no",
+        "openhands": "no",
+        "letta": "no",
+        "crewai": "no",
+        "langgraph": "no",
+        "ag2": "no",
+        "manus": "no",
+        "devin": "no",
+        "cursor": "no",
+        "n8n": "no",
+        "agno": "no"
+       },
+       "sources": [],
+       "keywords": [
+        "stuck session",
+        "watchdog"
+       ]
+      },
+      {
+       "id": "rl.mem",
+       "name": "Memory watchdog / restart policy",
+       "desc": "Auto-restart on leak",
+       "status": {
+        "jarvis": "yes",
+        "openclaw": "partial",
+        "hermes": "unknown",
+        "claude": "no",
+        "codex": "no",
+        "goose": "no",
+        "openhands": "no",
+        "letta": "no",
+        "crewai": "no",
+        "langgraph": "no",
+        "ag2": "no",
+        "manus": "no",
+        "devin": "no",
+        "cursor": "no",
+        "n8n": "no",
+        "agno": "no"
+       },
+       "sources": [],
+       "keywords": [
+        "memory leak",
+        "rss",
+        "heap"
+       ]
+      },
+      {
+       "id": "rl.limit",
+       "name": "Rate-limit / quota awareness",
+       "desc": "Pace by subscription quota",
+       "status": {
+        "jarvis": "yes",
+        "openclaw": "partial",
+        "hermes": "partial",
+        "claude": "partial",
+        "codex": "partial",
+        "goose": "partial",
+        "openhands": "no",
+        "letta": "partial",
+        "crewai": "no",
+        "langgraph": "no",
+        "ag2": "no",
+        "manus": "partial",
+        "devin": "unknown",
+        "cursor": "partial",
+        "n8n": "no",
+        "agno": "no"
+       },
+       "sources": [],
+       "keywords": [
+        "rate limit",
+        "quota"
+       ]
+      }
+     ]
+    },
+    {
+     "id": "rl.ver",
+     "name": "Verification",
+     "children": [
+      {
+       "id": "rl.evid",
+       "name": "Completion needs proof",
+       "desc": "Done requires command/measure",
+       "status": {
+        "jarvis": "yes",
+        "openclaw": "no",
+        "hermes": "no",
+        "claude": "partial",
+        "codex": "no",
+        "goose": "no",
+        "openhands": "no",
+        "letta": "no",
+        "crewai": "no",
+        "langgraph": "no",
+        "ag2": "no",
+        "manus": "no",
+        "devin": "no",
+        "cursor": "no",
+        "n8n": "no",
+        "agno": "no"
+       },
+       "sources": [],
+       "note": "«fatto = prova» nelle regole e barre eseguibili per ogni change",
+       "keywords": [
+        "verification",
+        "proof"
+       ]
+      },
+      {
+       "id": "rl.eval",
+       "name": "Built-in eval / benchmarks",
+       "desc": "Eval harness",
+       "status": {
+        "jarvis": "partial",
+        "openclaw": "no",
+        "hermes": "partial",
+        "claude": "yes",
+        "codex": "yes",
+        "goose": "yes",
+        "openhands": "no",
+        "letta": "yes",
+        "crewai": "yes",
+        "langgraph": "yes",
+        "ag2": "no",
+        "manus": "no",
+        "devin": "unknown",
+        "cursor": "unknown",
+        "n8n": "no",
+        "agno": "yes"
+       },
+       "sources": [],
+       "keywords": [
+        "eval",
+        "benchmark"
+       ]
+      },
+      {
+       "id": "rl.test",
+       "name": "Self-test of the agent system",
+       "desc": "Doctor / selftest command",
+       "status": {
+        "jarvis": "yes",
+        "openclaw": "yes",
+        "hermes": "yes",
+        "claude": "yes",
+        "codex": "yes",
+        "goose": "yes",
+        "openhands": "no",
+        "letta": "no",
+        "crewai": "no",
+        "langgraph": "no",
+        "ag2": "no",
+        "manus": "no",
+        "devin": "no",
+        "cursor": "no",
+        "n8n": "no",
+        "agno": "no"
+       },
+       "sources": [],
+       "keywords": [
+        "selftest",
+        "self-test"
+       ]
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "obs",
+   "name": "Observability, UI, dashboard",
+   "children": [
+    {
+     "id": "ob.ui",
+     "name": "User interfaces",
+     "children": [
+      {
+       "id": "ob.tui",
+       "name": "Terminal UI",
+       "desc": "Interactive TUI",
+       "status": {
+        "jarvis": "partial",
+        "openclaw": "yes",
+        "hermes": "yes",
+        "claude": "yes",
+        "codex": "yes",
+        "goose": "yes",
+        "openhands": "no",
+        "letta": "no",
+        "crewai": "no",
+        "langgraph": "no",
+        "ag2": "no",
+        "manus": "no",
+        "devin": "no",
+        "cursor": "no",
+        "n8n": "no",
+        "agno": "no"
+       },
+       "sources": [],
+       "keywords": [
+        "tui"
+       ]
+      },
+      {
+       "id": "ob.web",
+       "name": "Web control UI",
+       "desc": "Browser dashboard for sessions",
+       "status": {
+        "jarvis": "yes",
+        "openclaw": "yes",
+        "hermes": "yes",
+        "claude": "yes",
+        "codex": "yes",
+        "goose": "yes",
+        "openhands": "yes",
+        "letta": "yes",
+        "crewai": "yes",
+        "langgraph": "yes",
+        "ag2": "no",
+        "manus": "yes",
+        "devin": "yes",
+        "cursor": "yes",
+        "n8n": "yes",
+        "agno": "yes"
+       },
+       "sources": [],
+       "keywords": [
+        "control ui",
+        "web ui",
+        "dashboard"
+       ]
+      },
+      {
+       "id": "ob.desk",
+       "name": "Desktop app",
+       "desc": "Native app",
+       "status": {
+        "jarvis": "yes",
+        "openclaw": "yes",
+        "hermes": "yes",
+        "claude": "yes",
+        "codex": "yes",
+        "goose": "yes",
+        "openhands": "no",
+        "letta": "no",
+        "crewai": "no",
+        "langgraph": "no",
+        "ag2": "no",
+        "manus": "no",
+        "devin": "yes",
+        "cursor": "yes",
+        "n8n": "no",
+        "agno": "yes"
+       },
+       "sources": [],
+       "keywords": [
+        "desktop app"
+       ]
+      },
+      {
+       "id": "ob.mobile",
+       "name": "Mobile access",
+       "desc": "Phone UI/notifications",
+       "status": {
+        "jarvis": "yes",
+        "openclaw": "yes",
+        "hermes": "yes",
+        "claude": "yes",
+        "codex": "yes",
+        "goose": "unknown",
+        "openhands": "no",
+        "letta": "no",
+        "crewai": "no",
+        "langgraph": "no",
+        "ag2": "no",
+        "manus": "yes",
+        "devin": "yes",
+        "cursor": "yes",
+        "n8n": "no",
+        "agno": "yes"
+       },
+       "sources": [],
+       "keywords": [
+        "mobile"
+       ]
+      },
+      {
+       "id": "ob.board",
+       "name": "Kanban board of agent tasks",
+       "desc": "Cards for tasks with review state",
+       "status": {
+        "jarvis": "yes",
+        "openclaw": "partial",
+        "hermes": "no",
+        "claude": "no",
+        "codex": "no",
+        "goose": "no",
+        "openhands": "no",
+        "letta": "no",
+        "crewai": "no",
+        "langgraph": "no",
+        "ag2": "no",
+        "manus": "no",
+        "devin": "partial",
+        "cursor": "no",
+        "n8n": "no",
+        "agno": "no"
+       },
+       "sources": [],
+       "keywords": [
+        "kanban",
+        "board"
+       ]
+      }
+     ]
+    },
+    {
+     "id": "ob.tel",
+     "name": "Telemetry and tracing",
+     "children": [
+      {
+       "id": "ob.otel",
+       "name": "OpenTelemetry export",
+       "desc": "Traces/metrics via OTel",
+       "status": {
+        "jarvis": "partial",
+        "openclaw": "yes",
+        "hermes": "yes",
+        "claude": "yes",
+        "codex": "yes",
+        "goose": "unknown",
+        "openhands": "unknown",
+        "letta": "yes",
+        "crewai": "yes",
+        "langgraph": "yes",
+        "ag2": "yes",
+        "manus": "unknown",
+        "devin": "unknown",
+        "cursor": "yes",
+        "n8n": "yes",
+        "agno": "yes"
+       },
+       "sources": [],
+       "keywords": [
+        "opentelemetry",
+        "otel"
+       ]
+      },
+      {
+       "id": "ob.trace",
+       "name": "Run tracing UI (LangSmith, etc.)",
+       "desc": "Visual trace of steps",
+       "status": {
+        "jarvis": "partial",
+        "openclaw": "no",
+        "hermes": "no",
+        "claude": "partial",
+        "codex": "no",
+        "goose": "no",
+        "openhands": "no",
+        "letta": "yes",
+        "crewai": "yes",
+        "langgraph": "yes",
+        "ag2": "yes",
+        "manus": "unknown",
+        "devin": "no",
+        "cursor": "no",
+        "n8n": "yes",
+        "agno": "yes"
+       },
+       "sources": [],
+       "keywords": [
+        "tracing",
+        "trace"
+       ]
+      },
+      {
+       "id": "ob.usage",
+       "name": "Usage/cost dashboard",
+       "desc": "Tokens and spend per session",
+       "status": {
+        "jarvis": "yes",
+        "openclaw": "yes",
+        "hermes": "yes",
+        "claude": "yes",
+        "codex": "yes",
+        "goose": "unknown",
+        "openhands": "no",
+        "letta": "yes",
+        "crewai": "yes",
+        "langgraph": "yes",
+        "ag2": "yes",
+        "manus": "yes",
+        "devin": "yes",
+        "cursor": "yes",
+        "n8n": "yes",
+        "agno": "partial"
+       },
+       "sources": [],
+       "keywords": [
+        "usage",
+        "cost tracking"
+       ]
+      },
+      {
+       "id": "ob.auto",
+       "name": "Automation outcome registry with feedback",
+       "desc": "Every automation tracked, human verdict logged",
+       "status": {
+        "jarvis": "yes",
+        "openclaw": "no",
+        "hermes": "no",
+        "claude": "no",
+        "codex": "no",
+        "goose": "no",
+        "openhands": "no",
+        "letta": "no",
+        "crewai": "no",
+        "langgraph": "no",
+        "ag2": "no",
+        "manus": "no",
+        "devin": "no",
+        "cursor": "no",
+        "n8n": "no",
+        "agno": "no"
+       },
+       "sources": [],
+       "keywords": [
+        "automation history"
+       ]
+      },
+      {
+       "id": "ob.health",
+       "name": "System health reports",
+       "desc": "Mac/host health summaries",
+       "status": {
+        "jarvis": "yes",
+        "openclaw": "partial",
+        "hermes": "no",
+        "claude": "no",
+        "codex": "no",
+        "goose": "no",
+        "openhands": "no",
+        "letta": "no",
+        "crewai": "no",
+        "langgraph": "no",
+        "ag2": "no",
+        "manus": "no",
+        "devin": "no",
+        "cursor": "no",
+        "n8n": "no",
+        "agno": "no"
+       },
+       "sources": [],
+       "keywords": [
+        "health check",
+        "doctor"
+       ]
+      },
+      {
+       "id": "ob.status",
+       "name": "Progress pings for long jobs",
+       "desc": "Telegraphic status at fixed intervals",
+       "status": {
+        "jarvis": "yes",
+        "openclaw": "no",
+        "hermes": "no",
+        "claude": "no",
+        "codex": "no",
+        "goose": "no",
+        "openhands": "no",
+        "letta": "no",
+        "crewai": "no",
+        "langgraph": "no",
+        "ag2": "no",
+        "manus": "no",
+        "devin": "no",
+        "cursor": "no",
+        "n8n": "no",
+        "agno": "no"
+       },
+       "sources": [],
+       "keywords": [
+        "progress update",
+        "status update"
+       ]
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "cost",
+   "name": "Cost and context efficiency",
+   "children": [
+    {
+     "id": "co.ctx",
+     "name": "Context management",
+     "children": [
+      {
+       "id": "co.cache",
+       "name": "Prompt caching",
+       "desc": "Reuse provider cache",
+       "status": {
+        "jarvis": "yes",
+        "openclaw": "yes",
+        "hermes": "yes",
+        "claude": "yes",
+        "codex": "yes",
+        "goose": "yes",
+        "openhands": "yes",
+        "letta": "yes",
+        "crewai": "yes",
+        "langgraph": "yes",
+        "ag2": "yes",
+        "manus": "yes",
+        "devin": "yes",
+        "cursor": "yes",
+        "n8n": "yes",
+        "agno": "yes"
+       },
+       "sources": [],
+       "keywords": [
+        "prompt cache",
+        "cache_control",
+        "caching"
+       ]
+      },
+      {
+       "id": "co.compact",
+       "name": "Auto-compaction",
+       "desc": "Summarise old context",
+       "status": {
+        "jarvis": "yes",
+        "openclaw": "yes",
+        "hermes": "yes",
+        "claude": "yes",
+        "codex": "yes",
+        "goose": "yes",
+        "openhands": "yes",
+        "letta": "yes",
+        "crewai": "yes",
+        "langgraph": "yes",
+        "ag2": "yes",
+        "manus": "yes",
+        "devin": "yes",
+        "cursor": "yes",
+        "n8n": "yes",
+        "agno": "yes"
+       },
+       "sources": [],
+       "keywords": [
+        "compaction",
+        "compact"
+       ]
+      },
+      {
+       "id": "co.clear",
+       "name": "Context editing / tool-result clearing",
+       "desc": "Drop stale tool outputs",
+       "status": {
+        "jarvis": "partial",
+        "openclaw": "yes",
+        "hermes": "unknown",
+        "claude": "yes",
+        "codex": "unknown",
+        "goose": "unknown",
+        "openhands": "no",
+        "letta": "no",
+        "crewai": "no",
+        "langgraph": "no",
+        "ag2": "no",
+        "manus": "unknown",
+        "devin": "unknown",
+        "cursor": "unknown",
+        "n8n": "unknown",
+        "agno": "unknown"
+       },
+       "sources": [],
+       "keywords": [
+        "context editing",
+        "clear tool results"
+       ]
+      },
+      {
+       "id": "co.deferred",
+       "name": "Deferred tool schemas",
+       "desc": "Defer MCP schemas to save tokens",
+       "status": {
+        "jarvis": "yes",
+        "openclaw": "yes",
+        "hermes": "unknown",
+        "claude": "yes",
+        "codex": "no",
+        "goose": "no",
+        "openhands": "no",
+        "letta": "no",
+        "crewai": "no",
+        "langgraph": "no",
+        "ag2": "no",
+        "manus": "no",
+        "devin": "no",
+        "cursor": "no",
+        "n8n": "no",
+        "agno": "no"
+       },
+       "sources": [],
+       "keywords": [
+        "deferred",
+        "defer_loading"
+       ]
+      },
+      {
+       "id": "co.subctx",
+       "name": "Subagent context isolation",
+       "desc": "Child work doesn't pollute parent",
+       "status": {
+        "jarvis": "yes",
+        "openclaw": "yes",
+        "hermes": "yes",
+        "claude": "yes",
+        "codex": "yes",
+        "goose": "yes",
+        "openhands": "yes",
+        "letta": "yes",
+        "crewai": "yes",
+        "langgraph": "yes",
+        "ag2": "yes",
+        "manus": "yes",
+        "devin": "yes",
+        "cursor": "yes",
+        "n8n": "yes",
+        "agno": "yes"
+       },
+       "sources": [],
+       "keywords": [
+        "isolated context"
+       ]
+      },
+      {
+       "id": "co.zero",
+       "name": "Zero-context-cost script turns",
+       "desc": "Pipelines collapsed into one script",
+       "status": {
+        "jarvis": "partial",
+        "openclaw": "yes",
+        "hermes": "yes",
+        "claude": "no",
+        "codex": "no",
+        "goose": "no",
+        "openhands": "no",
+        "letta": "no",
+        "crewai": "no",
+        "langgraph": "no",
+        "ag2": "no",
+        "manus": "no",
+        "devin": "no",
+        "cursor": "no",
+        "n8n": "no",
+        "agno": "no"
+       },
+       "sources": [],
+       "keywords": [
+        "no-llm",
+        "script cron",
+        "zero token"
+       ]
+      }
+     ]
+    },
+    {
+     "id": "co.cost",
+     "name": "Spend control",
+     "children": [
+      {
+       "id": "co.cheap",
+       "name": "Route mechanical work to cheap/free models",
+       "desc": "Cost-aware routing",
+       "status": {
+        "jarvis": "yes",
+        "openclaw": "partial",
+        "hermes": "partial",
+        "claude": "partial",
+        "codex": "no",
+        "goose": "no",
+        "openhands": "no",
+        "letta": "no",
+        "crewai": "no",
+        "langgraph": "no",
+        "ag2": "no",
+        "manus": "no",
+        "devin": "no",
+        "cursor": "no",
+        "n8n": "yes",
+        "agno": "yes"
+       },
+       "sources": [],
+       "keywords": [
+        "cheap model",
+        "model routing"
+       ]
+      },
+      {
+       "id": "co.budget",
+       "name": "Budget caps",
+       "desc": "Max spend/turns per run",
+       "status": {
+        "jarvis": "partial",
+        "openclaw": "yes",
+        "hermes": "yes",
+        "claude": "yes",
+        "codex": "yes",
+        "goose": "yes",
+        "openhands": "yes",
+        "letta": "yes",
+        "crewai": "yes",
+        "langgraph": "yes",
+        "ag2": "yes",
+        "manus": "yes",
+        "devin": "yes",
+        "cursor": "yes",
+        "n8n": "yes",
+        "agno": "yes"
+       },
+       "sources": [],
+       "keywords": [
+        "budget",
+        "spend limit",
+        "max cost"
+       ]
+      },
+      {
+       "id": "co.local",
+       "name": "Local model support",
+       "desc": "Ollama/vLLM etc.",
+       "status": {
+        "jarvis": "partial",
+        "openclaw": "yes",
+        "hermes": "yes",
+        "claude": "yes",
+        "codex": "no",
+        "goose": "yes",
+        "openhands": "yes",
+        "letta": "yes",
+        "crewai": "yes",
+        "langgraph": "yes",
+        "ag2": "yes",
+        "manus": "unknown",
+        "devin": "no",
+        "cursor": "no",
+        "n8n": "yes",
+        "agno": "yes"
+       },
+       "sources": [],
+       "keywords": [
+        "ollama",
+        "llama.cpp",
+        "lm studio",
+        "local model"
+       ]
+      },
+      {
+       "id": "co.sub",
+       "name": "Use consumer subscriptions as backend",
+       "desc": "Claude/ChatGPT plan as engine",
+       "status": {
+        "jarvis": "yes",
+        "openclaw": "yes",
+        "hermes": "yes",
+        "claude": "no",
+        "codex": "no",
+        "goose": "no",
+        "openhands": "no",
+        "letta": "no",
+        "crewai": "no",
+        "langgraph": "no",
+        "ag2": "no",
+        "manus": "no",
+        "devin": "no",
+        "cursor": "no",
+        "n8n": "no",
+        "agno": "no"
+       },
+       "sources": [],
+       "note": "abbonamenti via Switchboard; dal 12/11 ammesso solo Claude Code ufficiale (docs/studio-motore.md)",
+       "keywords": [
+        "subscription",
+        "oauth",
+        "claude max",
+        "chatgpt plus"
+       ]
+      },
+      {
+       "id": "co.pace",
+       "name": "Quota pacing across accounts",
+       "desc": "Switch accounts by remaining quota",
+       "status": {
+        "jarvis": "yes",
+        "openclaw": "partial",
+        "hermes": "partial",
+        "claude": "no",
+        "codex": "no",
+        "goose": "no",
+        "openhands": "no",
+        "letta": "no",
+        "crewai": "no",
+        "langgraph": "no",
+        "ag2": "no",
+        "manus": "no",
+        "devin": "no",
+        "cursor": "no",
+        "n8n": "no",
+        "agno": "no"
+       },
+       "sources": [],
+       "keywords": [
+        "pacing",
+        "usage limit"
+       ]
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "media",
+   "name": "Media",
+   "children": [
+    {
+     "id": "md.voice",
+     "name": "Voice",
+     "children": [
+      {
+       "id": "md.stt",
+       "name": "Speech-to-text of voice notes",
+       "desc": "Transcribe inbound audio",
+       "status": {
+        "jarvis": "yes",
+        "openclaw": "yes",
+        "hermes": "yes",
+        "claude": "partial",
+        "codex": "partial",
+        "goose": "no",
+        "openhands": "no",
+        "letta": "no",
+        "crewai": "no",
+        "langgraph": "no",
+        "ag2": "no",
+        "manus": "no",
+        "devin": "no",
+        "cursor": "no",
+        "n8n": "yes",
+        "agno": "partial"
+       },
+       "sources": [],
+       "keywords": [
+        "transcription",
+        "whisper",
+        "speech-to-text",
+        "stt"
+       ]
+      },
+      {
+       "id": "md.tts",
+       "name": "Text-to-speech replies",
+       "desc": "Spoken output",
+       "status": {
+        "jarvis": "partial",
+        "openclaw": "yes",
+        "hermes": "yes",
+        "claude": "no",
+        "codex": "no",
+        "goose": "no",
+        "openhands": "no",
+        "letta": "no",
+        "crewai": "no",
+        "langgraph": "no",
+        "ag2": "no",
+        "manus": "no",
+        "devin": "no",
+        "cursor": "no",
+        "n8n": "partial",
+        "agno": "partial"
+       },
+       "sources": [],
+       "keywords": [
+        "tts",
+        "text-to-speech",
+        "elevenlabs"
+       ]
+      },
+      {
+       "id": "md.live",
+       "name": "Realtime voice conversation",
+       "desc": "Live full-duplex voice",
+       "status": {
+        "jarvis": "partial",
+        "openclaw": "yes",
+        "hermes": "yes",
+        "claude": "no",
+        "codex": "no",
+        "goose": "no",
+        "openhands": "no",
+        "letta": "no",
+        "crewai": "no",
+        "langgraph": "no",
+        "ag2": "no",
+        "manus": "no",
+        "devin": "no",
+        "cursor": "no",
+        "n8n": "no",
+        "agno": "no"
+       },
+       "sources": [],
+       "keywords": [
+        "realtime voice",
+        "voice mode",
+        "talk mode"
+       ]
+      }
+     ]
+    },
+    {
+     "id": "md.vis",
+     "name": "Images and video",
+     "children": [
+      {
+       "id": "md.imgin",
+       "name": "Image understanding",
+       "desc": "Vision inputs",
+       "status": {
+        "jarvis": "yes",
+        "openclaw": "yes",
+        "hermes": "yes",
+        "claude": "yes",
+        "codex": "yes",
+        "goose": "yes",
+        "openhands": "yes",
+        "letta": "yes",
+        "crewai": "yes",
+        "langgraph": "yes",
+        "ag2": "yes",
+        "manus": "yes",
+        "devin": "yes",
+        "cursor": "yes",
+        "n8n": "yes",
+        "agno": "yes"
+       },
+       "sources": [],
+       "keywords": [
+        "image input",
+        "vision"
+       ]
+      },
+      {
+       "id": "md.imggen",
+       "name": "Image generation tool",
+       "desc": "Create images",
+       "status": {
+        "jarvis": "yes",
+        "openclaw": "yes",
+        "hermes": "yes",
+        "claude": "no",
+        "codex": "yes",
+        "goose": "yes",
+        "openhands": "no",
+        "letta": "no",
+        "crewai": "no",
+        "langgraph": "no",
+        "ag2": "no",
+        "manus": "yes",
+        "devin": "yes",
+        "cursor": "no",
+        "n8n": "yes",
+        "agno": "partial"
+       },
+       "sources": [],
+       "keywords": [
+        "image generation",
+        "image_generate"
+       ]
+      },
+      {
+       "id": "md.video",
+       "name": "Video understanding",
+       "desc": "Analyse video",
+       "status": {
+        "jarvis": "yes",
+        "openclaw": "unknown",
+        "hermes": "partial",
+        "claude": "no",
+        "codex": "no",
+        "goose": "no",
+        "openhands": "no",
+        "letta": "no",
+        "crewai": "no",
+        "langgraph": "no",
+        "ag2": "no",
+        "manus": "unknown",
+        "devin": "unknown",
+        "cursor": "unknown",
+        "n8n": "no",
+        "agno": "partial"
+       },
+       "sources": [],
+       "note": "vis watch: video letti da Gemini/Codex senza token Claude",
+       "keywords": [
+        "video understanding",
+        "video input"
+       ]
+      },
+      {
+       "id": "md.vidgen",
+       "name": "Video generation",
+       "desc": "Create video",
+       "status": {
+        "jarvis": "no",
+        "openclaw": "no",
+        "hermes": "no",
+        "claude": "no",
+        "codex": "no",
+        "goose": "no",
+        "openhands": "no",
+        "letta": "no",
+        "crewai": "no",
+        "langgraph": "no",
+        "ag2": "no",
+        "manus": "yes",
+        "devin": "unknown",
+        "cursor": "no",
+        "n8n": "no",
+        "agno": "no"
+       },
+       "sources": [],
+       "note": "nessuno strumento di generazione video nostro",
+       "keywords": [
+        "video generation",
+        "video_generate"
+       ]
+      },
+      {
+       "id": "md.doc",
+       "name": "PDF/Office documents",
+       "desc": "Read/produce docs",
+       "status": {
+        "jarvis": "yes",
+        "openclaw": "yes",
+        "hermes": "yes",
+        "claude": "yes",
+        "codex": "yes",
+        "goose": "yes",
+        "openhands": "yes",
+        "letta": "yes",
+        "crewai": "yes",
+        "langgraph": "yes",
+        "ag2": "yes",
+        "manus": "yes",
+        "devin": "yes",
+        "cursor": "yes",
+        "n8n": "yes",
+        "agno": "yes"
+       },
+       "sources": [],
+       "keywords": [
+        "pdf",
+        "docx",
+        "xlsx"
+       ]
+      },
+      {
+       "id": "md.canvas",
+       "name": "Canvas / live artifacts",
+       "desc": "Agent-rendered pages the user can open",
+       "status": {
+        "jarvis": "partial",
+        "openclaw": "yes",
+        "hermes": "yes",
+        "claude": "yes",
+        "codex": "no",
+        "goose": "no",
+        "openhands": "no",
+        "letta": "no",
+        "crewai": "no",
+        "langgraph": "no",
+        "ag2": "no",
+        "manus": "yes",
+        "devin": "yes",
+        "cursor": "yes",
+        "n8n": "no",
+        "agno": "yes"
+       },
+       "sources": [],
+       "keywords": [
+        "canvas",
+        "artifact"
+       ]
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "improve",
+   "name": "Self-improvement and skills",
+   "children": [
+    {
+     "id": "im.skill",
+     "name": "Skills",
+     "children": [
+      {
+       "id": "im.skills",
+       "name": "SKILL.md skills",
+       "desc": "Progressive-disclosure skill folders",
+       "status": {
+        "jarvis": "yes",
+        "openclaw": "yes",
+        "hermes": "yes",
+        "claude": "yes",
+        "codex": "yes",
+        "goose": "yes",
+        "openhands": "yes",
+        "letta": "unknown",
+        "crewai": "unknown",
+        "langgraph": "no",
+        "ag2": "unknown",
+        "manus": "yes",
+        "devin": "yes",
+        "cursor": "yes",
+        "n8n": "yes",
+        "agno": "no"
+       },
+       "sources": [
+        "https://agentskills.io"
+       ],
+       "keywords": [
+        "skill"
+       ]
+      },
+      {
+       "id": "im.auto",
+       "name": "Autonomous skill creation",
+       "desc": "Agent writes skills after complex tasks",
+       "status": {
+        "jarvis": "partial",
+        "openclaw": "no",
+        "hermes": "yes",
+        "claude": "no",
+        "codex": "no",
+        "goose": "no",
+        "openhands": "no",
+        "letta": "unknown",
+        "crewai": "no",
+        "langgraph": "no",
+        "ag2": "no",
+        "manus": "unknown",
+        "devin": "unknown",
+        "cursor": "unknown",
+        "n8n": "no",
+        "agno": "no"
+       },
+       "sources": [
+        "https://hermes-agent.nousresearch.com/docs/"
+       ],
+       "keywords": [
+        "skill creation",
+        "create skill",
+        "autonomous skill"
+       ]
+      },
+      {
+       "id": "im.refine",
+       "name": "Skills self-improve in use",
+       "desc": "Edit skills from experience",
+       "status": {
+        "jarvis": "partial",
+        "openclaw": "no",
+        "hermes": "yes",
+        "claude": "no",
+        "codex": "no",
+        "goose": "no",
+        "openhands": "no",
+        "letta": "unknown",
+        "crewai": "no",
+        "langgraph": "no",
+        "ag2": "no",
+        "manus": "unknown",
+        "devin": "unknown",
+        "cursor": "unknown",
+        "n8n": "no",
+        "agno": "no"
+       },
+       "sources": [],
+       "keywords": [
+        "skill improvement",
+        "self-improv"
+       ]
+      },
+      {
+       "id": "im.mkt",
+       "name": "Skill marketplace",
+       "desc": "Public registry (ClawHub etc.)",
+       "status": {
+        "jarvis": "yes",
+        "openclaw": "yes",
+        "hermes": "yes",
+        "claude": "yes",
+        "codex": "yes",
+        "goose": "unknown",
+        "openhands": "no",
+        "letta": "no",
+        "crewai": "no",
+        "langgraph": "no",
+        "ag2": "no",
+        "manus": "unknown",
+        "devin": "unknown",
+        "cursor": "unknown",
+        "n8n": "no",
+        "agno": "no"
+       },
+       "sources": [],
+       "keywords": [
+        "skill marketplace",
+        "clawhub",
+        "skills hub"
+       ]
+      },
+      {
+       "id": "im.scan",
+       "name": "Skill security scanning",
+       "desc": "Scan third-party skills",
+       "status": {
+        "jarvis": "yes",
+        "openclaw": "partial",
+        "hermes": "unknown",
+        "claude": "no",
+        "codex": "no",
+        "goose": "no",
+        "openhands": "no",
+        "letta": "no",
+        "crewai": "no",
+        "langgraph": "no",
+        "ag2": "no",
+        "manus": "no",
+        "devin": "no",
+        "cursor": "no",
+        "n8n": "no",
+        "agno": "no"
+       },
+       "sources": [],
+       "keywords": [
+        "skill scan",
+        "skillspector"
+       ]
+      }
+     ]
+    },
+    {
+     "id": "im.learn",
+     "name": "Learning loops",
+     "children": [
+      {
+       "id": "im.rule",
+       "name": "Corrections become rules",
+       "desc": "Repeated feedback promoted to rules",
+       "status": {
+        "jarvis": "yes",
+        "openclaw": "yes",
+        "hermes": "yes",
+        "claude": "partial",
+        "codex": "no",
+        "goose": "no",
+        "openhands": "no",
+        "letta": "no",
+        "crewai": "no",
+        "langgraph": "no",
+        "ag2": "no",
+        "manus": "no",
+        "devin": "no",
+        "cursor": "no",
+        "n8n": "no",
+        "agno": "no"
+       },
+       "sources": [],
+       "keywords": [
+        "learn from correction",
+        "lesson"
+       ]
+      },
+      {
+       "id": "im.traj",
+       "name": "Trajectory export for training",
+       "desc": "Batch trajectories for RL",
+       "status": {
+        "jarvis": "no",
+        "openclaw": "no",
+        "hermes": "yes",
+        "claude": "no",
+        "codex": "no",
+        "goose": "no",
+        "openhands": "no",
+        "letta": "no",
+        "crewai": "no",
+        "langgraph": "no",
+        "ag2": "no",
+        "manus": "no",
+        "devin": "no",
+        "cursor": "no",
+        "n8n": "no",
+        "agno": "no"
+       },
+       "sources": [
+        "https://hermes-agent.nousresearch.com/docs/"
+       ],
+       "keywords": [
+        "trajectory",
+        "training data"
+       ]
+      },
+      {
+       "id": "im.anti",
+       "name": "Anticipation of next request",
+       "desc": "Predict user's next asks",
+       "status": {
+        "jarvis": "yes",
+        "openclaw": "no",
+        "hermes": "no",
+        "claude": "no",
+        "codex": "no",
+        "goose": "no",
+        "openhands": "no",
+        "letta": "no",
+        "crewai": "no",
+        "langgraph": "no",
+        "ag2": "no",
+        "manus": "no",
+        "devin": "no",
+        "cursor": "no",
+        "n8n": "no",
+        "agno": "no"
+       },
+       "sources": [],
+       "keywords": [
+        "proactive suggestion",
+        "anticipat"
+       ]
+      },
+      {
+       "id": "im.forge",
+       "name": "Tool forge from repeated work",
+       "desc": "Draft tools for repetitive flows",
+       "status": {
+        "jarvis": "yes",
+        "openclaw": "yes",
+        "hermes": "unknown",
+        "claude": "no",
+        "codex": "no",
+        "goose": "no",
+        "openhands": "no",
+        "letta": "no",
+        "crewai": "no",
+        "langgraph": "no",
+        "ag2": "no",
+        "manus": "no",
+        "devin": "no",
+        "cursor": "no",
+        "n8n": "no",
+        "agno": "no"
+       },
+       "sources": [],
+       "keywords": [
+        "tool forge"
+       ]
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "update",
+   "name": "Updates and maintenance",
+   "children": [
+    {
+     "id": "up.upd",
+     "name": "Updating",
+     "children": [
+      {
+       "id": "up.self",
+       "name": "Self-update command",
+       "desc": "One-command update",
+       "status": {
+        "jarvis": "partial",
+        "openclaw": "yes",
+        "hermes": "yes",
+        "claude": "yes",
+        "codex": "yes",
+        "goose": "yes",
+        "openhands": "yes",
+        "letta": "yes",
+        "crewai": "yes",
+        "langgraph": "yes",
+        "ag2": "yes",
+        "manus": "yes",
+        "devin": "yes",
+        "cursor": "yes",
+        "n8n": "yes",
+        "agno": "yes"
+       },
+       "sources": [],
+       "keywords": [
+        "self-update",
+        "update command"
+       ]
+      },
+      {
+       "id": "up.safe",
+       "name": "Update with rollback",
+       "desc": "Stop, update, verify, roll back on failure",
+       "status": {
+        "jarvis": "yes",
+        "openclaw": "partial",
+        "hermes": "unknown",
+        "claude": "no",
+        "codex": "no",
+        "goose": "no",
+        "openhands": "no",
+        "letta": "no",
+        "crewai": "no",
+        "langgraph": "no",
+        "ag2": "no",
+        "manus": "no",
+        "devin": "no",
+        "cursor": "no",
+        "n8n": "no",
+        "agno": "no"
+       },
+       "sources": [],
+       "keywords": [
+        "rollback"
+       ]
+      },
+      {
+       "id": "up.chan",
+       "name": "Release channels (stable/beta)",
+       "desc": "Beta/canary tracks",
+       "status": {
+        "jarvis": "partial",
+        "openclaw": "yes",
+        "hermes": "yes",
+        "claude": "yes",
+        "codex": "yes",
+        "goose": "yes",
+        "openhands": "yes",
+        "letta": "yes",
+        "crewai": "yes",
+        "langgraph": "yes",
+        "ag2": "yes",
+        "manus": "yes",
+        "devin": "yes",
+        "cursor": "yes",
+        "n8n": "yes",
+        "agno": "yes"
+       },
+       "sources": [],
+       "keywords": [
+        "beta channel",
+        "release channel"
+       ]
+      },
+      {
+       "id": "up.feed",
+       "name": "Machine-readable release feed",
+       "desc": "GitHub releases atom/API",
+       "status": {
+        "jarvis": "partial",
+        "openclaw": "yes",
+        "hermes": "yes",
+        "claude": "yes",
+        "codex": "yes",
+        "goose": "yes",
+        "openhands": "yes",
+        "letta": "yes",
+        "crewai": "yes",
+        "langgraph": "yes",
+        "ag2": "yes",
+        "manus": "yes",
+        "devin": "no",
+        "cursor": "yes",
+        "n8n": "yes",
+        "agno": "yes"
+       },
+       "sources": [],
+       "keywords": [
+        "release feed"
+       ]
+      },
+      {
+       "id": "up.migr",
+       "name": "Config migration tooling",
+       "desc": "Migrate from other agents",
+       "status": {
+        "jarvis": "partial",
+        "openclaw": "yes",
+        "hermes": "yes",
+        "claude": "yes",
+        "codex": "unknown",
+        "goose": "no",
+        "openhands": "no",
+        "letta": "no",
+        "crewai": "no",
+        "langgraph": "no",
+        "ag2": "no",
+        "manus": "no",
+        "devin": "no",
+        "cursor": "no",
+        "n8n": "no",
+        "agno": "no"
+       },
+       "sources": [],
+       "keywords": [
+        "migration",
+        "migrate config"
+       ]
+      }
+     ]
+    },
+    {
+     "id": "up.ops",
+     "name": "Maintenance",
+     "children": [
+      {
+       "id": "up.doc",
+       "name": "Doctor / diagnostics",
+       "desc": "Health check CLI",
+       "status": {
+        "jarvis": "yes",
+        "openclaw": "yes",
+        "hermes": "yes",
+        "claude": "yes",
+        "codex": "yes",
+        "goose": "yes",
+        "openhands": "yes",
+        "letta": "yes",
+        "crewai": "no",
+        "langgraph": "no",
+        "ag2": "no",
+        "manus": "no",
+        "devin": "no",
+        "cursor": "no",
+        "n8n": "no",
+        "agno": "no"
+       },
+       "sources": [],
+       "keywords": [
+        "doctor",
+        "diagnostic"
+       ]
+      },
+      {
+       "id": "up.backup",
+       "name": "Backups",
+       "desc": "Encrypted automatic backups",
+       "status": {
+        "jarvis": "yes",
+        "openclaw": "partial",
+        "hermes": "unknown",
+        "claude": "no",
+        "codex": "no",
+        "goose": "no",
+        "openhands": "no",
+        "letta": "no",
+        "crewai": "no",
+        "langgraph": "no",
+        "ag2": "no",
+        "manus": "no",
+        "devin": "no",
+        "cursor": "no",
+        "n8n": "partial",
+        "agno": "no"
+       },
+       "sources": [],
+       "keywords": [
+        "backup"
+       ]
+      },
+      {
+       "id": "up.clean",
+       "name": "Nightly cleanup/consolidation",
+       "desc": "Memory and file hygiene jobs",
+       "status": {
+        "jarvis": "yes",
+        "openclaw": "partial",
+        "hermes": "unknown",
+        "claude": "no",
+        "codex": "no",
+        "goose": "no",
+        "openhands": "no",
+        "letta": "no",
+        "crewai": "no",
+        "langgraph": "no",
+        "ag2": "no",
+        "manus": "no",
+        "devin": "no",
+        "cursor": "no",
+        "n8n": "no",
+        "agno": "no"
+       },
+       "sources": [],
+       "keywords": [
+        "cleanup",
+        "prune"
+       ]
+      },
+      {
+       "id": "up.repo",
+       "name": "Config as versioned repo",
+       "desc": "Config tracked in git, encrypted secrets",
+       "status": {
+        "jarvis": "yes",
+        "openclaw": "partial",
+        "hermes": "unknown",
+        "claude": "no",
+        "codex": "no",
+        "goose": "no",
+        "openhands": "no",
+        "letta": "no",
+        "crewai": "no",
+        "langgraph": "no",
+        "ag2": "no",
+        "manus": "no",
+        "devin": "no",
+        "cursor": "no",
+        "n8n": "no",
+        "agno": "no"
+       },
+       "sources": [],
+       "keywords": [
+        "config repo",
+        "dotfiles"
+       ]
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "deploy",
+   "name": "Deployment and footprint",
+   "children": [
+    {
+     "id": "dp.where",
+     "name": "Where it runs",
+     "children": [
+      {
+       "id": "dp.local",
+       "name": "Local machine",
+       "desc": "Runs on laptop",
+       "status": {
+        "jarvis": "yes",
+        "openclaw": "yes",
+        "hermes": "yes",
+        "claude": "yes",
+        "codex": "yes",
+        "goose": "yes",
+        "openhands": "yes",
+        "letta": "yes",
+        "crewai": "yes",
+        "langgraph": "yes",
+        "ag2": "yes",
+        "manus": "no",
+        "devin": "no",
+        "cursor": "no",
+        "n8n": "yes",
+        "agno": "yes"
+       },
+       "sources": [],
+       "keywords": [
+        "local install"
+       ]
+      },
+      {
+       "id": "dp.vps",
+       "name": "Cheap VPS / serverless idle",
+       "desc": "Low idle cost deployment",
+       "status": {
+        "jarvis": "partial",
+        "openclaw": "yes",
+        "hermes": "yes",
+        "claude": "yes",
+        "codex": "yes",
+        "goose": "yes",
+        "openhands": "yes",
+        "letta": "yes",
+        "crewai": "yes",
+        "langgraph": "yes",
+        "ag2": "yes",
+        "manus": "no",
+        "devin": "no",
+        "cursor": "no",
+        "n8n": "yes",
+        "agno": "yes"
+       },
+       "sources": [],
+       "keywords": [
+        "vps",
+        "serverless",
+        "fly.io"
+       ]
+      },
+      {
+       "id": "dp.docker",
+       "name": "Docker / Nix packaging",
+       "desc": "Container images",
+       "status": {
+        "jarvis": "no",
+        "openclaw": "yes",
+        "hermes": "yes",
+        "claude": "yes",
+        "codex": "yes",
+        "goose": "yes",
+        "openhands": "yes",
+        "letta": "yes",
+        "crewai": "yes",
+        "langgraph": "yes",
+        "ag2": "yes",
+        "manus": "yes",
+        "devin": "no",
+        "cursor": "no",
+        "n8n": "yes",
+        "agno": "yes"
+       },
+       "sources": [],
+       "keywords": [
+        "docker image",
+        "nix"
+       ]
+      },
+      {
+       "id": "dp.multi",
+       "name": "Multi-host (Mac + PC offload)",
+       "desc": "Heavy work offloaded to other host",
+       "status": {
+        "jarvis": "yes",
+        "openclaw": "partial",
+        "hermes": "no",
+        "claude": "no",
+        "codex": "no",
+        "goose": "no",
+        "openhands": "no",
+        "letta": "no",
+        "crewai": "no",
+        "langgraph": "no",
+        "ag2": "no",
+        "manus": "no",
+        "devin": "no",
+        "cursor": "no",
+        "n8n": "no",
+        "agno": "no"
+       },
+       "sources": [],
+       "keywords": [
+        "multi-host",
+        "remote node",
+        "node pairing"
+       ]
+      },
+      {
+       "id": "dp.win",
+       "name": "Native Windows",
+       "desc": "Windows without WSL",
+       "status": {
+        "jarvis": "no",
+        "openclaw": "yes",
+        "hermes": "yes",
+        "claude": "yes",
+        "codex": "yes",
+        "goose": "yes",
+        "openhands": "yes",
+        "letta": "yes",
+        "crewai": "yes",
+        "langgraph": "yes",
+        "ag2": "yes",
+        "manus": "no",
+        "devin": "no",
+        "cursor": "yes",
+        "n8n": "yes",
+        "agno": "yes"
+       },
+       "sources": [],
+       "note": "gira sul Mac; il PC Windows fa solo lavori pesanti via offload",
+       "keywords": [
+        "windows"
+       ]
+      },
+      {
+       "id": "dp.mob",
+       "name": "Termux / mobile host",
+       "desc": "Run on phone",
+       "status": {
+        "jarvis": "no",
+        "openclaw": "no",
+        "hermes": "yes",
+        "claude": "no",
+        "codex": "no",
+        "goose": "no",
+        "openhands": "no",
+        "letta": "no",
+        "crewai": "no",
+        "langgraph": "no",
+        "ag2": "no",
+        "manus": "no",
+        "devin": "no",
+        "cursor": "no",
+        "n8n": "no",
+        "agno": "no"
+       },
+       "sources": [],
+       "keywords": [
+        "termux",
+        "android"
+       ]
+      }
+     ]
+    },
+    {
+     "id": "dp.foot",
+     "name": "Footprint",
+     "children": [
+      {
+       "id": "dp.mem",
+       "name": "Low idle memory",
+       "desc": "Small resident footprint",
+       "status": {
+        "jarvis": "yes",
+        "openclaw": "no",
+        "hermes": "no",
+        "claude": "no",
+        "codex": "yes",
+        "goose": "no",
+        "openhands": "no",
+        "letta": "no",
+        "crewai": "no",
+        "langgraph": "no",
+        "ag2": "no",
+        "manus": "no",
+        "devin": "no",
+        "cursor": "no",
+        "n8n": "no",
+        "agno": "no"
+       },
+       "sources": [],
+       "note": "servizio canali ~20-50 MB contro i 3,4-3,9 GB di OpenClaw",
+       "keywords": [
+        "memory footprint",
+        "idle memory",
+        "rss"
+       ]
+      },
+      {
+       "id": "dp.lazy",
+       "name": "On-demand daemons (launchd sockets)",
+       "desc": "Spin up on first request, exit idle",
+       "status": {
+        "jarvis": "yes",
+        "openclaw": "partial",
+        "hermes": "no",
+        "claude": "no",
+        "codex": "no",
+        "goose": "no",
+        "openhands": "no",
+        "letta": "no",
+        "crewai": "no",
+        "langgraph": "no",
+        "ag2": "no",
+        "manus": "no",
+        "devin": "no",
+        "cursor": "no",
+        "n8n": "no",
+        "agno": "no"
+       },
+       "sources": [],
+       "keywords": [
+        "on-demand",
+        "socket activation",
+        "lazy start"
+       ]
+      },
+      {
+       "id": "dp.team",
+       "name": "Multi-user team deployment",
+       "desc": "One gateway for many users",
+       "status": {
+        "jarvis": "no",
+        "openclaw": "partial",
+        "hermes": "no",
+        "claude": "yes",
+        "codex": "yes",
+        "goose": "yes",
+        "openhands": "yes",
+        "letta": "yes",
+        "crewai": "yes",
+        "langgraph": "yes",
+        "ag2": "yes",
+        "manus": "yes",
+        "devin": "yes",
+        "cursor": "yes",
+        "n8n": "yes",
+        "agno": "yes"
+       },
+       "sources": [
+        "https://docs.openclaw.ai/start/teams"
+       ],
+       "keywords": [
+        "multi-user",
+        "team deployment",
+        "workspace members"
+       ]
+      },
+      {
+       "id": "dp.found",
+       "name": "Open source licence",
+       "desc": "OSS code",
+       "status": {
+        "jarvis": "partial",
+        "openclaw": "yes",
+        "hermes": "yes",
+        "claude": "yes",
+        "codex": "yes",
+        "goose": "yes",
+        "openhands": "yes",
+        "letta": "yes",
+        "crewai": "yes",
+        "langgraph": "yes",
+        "ag2": "yes",
+        "manus": "no",
+        "devin": "no",
+        "cursor": "no",
+        "n8n": "partial",
+        "agno": "yes"
+       },
+       "sources": [],
+       "note": "repo zorahrel/jarvis pubblico; jarvis-canali privato",
+       "keywords": [
+        "license"
+       ]
+      }
+     ]
+    }
+   ]
+  }
+ ],
+ "meta": {
+  "updated": "2026-11-03",
+  "source": "research of 2026-11-03 (READMEs, changelogs, GitHub API); Jarvis column checked against the code",
+  "scale": {
+   "yes": 1,
+   "partial": 0.5,
+   "no": 0,
+   "unknown": null
+  }
+ }
+}

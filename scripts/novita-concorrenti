@@ -1,0 +1,44 @@
+#!/usr/bin/env python3
+"""Novità di ieri dei gateway concorrenti: release e commit che toccano ciò che il nostro strato canali deve fare.
+
+Stampa niente se non c'è niente. Lo legge il cron «Concorrenti: novità da valutare», che decide se vale un messaggio.
+  novita-concorrenti [--ore N]
+"""
+import json
+import subprocess
+import sys
+from datetime import datetime, timedelta, timezone
+
+REPOS = ["NousResearch/hermes-agent", "zeroclaw-labs/zeroclaw", "HKUDS/nanobot", "openclaw/openclaw", "moltis-org/moltis"]
+# Le prove del 02/11 hanno deciso su queste capacità: una novità che le tocca può cambiare la scelta.
+TEMI = ["whatsapp", "baileys", "discord", "cron", "schedul", "deliver", "outbox", "retry", "queue", "cancel",
+        "outbound", "hook", "memory leak", "rss", "footprint", "reconnect", "sandbox", "secret", "token"]
+
+
+def gh(path):
+    r = subprocess.run(["gh", "api", "-X", "GET", path], capture_output=True, text=True, timeout=60)
+    return json.loads(r.stdout) if r.returncode == 0 else []
+
+
+def main():
+    ore = int(sys.argv[sys.argv.index("--ore") + 1]) if "--ore" in sys.argv else 26
+    since = datetime.now(timezone.utc) - timedelta(hours=ore)
+    out = []
+    for repo in REPOS:
+        rel = [r for r in gh(f"repos/{repo}/releases?per_page=10")
+               if r.get("published_at") and datetime.fromisoformat(r["published_at"].replace("Z", "+00:00")) > since]
+        commits = gh(f"repos/{repo}/commits?since={since.isoformat()}&per_page=100")
+        hit = [c["commit"]["message"].splitlines()[0] for c in commits
+               if any(t in c["commit"]["message"].splitlines()[0].lower() for t in TEMI)]
+        if not rel and not hit:
+            continue
+        out.append(f"## {repo} ({len(commits)} commit in {ore} h)")
+        for r in rel:
+            body = " ".join((r.get("body") or "").split())[:600]
+            out.append(f"- release {r['tag_name']}: {r['html_url']}\n  {body}")
+        for h in hit[:15]:
+            out.append(f"- commit: {h[:140]}")
+    print("\n".join(out))
+
+
+main()

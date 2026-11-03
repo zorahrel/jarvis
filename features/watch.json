@@ -1,0 +1,1513 @@
+{
+ "systems": {
+  "openclaw": {
+   "version": "v2026.10.10-beta.5",
+   "released": "2026-10-30T03:57:14Z",
+   "url": "https://github.com/openclaw/openclaw/releases/tag/v2026.10.10-beta.5",
+   "checked": "2026-11-03T02:08:06.119438+00:00"
+  },
+  "hermes": {
+   "version": "v0.22.6",
+   "released": "2026-11-02T17:18:36Z",
+   "url": "https://github.com/NousResearch/hermes-agent/releases/tag/v0.22.6",
+   "checked": "2026-11-03T02:08:06.119438+00:00"
+  },
+  "claude": {
+   "version": "v2.1.317",
+   "released": "2026-11-03T01:25:46Z",
+   "url": "https://github.com/anthropics/claude-code/releases/tag/v2.1.317",
+   "checked": "2026-11-03T02:08:06.119438+00:00"
+  },
+  "codex": {
+   "version": "rust-v0.167.0-alpha.3",
+   "released": "2026-11-01T22:26:17Z",
+   "url": "https://github.com/openai/codex/releases/tag/rust-v0.167.0-alpha.3",
+   "checked": "2026-11-03T02:08:06.119438+00:00"
+  },
+  "goose": {
+   "version": "v1.57.0",
+   "released": "2026-10-28T19:26:10Z",
+   "url": "https://github.com/aaif-goose/goose/releases/tag/v1.57.0",
+   "checked": "2026-11-03T02:08:06.119438+00:00"
+  },
+  "openhands": {
+   "version": "v1.34.0",
+   "released": "2026-10-27T14:35:23Z",
+   "url": "https://github.com/OpenHands/OpenHands/releases/tag/v1.34.0",
+   "checked": "2026-11-03T02:08:06.119438+00:00"
+  },
+  "letta": {
+   "version": "0.16.8",
+   "released": "2026-05-14T17:14:24Z",
+   "url": "https://github.com/letta-ai/letta/releases/tag/0.16.8",
+   "checked": "2026-11-03T02:08:06.119438+00:00"
+  },
+  "crewai": {
+   "version": "1.15.34",
+   "released": "2026-11-01T21:21:56Z",
+   "url": "https://github.com/crewAIInc/crewAI/releases/tag/1.15.34",
+   "checked": "2026-11-03T02:08:06.119438+00:00"
+  },
+  "langgraph": {
+   "version": "1.2.19",
+   "released": "2026-10-30T22:23:43Z",
+   "url": "https://github.com/langchain-ai/langgraph/releases/tag/1.2.19",
+   "checked": "2026-11-03T02:08:06.119438+00:00"
+  },
+  "ag2": {
+   "version": "v1.2.2",
+   "released": "2026-10-27T20:53:06Z",
+   "url": "https://github.com/ag2ai/ag2/releases/tag/v1.2.2",
+   "checked": "2026-11-03T02:08:06.119438+00:00"
+  },
+  "n8n": {
+   "version": "n8n@1.123.92",
+   "released": "2026-11-02T08:36:14Z",
+   "url": "https://github.com/n8n-io/n8n/releases/tag/n8n%401.123.92",
+   "checked": "2026-11-03T02:08:06.119438+00:00"
+  },
+  "agno": {
+   "version": "v3.1.12",
+   "released": "2026-10-29T14:00:55Z",
+   "url": "https://github.com/agno-agi/agno/releases/tag/v3.1.12",
+   "checked": "2026-11-03T02:08:06.119438+00:00"
+  },
+  "zeroclaw-labs/zeroclaw": {
+   "version": "v0.8.7",
+   "released": "2026-10-27T22:50:03Z",
+   "url": "https://github.com/zeroclaw-labs/zeroclaw/releases/tag/v0.8.7",
+   "checked": "2026-11-03T02:08:06.119438+00:00"
+  },
+  "HKUDS/nanobot": {
+   "version": "v0.4.0",
+   "released": "2026-10-28T10:50:17Z",
+   "url": "https://github.com/HKUDS/nanobot/releases/tag/v0.4.0",
+   "checked": "2026-11-03T02:08:06.119438+00:00"
+  },
+  "moltis-org/moltis": {
+   "version": "20261023.01",
+   "released": "2026-10-23T19:29:03Z",
+   "url": "https://github.com/moltis-org/moltis/releases/tag/20261023.01",
+   "checked": "2026-11-03T02:08:06.119438+00:00"
+  }
+ },
+ "leaves": {
+  "en.model": [
+   {
+    "system": "openclaw",
+    "title": "fix(auth): cron fallback fails with another provider’s session pin (#191587)",
+    "url": "https://github.com/openclaw/openclaw/commit/afb0ca52e0a9d522fcd79f344c30bd141ec8e75b",
+    "date": "2026-11-03T02:04:44Z",
+    "match": "provider"
+   },
+   {
+    "system": "openclaw",
+    "title": "fix(test): align Ollama transport guards with provider trust",
+    "url": "https://github.com/openclaw/openclaw/commit/bf35e054b0062c64e5577b165a3ae629adc3d2d0",
+    "date": "2026-11-02T23:12:13Z",
+    "match": "provider"
+   },
+   {
+    "system": "hermes",
+    "title": "feat(plugin-catalog): add statejar memory provider",
+    "url": "https://github.com/NousResearch/hermes-agent/commit/c8bdee6f88b94086abbe2e36cf18ea4a2f85fb8f",
+    "date": "2026-11-02T23:16:16Z",
+    "match": "provider"
+   },
+   {
+    "system": "hermes",
+    "title": "feat(plugin-catalog): add hashference-provider",
+    "url": "https://github.com/NousResearch/hermes-agent/commit/bd375d9a1587f91c264296df6e615e46ffb721c4",
+    "date": "2026-11-02T23:10:46Z",
+    "match": "provider"
+   },
+   {
+    "system": "hermes",
+    "title": "feat(catalog): add Fortytwo model provider",
+    "url": "https://github.com/NousResearch/hermes-agent/commit/36bf5fb3e24abc4d40e6373b00269e2e6863266e",
+    "date": "2026-11-02T23:10:14Z",
+    "match": "provider"
+   },
+   {
+    "system": "hermes",
+    "title": "feat(catalog): add breeze-tts, a Breeze Blue TTS provider",
+    "url": "https://github.com/NousResearch/hermes-agent/commit/17fbb7c1dd7975108d5cd5fe2ecb5fee53279ec3",
+    "date": "2026-11-02T23:05:18Z",
+    "match": "provider"
+   },
+   {
+    "system": "claude",
+    "title": "v2.1.317",
+    "url": "https://github.com/anthropics/claude-code/releases/tag/v2.1.317",
+    "date": "2026-11-03T01:25:46Z",
+    "match": "provider"
+   },
+   {
+    "system": "codex",
+    "title": "Add web search provider metadata and configuration (#59033)",
+    "url": "https://github.com/openai/codex/commit/b26f6826726685c9f848b55f9e7498f593e46f84",
+    "date": "2026-11-03T01:58:18Z",
+    "match": "provider"
+   },
+   {
+    "system": "codex",
+    "title": "Fix model selection after provider setup (#58945)",
+    "url": "https://github.com/openai/codex/commit/4515bc6df0c06654dfce43f03de98e5b494a3ce7",
+    "date": "2026-11-02T18:42:19Z",
+    "match": "provider"
+   },
+   {
+    "system": "codex",
+    "title": "Add model provider configuration writes to the app-server (#58876)",
+    "url": "https://github.com/openai/codex/commit/053e5b1ca914981275db97b1262a391d16e42556",
+    "date": "2026-11-02T12:22:22Z",
+    "match": "provider"
+   },
+   {
+    "system": "codex",
+    "title": "Add model provider discovery to the app server (#58845)",
+    "url": "https://github.com/openai/codex/commit/3026a8e54e0f48c4d8074cd700f35b0697abc329",
+    "date": "2026-11-02T08:31:14Z",
+    "match": "provider"
+   },
+   {
+    "system": "crewai",
+    "title": "1.15.34",
+    "url": "https://github.com/crewAIInc/crewAI/releases/tag/1.15.34",
+    "date": "2026-11-01T21:21:56Z",
+    "match": "provider"
+   },
+   {
+    "system": "n8n",
+    "title": "fix(core): Update OpenAI provider to accept MCP record schemas (no-changelog) (#42406)",
+    "url": "https://github.com/n8n-io/n8n/commit/5a4751c9aa06d42886be85c95b1079563a09a3bb",
+    "date": "2026-11-02T11:55:15Z",
+    "match": "provider"
+   },
+   {
+    "system": "zeroclaw-labs/zeroclaw",
+    "title": "fix(runtime): honour keep_tool_context_turns when building provider requests (#11297)",
+    "url": "https://github.com/zeroclaw-labs/zeroclaw/commit/03b29bcc68eadf8bd03905b93d6867d3af9d7b87",
+    "date": "2026-11-02T21:57:33Z",
+    "match": "provider"
+   }
+  ],
+  "sc.cron": [
+   {
+    "system": "openclaw",
+    "title": "fix(auth): cron fallback fails with another provider’s session pin (#191587)",
+    "url": "https://github.com/openclaw/openclaw/commit/afb0ca52e0a9d522fcd79f344c30bd141ec8e75b",
+    "date": "2026-11-03T02:04:44Z",
+    "match": "cron"
+   },
+   {
+    "system": "openclaw",
+    "title": "fix(cron): scheduler fails to start after a long-running job is interrupted (#191422)",
+    "url": "https://github.com/openclaw/openclaw/commit/232147c49bcf5bd75d49e07fc7bfe2ca0cab53ee",
+    "date": "2026-11-02T20:50:05Z",
+    "match": "cron"
+   },
+   {
+    "system": "hermes",
+    "title": "v0.22.6",
+    "url": "https://github.com/NousResearch/hermes-agent/releases/tag/v0.22.6",
+    "date": "2026-11-02T17:18:36Z",
+    "match": "cron"
+   },
+   {
+    "system": "claude",
+    "title": "v2.1.317",
+    "url": "https://github.com/anthropics/claude-code/releases/tag/v2.1.317",
+    "date": "2026-11-03T01:25:46Z",
+    "match": "schedule"
+   }
+  ],
+  "up.clean": [
+   {
+    "system": "openclaw",
+    "title": "fix(test): check Git pack cleanup through the original handle",
+    "url": "https://github.com/openclaw/openclaw/commit/f2fc202b740affb7f7be97d365abd5adf72e8aa8",
+    "date": "2026-11-03T01:44:54Z",
+    "match": "cleanup"
+   },
+   {
+    "system": "openclaw",
+    "title": "fix(sandbox): expose dependency cleanup in slow preparation (#191487)",
+    "url": "https://github.com/openclaw/openclaw/commit/8d4e07d7ee402bfead08890f58caeb18729fb37c",
+    "date": "2026-11-02T22:44:34Z",
+    "match": "cleanup"
+   },
+   {
+    "system": "claude",
+    "title": "v2.1.317",
+    "url": "https://github.com/anthropics/claude-code/releases/tag/v2.1.317",
+    "date": "2026-11-03T01:25:46Z",
+    "match": "cleanup"
+   },
+   {
+    "system": "codex",
+    "title": "Add a thread-store builder with host cleanup support (#58954)",
+    "url": "https://github.com/openai/codex/commit/ac9372e521e12d986f8e218ef09719a4adfcb772",
+    "date": "2026-11-02T19:25:02Z",
+    "match": "cleanup"
+   },
+   {
+    "system": "n8n",
+    "title": "fix(core, editor): Align agent cleanup and telemetry (#42910)",
+    "url": "https://github.com/n8n-io/n8n/commit/a7c527122a45c10d2b92993207200da5fc3ae5d8",
+    "date": "2026-11-02T16:57:16Z",
+    "match": "cleanup"
+   }
+  ],
+  "sf.os": [
+   {
+    "system": "openclaw",
+    "title": "fix(sandbox): avoid Podman discovery before every command (#191574)",
+    "url": "https://github.com/openclaw/openclaw/commit/53fb0d4fcd699d8059a945c73f2cadd2fe7524d9",
+    "date": "2026-11-03T01:43:38Z",
+    "match": "sandbox"
+   },
+   {
+    "system": "openclaw",
+    "title": "fix(sandbox): remove containers when backend preparation fails (#191555)",
+    "url": "https://github.com/openclaw/openclaw/commit/f7ef9b3e4234778f0a5b0eb86ab694a1856487bf",
+    "date": "2026-11-03T00:55:53Z",
+    "match": "sandbox"
+   },
+   {
+    "system": "openclaw",
+    "title": "fix(sandbox): stop waiting for dependency builder removal (#191530)",
+    "url": "https://github.com/openclaw/openclaw/commit/941f173975b3b43f7367c14f495ff61040af6469",
+    "date": "2026-11-03T00:13:28Z",
+    "match": "sandbox"
+   },
+   {
+    "system": "openclaw",
+    "title": "fix(sandbox): expose dependency cleanup in slow preparation (#191487)",
+    "url": "https://github.com/openclaw/openclaw/commit/8d4e07d7ee402bfead08890f58caeb18729fb37c",
+    "date": "2026-11-02T22:44:34Z",
+    "match": "sandbox"
+   },
+   {
+    "system": "ag2",
+    "title": "fix(sandbox): stop local commands and their children on cancel, timeout and close (#3512)",
+    "url": "https://github.com/ag2ai/ag2/commit/153ef4cddeca731ea25a40d03098995e64f8a195",
+    "date": "2026-11-01T13:30:16Z",
+    "match": "sandbox"
+   },
+   {
+    "system": "ag2",
+    "title": "fix(sandbox): tolerate undecodable command output (#3428)",
+    "url": "https://github.com/ag2ai/ag2/commit/be31ea6b9c7056d6f3751ca585f425d26fe1793b",
+    "date": "2026-11-01T07:49:01Z",
+    "match": "sandbox"
+   },
+   {
+    "system": "n8n",
+    "title": "fix(core): Skip native evaluation in workflows with vm2 sandbox nodes (no-changelog) (#42923)",
+    "url": "https://github.com/n8n-io/n8n/commit/d7e77a81cbbecd2b02ae9d6f854979ce712dbb7d",
+    "date": "2026-11-02T14:33:30Z",
+    "match": "sandbox"
+   }
+  ],
+  "tl.plug": [
+   {
+    "system": "openclaw",
+    "title": "feat: custom SVG icons for plugin side-chat panels (#191573)",
+    "url": "https://github.com/openclaw/openclaw/commit/6494dce5e9f25fe7b5d2dd6124b6b0a0e14e3026",
+    "date": "2026-11-03T01:25:24Z",
+    "match": "plugin"
+   },
+   {
+    "system": "openclaw",
+    "title": "fix(update): tolerate ENOTDIR when resolving plugin links (#191056)",
+    "url": "https://github.com/openclaw/openclaw/commit/810da21e25fb27126f6ca46f0c7491b9d7ee5a15",
+    "date": "2026-11-03T00:49:42Z",
+    "match": "plugin"
+   },
+   {
+    "system": "openclaw",
+    "title": "fix(doctor): require repair consent for unattended plugin downloads (#191523)",
+    "url": "https://github.com/openclaw/openclaw/commit/c9d9baced1f1d7b3ef05f1cea5100e9db5ab7bd1",
+    "date": "2026-11-03T00:36:55Z",
+    "match": "plugin"
+   },
+   {
+    "system": "openclaw",
+    "title": "fix: skip discarded plugin setup captures during startup (#191501)",
+    "url": "https://github.com/openclaw/openclaw/commit/779f51d2efdd15b925fc752baaf602a0a3b240cc",
+    "date": "2026-11-02T22:55:43Z",
+    "match": "plugin"
+   },
+   {
+    "system": "hermes",
+    "title": "v0.22.6",
+    "url": "https://github.com/NousResearch/hermes-agent/releases/tag/v0.22.6",
+    "date": "2026-11-02T17:18:36Z",
+    "match": "plugin"
+   },
+   {
+    "system": "hermes",
+    "title": "feat(plugin-catalog): add statejar memory provider",
+    "url": "https://github.com/NousResearch/hermes-agent/commit/c8bdee6f88b94086abbe2e36cf18ea4a2f85fb8f",
+    "date": "2026-11-02T23:16:16Z",
+    "match": "plugin"
+   },
+   {
+    "system": "hermes",
+    "title": "feat(plugin-catalog): add hashference-provider",
+    "url": "https://github.com/NousResearch/hermes-agent/commit/bd375d9a1587f91c264296df6e615e46ffb721c4",
+    "date": "2026-11-02T23:10:46Z",
+    "match": "plugin"
+   },
+   {
+    "system": "hermes",
+    "title": "Add Postroom portable plugin catalog entry with OAuth and data disclosures",
+    "url": "https://github.com/NousResearch/hermes-agent/commit/45ad6ede6be8b20f6329a43fabb8d8159b7587d2",
+    "date": "2026-11-02T23:09:11Z",
+    "match": "plugin"
+   },
+   {
+    "system": "hermes",
+    "title": "feat(plugin-catalog): add switch402 @ 31f21ef (0.1.0)",
+    "url": "https://github.com/NousResearch/hermes-agent/commit/2b462850f7a9e7bcb061b53c4d49f2e0004481e9",
+    "date": "2026-11-02T23:08:06Z",
+    "match": "plugin"
+   },
+   {
+    "system": "hermes",
+    "title": "Add Iris Chat to the community plugin catalog",
+    "url": "https://github.com/NousResearch/hermes-agent/commit/2d007cdbca9bef9f1d18b30c3372fd9216708ed9",
+    "date": "2026-11-02T23:07:34Z",
+    "match": "plugin"
+   },
+   {
+    "system": "hermes",
+    "title": "Add hermes-band to the plugin catalog",
+    "url": "https://github.com/NousResearch/hermes-agent/commit/aaa1b7e3d7f86592605c77694b1d569ec1f42f04",
+    "date": "2026-11-02T23:07:02Z",
+    "match": "plugin"
+   },
+   {
+    "system": "hermes",
+    "title": "Add ethics-filter to the plugin catalog",
+    "url": "https://github.com/NousResearch/hermes-agent/commit/07e20b547131a63d8f1898cec12a0ca2200a47bf",
+    "date": "2026-11-02T23:06:25Z",
+    "match": "plugin"
+   },
+   {
+    "system": "hermes",
+    "title": "Add soul-finder to the plugin catalog",
+    "url": "https://github.com/NousResearch/hermes-agent/commit/e361e92ce945ee3a9f95209b84d559af34c36ca5",
+    "date": "2026-11-02T23:05:51Z",
+    "match": "plugin"
+   },
+   {
+    "system": "hermes",
+    "title": "feat(plugin-catalog): add search-sources v0.2.0",
+    "url": "https://github.com/NousResearch/hermes-agent/commit/c941860f535b754a046c1c1b368c498542bf20c5",
+    "date": "2026-11-02T23:04:45Z",
+    "match": "plugin"
+   },
+   {
+    "system": "hermes",
+    "title": "feat(plugin-catalog): add toll plugin",
+    "url": "https://github.com/NousResearch/hermes-agent/commit/e4ee85bbe2db4a211007736302a9baf1a93125c7",
+    "date": "2026-11-02T23:03:24Z",
+    "match": "plugin"
+   },
+   {
+    "system": "hermes",
+    "title": "fix(plugin-catalog): re-pin hermes-project-stewardship to 1e6792c (v0.5.5)",
+    "url": "https://github.com/NousResearch/hermes-agent/commit/775692c5ee637d3247501e9e12276bd5b717a021",
+    "date": "2026-11-02T23:03:03Z",
+    "match": "plugin"
+   },
+   {
+    "system": "claude",
+    "title": "v2.1.317",
+    "url": "https://github.com/anthropics/claude-code/releases/tag/v2.1.317",
+    "date": "2026-11-03T01:25:46Z",
+    "match": "plugin"
+   },
+   {
+    "system": "codex",
+    "title": "Support model catalog overrides for plugin guidance (#58894)",
+    "url": "https://github.com/openai/codex/commit/aef7d276a4518ad9cb2805a8ddc634eef6f3e7dc",
+    "date": "2026-11-02T14:06:17Z",
+    "match": "plugin"
+   }
+  ],
+  "mem.sleep": [
+   {
+    "system": "openclaw",
+    "title": "fix(memory): custom recall tools are shadowed by dreaming sidecars (#191028)",
+    "url": "https://github.com/openclaw/openclaw/commit/5b482e2d3e4cf4d173c87dfd327e03e4ab6ed4d4",
+    "date": "2026-11-03T01:19:29Z",
+    "match": "dreaming"
+   }
+  ],
+  "ma.spawn": [
+   {
+    "system": "openclaw",
+    "title": "fix: hide redundant working labels in subagent details (#191567)",
+    "url": "https://github.com/openclaw/openclaw/commit/634c1bfe531e782671b1a1da904819be44eee4ba",
+    "date": "2026-11-03T00:57:51Z",
+    "match": "subagent"
+   },
+   {
+    "system": "openclaw",
+    "title": "fix(qa): preserve settled subagent handoff replies",
+    "url": "https://github.com/openclaw/openclaw/commit/326f81f4df0042c5bd46ab5bab53b63e8c43c484",
+    "date": "2026-11-03T00:41:35Z",
+    "match": "subagent"
+   },
+   {
+    "system": "claude",
+    "title": "v2.1.317",
+    "url": "https://github.com/anthropics/claude-code/releases/tag/v2.1.317",
+    "date": "2026-11-03T01:25:46Z",
+    "match": "subagent"
+   }
+  ],
+  "mem.sem": [
+   {
+    "system": "openclaw",
+    "title": "fix(memory): recover indexing after embedding request timeouts (#191556)",
+    "url": "https://github.com/openclaw/openclaw/commit/0cbdb482bbb089a0c3594650eef888747665cf7d",
+    "date": "2026-11-03T00:52:42Z",
+    "match": "embedding"
+   }
+  ],
+  "ch.tg": [
+   {
+    "system": "openclaw",
+    "title": "fix(telegram): compaction notices never reach the chat in progress streaming mode (#191516)",
+    "url": "https://github.com/openclaw/openclaw/commit/c557867206b6067e226d7114a01ef2084a5e9f5d",
+    "date": "2026-11-03T00:42:33Z",
+    "match": "telegram"
+   },
+   {
+    "system": "hermes",
+    "title": "v0.22.6",
+    "url": "https://github.com/NousResearch/hermes-agent/releases/tag/v0.22.6",
+    "date": "2026-11-02T17:18:36Z",
+    "match": "telegram"
+   }
+  ],
+  "co.compact": [
+   {
+    "system": "openclaw",
+    "title": "fix(telegram): compaction notices never reach the chat in progress streaming mode (#191516)",
+    "url": "https://github.com/openclaw/openclaw/commit/c557867206b6067e226d7114a01ef2084a5e9f5d",
+    "date": "2026-11-03T00:42:33Z",
+    "match": "compaction"
+   },
+   {
+    "system": "openclaw",
+    "title": "fix(ci): keep compaction attribution helpers internal",
+    "url": "https://github.com/openclaw/openclaw/commit/9039ceb43cf462dd5c35b9063ad68a5e86361e7d",
+    "date": "2026-11-03T00:00:13Z",
+    "match": "compaction"
+   },
+   {
+    "system": "openclaw",
+    "title": "fix(compaction): preserve active request provenance (#180214)",
+    "url": "https://github.com/openclaw/openclaw/commit/1b43c2ed2c2c26c4f2a3bd3a9f2e1703f10f9364",
+    "date": "2026-11-02T22:51:22Z",
+    "match": "compaction"
+   },
+   {
+    "system": "hermes",
+    "title": "v0.22.6",
+    "url": "https://github.com/NousResearch/hermes-agent/releases/tag/v0.22.6",
+    "date": "2026-11-02T17:18:36Z",
+    "match": "compaction"
+   },
+   {
+    "system": "codex",
+    "title": "Allow volatile World State sections to refresh after compaction (#58956)",
+    "url": "https://github.com/openai/codex/commit/2fa67f03f332a57b1bb34a8e14d55d14165fdcd3",
+    "date": "2026-11-02T19:38:59Z",
+    "match": "compaction"
+   },
+   {
+    "system": "openhands",
+    "title": "feat: show compact message timestamps on hover (#19227)",
+    "url": "https://github.com/OpenHands/OpenHands/commit/d8755f9df729ac50ed1443fc8f6aa679618bf4f7",
+    "date": "2026-11-02T12:46:19Z",
+    "match": "compact"
+   },
+   {
+    "system": "openhands",
+    "title": "fix: show one error toast for failed context compaction (#19152)",
+    "url": "https://github.com/OpenHands/OpenHands/commit/c240ea2d21cb2a13dbcf51d225c111b8e0681b89",
+    "date": "2026-10-31T09:55:17Z",
+    "match": "compaction"
+   }
+  ],
+  "ma.handoff": [
+   {
+    "system": "openclaw",
+    "title": "fix(qa): preserve settled subagent handoff replies",
+    "url": "https://github.com/openclaw/openclaw/commit/326f81f4df0042c5bd46ab5bab53b63e8c43c484",
+    "date": "2026-11-03T00:41:35Z",
+    "match": "handoff"
+   },
+   {
+    "system": "openhands",
+    "title": "fix: stabilize conversation startup layout and title handoff (#19202)",
+    "url": "https://github.com/OpenHands/OpenHands/commit/5b7e7e1ef7224bfaaddfffbe2db31631f10508b0",
+    "date": "2026-11-01T20:15:15Z",
+    "match": "handoff"
+   }
+  ],
+  "ob.health": [
+   {
+    "system": "openclaw",
+    "title": "fix(doctor): require repair consent for unattended plugin downloads (#191523)",
+    "url": "https://github.com/openclaw/openclaw/commit/c9d9baced1f1d7b3ef05f1cea5100e9db5ab7bd1",
+    "date": "2026-11-03T00:36:55Z",
+    "match": "doctor"
+   },
+   {
+    "system": "openclaw",
+    "title": "fix: await Doctor shared-state repair preparation (#190875)",
+    "url": "https://github.com/openclaw/openclaw/commit/d894035c7829ab46e9ffde0561b87d89b6737f13",
+    "date": "2026-11-02T22:18:18Z",
+    "match": "doctor"
+   },
+   {
+    "system": "openclaw",
+    "title": "fix(doctor): explain workspace imports blocked by earlier refusals (#191442)",
+    "url": "https://github.com/openclaw/openclaw/commit/a9c6e2b07738f2e456075f317af6439ce1e8f594",
+    "date": "2026-11-02T20:49:37Z",
+    "match": "doctor"
+   }
+  ],
+  "up.doc": [
+   {
+    "system": "openclaw",
+    "title": "fix(doctor): require repair consent for unattended plugin downloads (#191523)",
+    "url": "https://github.com/openclaw/openclaw/commit/c9d9baced1f1d7b3ef05f1cea5100e9db5ab7bd1",
+    "date": "2026-11-03T00:36:55Z",
+    "match": "doctor"
+   },
+   {
+    "system": "openclaw",
+    "title": "fix: await Doctor shared-state repair preparation (#190875)",
+    "url": "https://github.com/openclaw/openclaw/commit/d894035c7829ab46e9ffde0561b87d89b6737f13",
+    "date": "2026-11-02T22:18:18Z",
+    "match": "doctor"
+   },
+   {
+    "system": "openclaw",
+    "title": "fix(doctor): explain workspace imports blocked by earlier refusals (#191442)",
+    "url": "https://github.com/openclaw/openclaw/commit/a9c6e2b07738f2e456075f317af6439ce1e8f594",
+    "date": "2026-11-02T20:49:37Z",
+    "match": "doctor"
+   }
+  ],
+  "ch.thread": [
+   {
+    "system": "openclaw",
+    "title": "fix(codex): name incompatible settings in thread rotation refusals (#191522)",
+    "url": "https://github.com/openclaw/openclaw/commit/ccac42bac50d3cde4119f1a80b30d0e3a0b24db2",
+    "date": "2026-11-02T23:34:28Z",
+    "match": "thread"
+   },
+   {
+    "system": "hermes",
+    "title": "v0.22.6",
+    "url": "https://github.com/NousResearch/hermes-agent/releases/tag/v0.22.6",
+    "date": "2026-11-02T17:18:36Z",
+    "match": "thread"
+   },
+   {
+    "system": "codex",
+    "title": "Allow hosts to restrict a thread's root-only capabilities (#58984)",
+    "url": "https://github.com/openai/codex/commit/40cf168567aa3cb3e0cf6eadef82e6eca2cd16c1",
+    "date": "2026-11-02T21:09:37Z",
+    "match": "thread"
+   },
+   {
+    "system": "codex",
+    "title": "Add a thread-store builder with host cleanup support (#58954)",
+    "url": "https://github.com/openai/codex/commit/ac9372e521e12d986f8e218ef09719a4adfcb772",
+    "date": "2026-11-02T19:25:02Z",
+    "match": "thread"
+   },
+   {
+    "system": "codex",
+    "title": "Add a feature-gated account check for CLI thread resume (#58890)",
+    "url": "https://github.com/openai/codex/commit/1e8b536dc7f834540ef76bf935b45b2f2b4eeedd",
+    "date": "2026-11-02T13:51:49Z",
+    "match": "thread"
+   }
+  ],
+  "md.canvas": [
+   {
+    "system": "openclaw",
+    "title": "fix(canvas): include effective embed policy in document responses (#180520)",
+    "url": "https://github.com/openclaw/openclaw/commit/f9c2c4528e6c3111a01b3411eeab33af2ed38db2",
+    "date": "2026-11-02T23:18:24Z",
+    "match": "canvas"
+   },
+   {
+    "system": "claude",
+    "title": "v2.1.317",
+    "url": "https://github.com/anthropics/claude-code/releases/tag/v2.1.317",
+    "date": "2026-11-03T01:25:46Z",
+    "match": "artifact"
+   },
+   {
+    "system": "openhands",
+    "title": "feat(canvas): attribute local Cloud signup entries (ALL-5962) (#18874)",
+    "url": "https://github.com/OpenHands/OpenHands/commit/80ddd49ef4fe6a58c1f8d5f9e9a8a5b2069c7262",
+    "date": "2026-10-31T16:13:47Z",
+    "match": "canvas"
+   }
+  ],
+  "co.local": [
+   {
+    "system": "openclaw",
+    "title": "fix(test): align Ollama transport guards with provider trust",
+    "url": "https://github.com/openclaw/openclaw/commit/bf35e054b0062c64e5577b165a3ae629adc3d2d0",
+    "date": "2026-11-02T23:12:13Z",
+    "match": "ollama"
+   },
+   {
+    "system": "openclaw",
+    "title": "fix(ollama): embeddings fail for configured local hostnames (#191479)",
+    "url": "https://github.com/openclaw/openclaw/commit/967dd72c07fc24cefe32bda3870601c1a6cbc474",
+    "date": "2026-11-02T22:16:27Z",
+    "match": "ollama"
+   }
+  ],
+  "ch.dc": [
+   {
+    "system": "openclaw",
+    "title": "fix(discord): keep browser private-network access out of CDN downloads (#191458)",
+    "url": "https://github.com/openclaw/openclaw/commit/70c99be459a77d474f19a7eed0e575449ef088e1",
+    "date": "2026-11-02T21:52:11Z",
+    "match": "discord"
+   }
+  ],
+  "ob.usage": [
+   {
+    "system": "openclaw",
+    "title": "fix(ios): tool steps show a usage and model footer that belongs under the reply (#191232)",
+    "url": "https://github.com/openclaw/openclaw/commit/959e25980047d363672668edbc2f2e15ac8f4aab",
+    "date": "2026-11-02T21:38:17Z",
+    "match": "usage"
+   },
+   {
+    "system": "codex",
+    "title": "Add usage accounting for host-owned agent runtimes (#58975)",
+    "url": "https://github.com/openai/codex/commit/c725e472e594fbdbb9d31af16f81396229efded1",
+    "date": "2026-11-02T20:37:55Z",
+    "match": "usage"
+   },
+   {
+    "system": "crewai",
+    "title": "1.15.34",
+    "url": "https://github.com/crewAIInc/crewAI/releases/tag/1.15.34",
+    "date": "2026-11-01T21:21:56Z",
+    "match": "usage"
+   },
+   {
+    "system": "n8n",
+    "title": "feat(API): Report whether the editor UI made a Public API call in usage telemetry (no-changelog) (#42551)",
+    "url": "https://github.com/n8n-io/n8n/commit/ded2813c2e9e47e578e9e1f2ce73034a7e0e9329",
+    "date": "2026-11-02T12:42:12Z",
+    "match": "usage"
+   }
+  ],
+  "im.skills": [
+   {
+    "system": "openclaw",
+    "title": "fix(control-ui): show ClawHub install result in the skill dialog (#191285)",
+    "url": "https://github.com/openclaw/openclaw/commit/af4c6a1be1c804dabb2616e8c01b0e3176bfad94",
+    "date": "2026-11-02T21:36:00Z",
+    "match": "skill"
+   },
+   {
+    "system": "hermes",
+    "title": "v0.22.6",
+    "url": "https://github.com/NousResearch/hermes-agent/releases/tag/v0.22.6",
+    "date": "2026-11-02T17:18:36Z",
+    "match": "skill"
+   },
+   {
+    "system": "hermes",
+    "title": "fix(profiles): keep force-install swap dirs out of skill discovery",
+    "url": "https://github.com/NousResearch/hermes-agent/commit/f6e40b0105ffb841b86505a5a1d657a6e6878fb7",
+    "date": "2026-11-03T00:08:46Z",
+    "match": "skill"
+   },
+   {
+    "system": "crewai",
+    "title": "1.15.34",
+    "url": "https://github.com/crewAIInc/crewAI/releases/tag/1.15.34",
+    "date": "2026-11-01T21:21:56Z",
+    "match": "skill"
+   }
+  ],
+  "im.mkt": [
+   {
+    "system": "openclaw",
+    "title": "fix(control-ui): show ClawHub install result in the skill dialog (#191285)",
+    "url": "https://github.com/openclaw/openclaw/commit/af4c6a1be1c804dabb2616e8c01b0e3176bfad94",
+    "date": "2026-11-02T21:36:00Z",
+    "match": "clawhub"
+   }
+  ],
+  "co.sub": [
+   {
+    "system": "openclaw",
+    "title": "fix(xai): stop OAuth refreshes from retaining a stale expiry (#191464)",
+    "url": "https://github.com/openclaw/openclaw/commit/9701d0ffeb115873e571dd6e847826fa9b8b522c",
+    "date": "2026-11-02T21:28:43Z",
+    "match": "oauth"
+   },
+   {
+    "system": "hermes",
+    "title": "Add Postroom portable plugin catalog entry with OAuth and data disclosures",
+    "url": "https://github.com/NousResearch/hermes-agent/commit/45ad6ede6be8b20f6329a43fabb8d8159b7587d2",
+    "date": "2026-11-02T23:09:11Z",
+    "match": "oauth"
+   },
+   {
+    "system": "ag2",
+    "title": "fix(knowledge): make memory subscription close idempotent (#3445)",
+    "url": "https://github.com/ag2ai/ag2/commit/bd25ea97fd5e346778e0ca0b4b61274990ac1d9d",
+    "date": "2026-11-01T10:14:25Z",
+    "match": "subscription"
+   },
+   {
+    "system": "n8n",
+    "title": "fix(Microsoft Teams Trigger Node): Keep one subscription per resource and remove orphans (#41735)",
+    "url": "https://github.com/n8n-io/n8n/commit/4546b39d6f20edb42bc49a467ad88aec140a8d65",
+    "date": "2026-11-02T12:14:17Z",
+    "match": "subscription"
+   }
+  ],
+  "md.doc": [
+   {
+    "system": "openclaw",
+    "title": "fix(ui): keep PDF readers open when file metadata refreshes (#189828)",
+    "url": "https://github.com/openclaw/openclaw/commit/0a5426f67f6a072e05bbc642ad5ca2dc8af4daa6",
+    "date": "2026-11-02T20:45:55Z",
+    "match": "pdf"
+   }
+  ],
+  "ch.imsg": [
+   {
+    "system": "openclaw",
+    "title": "fix(macos): iMessage replies stop after app updates until Automation is re-granted (#186107)",
+    "url": "https://github.com/openclaw/openclaw/commit/0a6aaf50f6c5c4e906dd906dd52b9539e4bf93be",
+    "date": "2026-11-02T20:22:57Z",
+    "match": "imessage"
+   }
+  ],
+  "ch.sl": [
+   {
+    "system": "hermes",
+    "title": "v0.22.6",
+    "url": "https://github.com/NousResearch/hermes-agent/releases/tag/v0.22.6",
+    "date": "2026-11-02T17:18:36Z",
+    "match": "slack"
+   },
+   {
+    "system": "hermes",
+    "title": "fix(relay): keep a turn's Slack status on its own message when DM turns overlap",
+    "url": "https://github.com/NousResearch/hermes-agent/commit/e47a8af39569d7b3b8e01309ffe60773872d8ebd",
+    "date": "2026-11-02T23:06:46Z",
+    "match": "slack"
+   },
+   {
+    "system": "n8n",
+    "title": "n8n@2.46.4",
+    "url": "https://github.com/n8n-io/n8n/releases/tag/n8n%402.46.4",
+    "date": "2026-11-02T08:27:00Z",
+    "match": "slack"
+   },
+   {
+    "system": "n8n",
+    "title": "beta",
+    "url": "https://github.com/n8n-io/n8n/releases/tag/beta",
+    "date": "2026-11-02T08:27:03Z",
+    "match": "slack"
+   },
+   {
+    "system": "n8n",
+    "title": "fix(Microsoft Teams Trigger Node): Keep one subscription per resource and remove orphans (#41735)",
+    "url": "https://github.com/n8n-io/n8n/commit/4546b39d6f20edb42bc49a467ad88aec140a8d65",
+    "date": "2026-11-02T12:14:17Z",
+    "match": "microsoft teams"
+   }
+  ],
+  "ch.group": [
+   {
+    "system": "hermes",
+    "title": "v0.22.6",
+    "url": "https://github.com/NousResearch/hermes-agent/releases/tag/v0.22.6",
+    "date": "2026-11-02T17:18:36Z",
+    "match": "group chat"
+   }
+  ],
+  "tl.hooks": [
+   {
+    "system": "hermes",
+    "title": "v0.22.6",
+    "url": "https://github.com/NousResearch/hermes-agent/releases/tag/v0.22.6",
+    "date": "2026-11-02T17:18:36Z",
+    "match": "hook"
+   },
+   {
+    "system": "claude",
+    "title": "v2.1.317",
+    "url": "https://github.com/anthropics/claude-code/releases/tag/v2.1.317",
+    "date": "2026-11-03T01:25:46Z",
+    "match": "hook"
+   },
+   {
+    "system": "n8n",
+    "title": "fix(core): Recommend moving alerting into the preExecute hook in the v3 migration report (#42279)",
+    "url": "https://github.com/n8n-io/n8n/commit/1063a6e034b1b1f0a82ce3c0407c65559c53fcbb",
+    "date": "2026-11-02T17:25:44Z",
+    "match": "hook"
+   },
+   {
+    "system": "n8n",
+    "title": "feat(core): Add the otel.configure external hook (#42164)",
+    "url": "https://github.com/n8n-io/n8n/commit/721a3db880178ca0b12655ec1fd4d6966627b916",
+    "date": "2026-11-02T11:11:05Z",
+    "match": "hook"
+   }
+  ],
+  "sf.docker": [
+   {
+    "system": "hermes",
+    "title": "v0.22.6",
+    "url": "https://github.com/NousResearch/hermes-agent/releases/tag/v0.22.6",
+    "date": "2026-11-02T17:18:36Z",
+    "match": "docker"
+   }
+  ],
+  "sf.secret": [
+   {
+    "system": "hermes",
+    "title": "v0.22.6",
+    "url": "https://github.com/NousResearch/hermes-agent/releases/tag/v0.22.6",
+    "date": "2026-11-02T17:18:36Z",
+    "match": "keychain"
+   }
+  ],
+  "ob.desk": [
+   {
+    "system": "hermes",
+    "title": "v0.22.6",
+    "url": "https://github.com/NousResearch/hermes-agent/releases/tag/v0.22.6",
+    "date": "2026-11-02T17:18:36Z",
+    "match": "desktop app"
+   },
+   {
+    "system": "claude",
+    "title": "v2.1.317",
+    "url": "https://github.com/anthropics/claude-code/releases/tag/v2.1.317",
+    "date": "2026-11-03T01:25:46Z",
+    "match": "desktop app"
+   }
+  ],
+  "md.tts": [
+   {
+    "system": "hermes",
+    "title": "v0.22.6",
+    "url": "https://github.com/NousResearch/hermes-agent/releases/tag/v0.22.6",
+    "date": "2026-11-02T17:18:36Z",
+    "match": "elevenlabs"
+   },
+   {
+    "system": "hermes",
+    "title": "fix(setup): offer voice selection for edge TTS",
+    "url": "https://github.com/NousResearch/hermes-agent/commit/baab53c9dff936c938a31746c57e188deb2a6f43",
+    "date": "2026-11-03T00:05:23Z",
+    "match": "tts"
+   },
+   {
+    "system": "hermes",
+    "title": "feat(catalog): add breeze-tts, a Breeze Blue TTS provider",
+    "url": "https://github.com/NousResearch/hermes-agent/commit/17fbb7c1dd7975108d5cd5fe2ecb5fee53279ec3",
+    "date": "2026-11-02T23:05:18Z",
+    "match": "tts"
+   }
+  ],
+  "sf.appr": [
+   {
+    "system": "hermes",
+    "title": "fix(approval): keep hidden variation selectors in the content-rule scan",
+    "url": "https://github.com/NousResearch/hermes-agent/commit/ad2b705b4995a958b0a795e9097be661e2d1ef63",
+    "date": "2026-11-03T01:54:13Z",
+    "match": "approval"
+   },
+   {
+    "system": "hermes",
+    "title": "fix(approval): allow keycap emoji in the variation-selector check",
+    "url": "https://github.com/NousResearch/hermes-agent/commit/f37c7fb571154d317feaa2dbd11a92cd85b5c624",
+    "date": "2026-11-03T01:54:13Z",
+    "match": "approval"
+   },
+   {
+    "system": "hermes",
+    "title": "fix(approval): flag variation selectors that do not follow an emoji",
+    "url": "https://github.com/NousResearch/hermes-agent/commit/7c8991b0f9d4b4b4f40d0f3662269baf064d3673",
+    "date": "2026-11-03T01:54:13Z",
+    "match": "approval"
+   },
+   {
+    "system": "hermes",
+    "title": "fix(approval): an approved rule no longer hides a credential upload",
+    "url": "https://github.com/NousResearch/hermes-agent/commit/8f6bb36594b797523c537c811d7767b909234d3d",
+    "date": "2026-11-03T01:34:51Z",
+    "match": "approval"
+   },
+   {
+    "system": "claude",
+    "title": "v2.1.317",
+    "url": "https://github.com/anthropics/claude-code/releases/tag/v2.1.317",
+    "date": "2026-11-03T01:25:46Z",
+    "match": "approval"
+   }
+  ],
+  "sc.loop": [
+   {
+    "system": "hermes",
+    "title": "fix(web): run config schema build and egress status read off the event loop",
+    "url": "https://github.com/NousResearch/hermes-agent/commit/eabe837133f0379e76a8bf8dc140bcdb71528def",
+    "date": "2026-11-03T01:49:40Z",
+    "match": "loop"
+   },
+   {
+    "system": "claude",
+    "title": "v2.1.317",
+    "url": "https://github.com/anthropics/claude-code/releases/tag/v2.1.317",
+    "date": "2026-11-03T01:25:46Z",
+    "match": "loop"
+   }
+  ],
+  "sf.net": [
+   {
+    "system": "hermes",
+    "title": "fix(web): run config schema build and egress status read off the event loop",
+    "url": "https://github.com/NousResearch/hermes-agent/commit/eabe837133f0379e76a8bf8dc140bcdb71528def",
+    "date": "2026-11-03T01:49:40Z",
+    "match": "egress"
+   },
+   {
+    "system": "hermes",
+    "title": "fix(relay): anchor the queued follow-up and proxy-mode status on the turn's own message",
+    "url": "https://github.com/NousResearch/hermes-agent/commit/2d3634363bb267debe9aaf72968676e0ebf21e2d",
+    "date": "2026-11-02T23:06:46Z",
+    "match": "proxy"
+   }
+  ],
+  "sc.queue": [
+   {
+    "system": "hermes",
+    "title": "feat(desktop): pin Kanban boards as quick-switch tabs",
+    "url": "https://github.com/NousResearch/hermes-agent/commit/e03222879c39b5161f39bf68d21efb9f80cd6940",
+    "date": "2026-11-03T00:06:09Z",
+    "match": "kanban"
+   },
+   {
+    "system": "hermes",
+    "title": "fix(hooks): project scoped Kanban identity at the payload boundary",
+    "url": "https://github.com/NousResearch/hermes-agent/commit/d6682bae439549363a4507285c605d348b5a78ca",
+    "date": "2026-11-03T00:05:11Z",
+    "match": "kanban"
+   }
+  ],
+  "ob.board": [
+   {
+    "system": "hermes",
+    "title": "feat(desktop): pin Kanban boards as quick-switch tabs",
+    "url": "https://github.com/NousResearch/hermes-agent/commit/e03222879c39b5161f39bf68d21efb9f80cd6940",
+    "date": "2026-11-03T00:06:09Z",
+    "match": "kanban"
+   },
+   {
+    "system": "hermes",
+    "title": "fix(hooks): project scoped Kanban identity at the payload boundary",
+    "url": "https://github.com/NousResearch/hermes-agent/commit/d6682bae439549363a4507285c605d348b5a78ca",
+    "date": "2026-11-03T00:05:11Z",
+    "match": "kanban"
+   },
+   {
+    "system": "codex",
+    "title": "Add an in-memory launcher for the message-board MCP server (#58909)",
+    "url": "https://github.com/openai/codex/commit/6c4fa86838df53578f454388b44ba1d248d57370",
+    "date": "2026-11-02T15:29:45Z",
+    "match": "board"
+   },
+   {
+    "system": "codex",
+    "title": "Add a standalone HTTP MCP server for the agent message board (#58904)",
+    "url": "https://github.com/openai/codex/commit/18c6dbe52b3b7cef89c13d52efa535ce39bbe27b",
+    "date": "2026-11-02T15:09:22Z",
+    "match": "board"
+   }
+  ],
+  "rl.retry": [
+   {
+    "system": "hermes",
+    "title": "fix(pm): retry held metadata unlink during flatten",
+    "url": "https://github.com/NousResearch/hermes-agent/commit/368b7bb0f9dab92eeaa9e322eb96b3851b50ef86",
+    "date": "2026-11-03T00:05:44Z",
+    "match": "retry"
+   },
+   {
+    "system": "openhands",
+    "title": "fix: retry initial Cloud history failures before socket fallback (#19207)",
+    "url": "https://github.com/OpenHands/OpenHands/commit/fa6974b526c4107985204fe8fe68d0c72b41a44d",
+    "date": "2026-11-01T21:20:31Z",
+    "match": "retry"
+   },
+   {
+    "system": "crewai",
+    "title": "1.15.34",
+    "url": "https://github.com/crewAIInc/crewAI/releases/tag/1.15.34",
+    "date": "2026-11-01T21:21:56Z",
+    "match": "retry"
+   }
+  ],
+  "ch.rc": [
+   {
+    "system": "claude",
+    "title": "v2.1.317",
+    "url": "https://github.com/anthropics/claude-code/releases/tag/v2.1.317",
+    "date": "2026-11-03T01:25:46Z",
+    "match": "remote control"
+   }
+  ],
+  "en.sdk": [
+   {
+    "system": "claude",
+    "title": "v2.1.317",
+    "url": "https://github.com/anthropics/claude-code/releases/tag/v2.1.317",
+    "date": "2026-11-03T01:25:46Z",
+    "match": "agent sdk"
+   },
+   {
+    "system": "langgraph",
+    "title": "feat(sdk-py): remove fairness_weight from PrioritySettings (#9441)",
+    "url": "https://github.com/langchain-ai/langgraph/commit/3c916d750575b22c464790e9774494d810ccd322",
+    "date": "2026-11-03T01:03:26Z",
+    "match": "sdk"
+   },
+   {
+    "system": "langgraph",
+    "title": "fix(sdk-py): rejoin a run stream that closes before the run ends (#9554)",
+    "url": "https://github.com/langchain-ai/langgraph/commit/9791c686eeb263e3eda8c13062036a8b071531e6",
+    "date": "2026-11-02T19:57:22Z",
+    "match": "sdk"
+   }
+  ],
+  "tl.reg": [
+   {
+    "system": "claude",
+    "title": "v2.1.317",
+    "url": "https://github.com/anthropics/claude-code/releases/tag/v2.1.317",
+    "date": "2026-11-03T01:25:46Z",
+    "match": "connector"
+   }
+  ],
+  "tl.shell": [
+   {
+    "system": "claude",
+    "title": "v2.1.317",
+    "url": "https://github.com/anthropics/claude-code/releases/tag/v2.1.317",
+    "date": "2026-11-03T01:25:46Z",
+    "match": "shell tool"
+   }
+  ],
+  "ma.lead": [
+   {
+    "system": "claude",
+    "title": "v2.1.317",
+    "url": "https://github.com/anthropics/claude-code/releases/tag/v2.1.317",
+    "date": "2026-11-03T01:25:46Z",
+    "match": "agent team"
+   }
+  ],
+  "sf.modes": [
+   {
+    "system": "claude",
+    "title": "v2.1.317",
+    "url": "https://github.com/anthropics/claude-code/releases/tag/v2.1.317",
+    "date": "2026-11-03T01:25:46Z",
+    "match": "auto mode"
+   }
+  ],
+  "rl.limit": [
+   {
+    "system": "claude",
+    "title": "v2.1.317",
+    "url": "https://github.com/anthropics/claude-code/releases/tag/v2.1.317",
+    "date": "2026-11-03T01:25:46Z",
+    "match": "quota"
+   }
+  ],
+  "ob.mobile": [
+   {
+    "system": "claude",
+    "title": "v2.1.317",
+    "url": "https://github.com/anthropics/claude-code/releases/tag/v2.1.317",
+    "date": "2026-11-03T01:25:46Z",
+    "match": "mobile"
+   }
+  ],
+  "ob.otel": [
+   {
+    "system": "claude",
+    "title": "v2.1.317",
+    "url": "https://github.com/anthropics/claude-code/releases/tag/v2.1.317",
+    "date": "2026-11-03T01:25:46Z",
+    "match": "otel"
+   },
+   {
+    "system": "n8n",
+    "title": "feat(core): Add the otel.configure external hook (#42164)",
+    "url": "https://github.com/n8n-io/n8n/commit/721a3db880178ca0b12655ec1fd4d6966627b916",
+    "date": "2026-11-02T11:11:05Z",
+    "match": "otel"
+   }
+  ],
+  "tl.web": [
+   {
+    "system": "codex",
+    "title": "Add web search provider metadata and configuration (#59033)",
+    "url": "https://github.com/openai/codex/commit/b26f6826726685c9f848b55f9e7498f593e46f84",
+    "date": "2026-11-03T01:58:18Z",
+    "match": "web search"
+   }
+  ],
+  "ob.tui": [
+   {
+    "system": "codex",
+    "title": "Add host cycling and saved defaults for new TUI conversations (#59007)",
+    "url": "https://github.com/openai/codex/commit/26f73fba8ffd4aeedf6d4734c423982d2fce734a",
+    "date": "2026-11-02T23:19:03Z",
+    "match": "tui"
+   },
+   {
+    "system": "codex",
+    "title": "Add opt-in side conversation panes to the TUI (#58992)",
+    "url": "https://github.com/openai/codex/commit/db227aed42df3c9d842986860993714de8e6e4d5",
+    "date": "2026-11-02T21:47:45Z",
+    "match": "tui"
+   },
+   {
+    "system": "codex",
+    "title": "Add naming and navigation helpers for TUI backend sessions (#58722)",
+    "url": "https://github.com/openai/codex/commit/54201ea65a3501d09a87c776376a0c16aa39db70",
+    "date": "2026-11-01T15:59:49Z",
+    "match": "tui"
+   },
+   {
+    "system": "codex",
+    "title": "Support rendering TUI conversations within an inset area (#58718)",
+    "url": "https://github.com/openai/codex/commit/8c811e8d93839103b5185d1f6324ebd2671adff1",
+    "date": "2026-11-01T15:50:25Z",
+    "match": "tui"
+   },
+   {
+    "system": "crewai",
+    "title": "1.15.34",
+    "url": "https://github.com/crewAIInc/crewAI/releases/tag/1.15.34",
+    "date": "2026-11-01T21:21:56Z",
+    "match": "tui"
+   }
+  ],
+  "rl.mem": [
+   {
+    "system": "codex",
+    "title": "Enable the segment heap on Windows CI runners (#58978)",
+    "url": "https://github.com/openai/codex/commit/479c6be7e3187314ee8d2972e481dfa6840850a8",
+    "date": "2026-11-02T20:47:18Z",
+    "match": "heap"
+   }
+  ],
+  "dp.win": [
+   {
+    "system": "codex",
+    "title": "Enable the segment heap on Windows CI runners (#58978)",
+    "url": "https://github.com/openai/codex/commit/479c6be7e3187314ee8d2972e481dfa6840850a8",
+    "date": "2026-11-02T20:47:18Z",
+    "match": "windows"
+   }
+  ],
+  "ma.msg": [
+   {
+    "system": "codex",
+    "title": "Add opt-in MCP discovery for in-memory agent message boards (#58973)",
+    "url": "https://github.com/openai/codex/commit/9c23d93d5b6f946ca7138d44c3b2bc0a7461c051",
+    "date": "2026-11-02T20:34:35Z",
+    "match": "agent message"
+   },
+   {
+    "system": "codex",
+    "title": "Add a standalone HTTP MCP server for the agent message board (#58904)",
+    "url": "https://github.com/openai/codex/commit/18c6dbe52b3b7cef89c13d52efa535ce39bbe27b",
+    "date": "2026-11-02T15:09:22Z",
+    "match": "agent message"
+   }
+  ],
+  "rl.resume": [
+   {
+    "system": "codex",
+    "title": "Add a feature-gated account check for CLI thread resume (#58890)",
+    "url": "https://github.com/openai/codex/commit/1e8b536dc7f834540ef76bf935b45b2f2b4eeedd",
+    "date": "2026-11-02T13:51:49Z",
+    "match": "resume"
+   },
+   {
+    "system": "openhands",
+    "title": "feat: show clear session startup and resume details (#19249)",
+    "url": "https://github.com/OpenHands/OpenHands/commit/e08e1da1fa29596fa82b712f117b4f7e48c89661",
+    "date": "2026-11-02T17:32:34Z",
+    "match": "resume"
+   },
+   {
+    "system": "openhands",
+    "title": "fix: resume paused sandboxes when sending another message (#19186)",
+    "url": "https://github.com/OpenHands/OpenHands/commit/c2a513f16467f35e725e020a72767dbc1c1bf2b3",
+    "date": "2026-11-01T18:23:33Z",
+    "match": "resume"
+   },
+   {
+    "system": "n8n",
+    "title": "feat(engine): Accept step-bound resume requests on engine v2 (no-changelog) (#42706)",
+    "url": "https://github.com/n8n-io/n8n/commit/9216f937e407111a1a91a857329f8e82e1a92376",
+    "date": "2026-11-02T11:46:54Z",
+    "match": "resume"
+   },
+   {
+    "system": "n8n",
+    "title": "fix(core): Limit resume attempts for waiting and queued executions (#42135)",
+    "url": "https://github.com/n8n-io/n8n/commit/c08ba2dd33b2955577971e0e210c77c66ca7bd7e",
+    "date": "2026-11-01T20:12:25Z",
+    "match": "resume"
+   },
+   {
+    "system": "n8n",
+    "title": "feat(engine): Resume the parent step when a sub-execution ends (no-changelog) (#42389)",
+    "url": "https://github.com/n8n-io/n8n/commit/c44bd78f3834fb4e5a14cdcee96d552a9c4e4e92",
+    "date": "2026-10-31T18:05:19Z",
+    "match": "resume"
+   },
+   {
+    "system": "zeroclaw-labs/zeroclaw",
+    "title": "feat(zerocode): add /load-session to resume a saved session by name or id (#12071)",
+    "url": "https://github.com/zeroclaw-labs/zeroclaw/commit/0e931888de0862fe2143389a86077c28826e877e",
+    "date": "2026-11-01T00:57:41Z",
+    "match": "resume"
+   }
+  ],
+  "ch.api": [
+   {
+    "system": "crewai",
+    "title": "1.15.34",
+    "url": "https://github.com/crewAIInc/crewAI/releases/tag/1.15.34",
+    "date": "2026-11-01T21:21:56Z",
+    "match": "openai-compatible"
+   },
+   {
+    "system": "crewai",
+    "title": "fix(llm)!: raise MissingAPIKeyError for openai-compatible providers (#8898)",
+    "url": "https://github.com/crewAIInc/crewAI/commit/946ec7a942ded9c05a22fdf8eb76038aec394b93",
+    "date": "2026-11-01T07:48:37Z",
+    "match": "openai-compatible"
+   },
+   {
+    "system": "ag2",
+    "title": "fix(acp,mcp): preserve explicitly provided empty session storage (#3516)",
+    "url": "https://github.com/ag2ai/ag2/commit/d367c8206e1eb3aa5d5d6d14f43294be8c015811",
+    "date": "2026-10-31T16:55:59Z",
+    "match": "acp"
+   }
+  ],
+  "en.stream": [
+   {
+    "system": "crewai",
+    "title": "1.15.34",
+    "url": "https://github.com/crewAIInc/crewAI/releases/tag/1.15.34",
+    "date": "2026-11-01T21:21:56Z",
+    "match": "structured output"
+   }
+  ],
+  "ma.role": [
+   {
+    "system": "crewai",
+    "title": "1.15.34",
+    "url": "https://github.com/crewAIInc/crewAI/releases/tag/1.15.34",
+    "date": "2026-11-01T21:21:56Z",
+    "match": "crew"
+   }
+  ],
+  "rl.eval": [
+   {
+    "system": "crewai",
+    "title": "1.15.34",
+    "url": "https://github.com/crewAIInc/crewAI/releases/tag/1.15.34",
+    "date": "2026-11-01T21:21:56Z",
+    "match": "eval"
+   },
+   {
+    "system": "n8n",
+    "title": "fix(benchmark): Accept the binary-data response without a charset (no-changelog) (#42526)",
+    "url": "https://github.com/n8n-io/n8n/commit/8efc05860a46cef493732f31525b97fb9c1f3f4a",
+    "date": "2026-11-02T11:45:43Z",
+    "match": "benchmark"
+   }
+  ],
+  "co.deferred": [
+   {
+    "system": "crewai",
+    "title": "1.15.34",
+    "url": "https://github.com/crewAIInc/crewAI/releases/tag/1.15.34",
+    "date": "2026-11-01T21:21:56Z",
+    "match": "deferred"
+   }
+  ],
+  "up.migr": [
+   {
+    "system": "crewai",
+    "title": "1.15.34",
+    "url": "https://github.com/crewAIInc/crewAI/releases/tag/1.15.34",
+    "date": "2026-11-01T21:21:56Z",
+    "match": "migration"
+   },
+   {
+    "system": "n8n",
+    "title": "n8n@2.46.4",
+    "url": "https://github.com/n8n-io/n8n/releases/tag/n8n%402.46.4",
+    "date": "2026-11-02T08:27:00Z",
+    "match": "migration"
+   },
+   {
+    "system": "n8n",
+    "title": "beta",
+    "url": "https://github.com/n8n-io/n8n/releases/tag/beta",
+    "date": "2026-11-02T08:27:03Z",
+    "match": "migration"
+   },
+   {
+    "system": "n8n",
+    "title": "fix(core): Recommend moving alerting into the preExecute hook in the v3 migration report (#42279)",
+    "url": "https://github.com/n8n-io/n8n/commit/1063a6e034b1b1f0a82ce3c0407c65559c53fcbb",
+    "date": "2026-11-02T17:25:44Z",
+    "match": "migration"
+   }
+  ],
+  "ma.a2a": [
+   {
+    "system": "ag2",
+    "title": "fix(a2a): make the client reconcile artifacts by identity and raise o… (#3494)",
+    "url": "https://github.com/ag2ai/ag2/commit/78a06eddbdab92ccab2d191fb92377c3458aff17",
+    "date": "2026-11-01T19:23:22Z",
+    "match": "a2a"
+   },
+   {
+    "system": "ag2",
+    "title": "fix(acp,mcp): preserve explicitly provided empty session storage (#3516)",
+    "url": "https://github.com/ag2ai/ag2/commit/d367c8206e1eb3aa5d5d6d14f43294be8c015811",
+    "date": "2026-10-31T16:55:59Z",
+    "match": "acp"
+   }
+  ],
+  "sf.inj": [
+   {
+    "system": "ag2",
+    "title": "feat: add dynamic agent status bars with dependency injection (#3552)",
+    "url": "https://github.com/ag2ai/ag2/commit/07144b1a84119cf7a2e81e846c45b870266d7446",
+    "date": "2026-11-01T10:08:40Z",
+    "match": "injection"
+   }
+  ],
+  "co.cache": [
+   {
+    "system": "n8n",
+    "title": "fix(ai-builder): Preserve prompt caching for custom skills (no-changelog) (#42922)",
+    "url": "https://github.com/n8n-io/n8n/commit/18c045bfacb12c8163ff770970b330af9730aaab",
+    "date": "2026-11-02T18:05:54Z",
+    "match": "caching"
+   }
+  ],
+  "sc.wf": [
+   {
+    "system": "n8n",
+    "title": "feat(core): Run the Execute Sub-workflow node on engine v2 (no-changelog) (#42391)",
+    "url": "https://github.com/n8n-io/n8n/commit/6507d32d197dedcb15db4d4474cf27b5df47ad19",
+    "date": "2026-11-02T15:40:02Z",
+    "match": "workflow"
+   },
+   {
+    "system": "n8n",
+    "title": "fix(core): Keep the workflow dependency index current after source-control pull and unpublish (#42407)",
+    "url": "https://github.com/n8n-io/n8n/commit/56fd96db135035963d0d3e9e27517f8b56f55cb1",
+    "date": "2026-11-02T14:05:42Z",
+    "match": "workflow"
+   },
+   {
+    "system": "n8n",
+    "title": "feat(core): Resolve a sub-workflow for engine v2 on the control plane (no-changelog) (#42390)",
+    "url": "https://github.com/n8n-io/n8n/commit/97a1e4c3c3431df4f6675b2cc20ba1c04599c4bd",
+    "date": "2026-11-02T10:46:49Z",
+    "match": "workflow"
+   },
+   {
+    "system": "n8n",
+    "title": "fix: Clear workflow search when entering a folder (#42884)",
+    "url": "https://github.com/n8n-io/n8n/commit/4877e1dc8a64a6c872c5f2872c0bc3d4f8cc43dc",
+    "date": "2026-11-02T10:25:51Z",
+    "match": "workflow"
+   }
+  ],
+  "dp.found": [
+   {
+    "system": "n8n",
+    "title": "fix(core): Show the paid plan when a Registered Community license is also active (#42920)",
+    "url": "https://github.com/n8n-io/n8n/commit/c07ba0c3ae62f6472678e64d13dddee697851a74",
+    "date": "2026-11-02T14:27:44Z",
+    "match": "license"
+   }
+  ],
+  "sc.web": [
+   {
+    "system": "n8n",
+    "title": "fix(editor): Open form test popup without a background request to the webhook host (#41107)",
+    "url": "https://github.com/n8n-io/n8n/commit/7cb7d0b307bd663d2772e90277d75bb58b876a77",
+    "date": "2026-11-02T12:45:20Z",
+    "match": "webhook"
+   },
+   {
+    "system": "n8n",
+    "title": "fix(core): Show MCP webhook header names for team-project credentials (#42885)",
+    "url": "https://github.com/n8n-io/n8n/commit/7ea4731caa0fbdbb514331283413a6924ca82ddc",
+    "date": "2026-11-02T11:43:46Z",
+    "match": "webhook"
+   }
+  ],
+  "ch.pair": [
+   {
+    "system": "zeroclaw-labs/zeroclaw",
+    "title": "fix(enroll): redeem enrollment codes on the daemon's canonical pairing guard (#11940)",
+    "url": "https://github.com/zeroclaw-labs/zeroclaw/commit/0bb1d4a801ac7dbecc9e9a91128c0a96ace98ab3",
+    "date": "2026-11-01T01:58:43Z",
+    "match": "pairing"
+   }
+  ]
+ },
+ "checked": "2026-11-03T02:08:06.119438+00:00"
+}

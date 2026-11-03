@@ -1,0 +1,108 @@
+#!/usr/bin/env python3
+"""Releases and commits of the systems in the feature map, matched to the map's leaves.
+
+Reads features/features.json (systems with a GitHub releases feed, leaves with their keywords), asks GitHub what
+changed in the last N hours, and writes features/watch.json: the latest version seen per system and, per leaf, the
+news to re-evaluate (kept 30 days). The hub's «Funzionalità» page reads both files.
+Prints the digest grouped by leaf, nothing if nothing matched: the cron «Concorrenti: novità da valutare» reads it.
+  feature-watch [--hours N] [--dry-run]
+"""
+import json
+import re
+import subprocess
+import sys
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent / "features"
+MAP = ROOT / "features.json"
+WATCH = ROOT / "watch.json"
+KEEP_DAYS = 30
+# Gateway competitors that are watched but not scored in the map (they decided the 02/11 choice).
+EXTRA = ["zeroclaw-labs/zeroclaw", "HKUDS/nanobot", "moltis-org/moltis"]
+ROUTINE = re.compile(r"^(test|tests|docs?|chore|ci|build|style|refactor|perf|revert|release|bump|merge)\b", re.I)
+FEATURE = re.compile(r"^(feat|fix|add|support|new|implement|introduce|enable|allow)\b", re.I)
+STOP = {"with", "from", "that", "this", "into", "agent", "agents", "support", "tool", "tools", "mode", "built",
+        "native", "based", "per", "the", "and", "for", "own", "any", "via"}
+
+
+def gh(path):
+    r = subprocess.run(["gh", "api", "-X", "GET", path], capture_output=True, text=True, timeout=60)
+    try:
+        return json.loads(r.stdout) if r.returncode == 0 else []
+    except json.JSONDecodeError:
+        return []
+
+
+def repo_of(feed):
+    m = re.match(r"https://github\.com/([^/]+/[^/]+)/releases", feed or "")
+    return m.group(1) if m else None
+
+
+def keywords(leaf):
+    # explicit keywords win; otherwise the meaningful words of the leaf name
+    if leaf.get("keywords"):
+        return [k.lower() for k in leaf["keywords"]]
+    words = re.findall(r"[a-z0-9][a-z0-9+-]{3,}", leaf["name"].lower())
+    return [w for w in words if w not in STOP]
+
+
+def leaves(m):
+    for a in m["areas"]:
+        for b in a["children"]:
+            for leaf in b["children"]:
+                yield a, b, leaf
+
+
+def main():
+    hours = int(sys.argv[sys.argv.index("--hours") + 1]) if "--hours" in sys.argv else 26
+    dry = "--dry-run" in sys.argv
+    m = json.loads(MAP.read_text())
+    watch = json.loads(WATCH.read_text()) if WATCH.exists() else {"systems": {}, "leaves": {}}
+    now = datetime.now(timezone.utc)
+    since = now - timedelta(hours=hours)
+    index = [(leaf["id"], f"{a['name']} › {b['name']} › {leaf['name']}", keywords(leaf)) for a, b, leaf in leaves(m)]
+    targets = [(s["id"], repo_of(s.get("releases_feed"))) for s in m["systems"]] + [(r, r) for r in EXTRA]
+    found = {}
+    for sid, repo in targets:
+        if not repo:
+            continue
+        rels = gh(f"repos/{repo}/releases?per_page=10")
+        if rels:
+            top = rels[0]
+            watch["systems"][sid] = {"version": top.get("tag_name"), "released": top.get("published_at"),
+                                     "url": top.get("html_url"), "checked": now.isoformat()}
+        items = [(r["tag_name"], " ".join((r.get("body") or "").split()), r["html_url"], r["published_at"]) for r in rels
+                 if r.get("published_at") and datetime.fromisoformat(r["published_at"].replace("Z", "+00:00")) > since]
+        for c in gh(f"repos/{repo}/commits?since={since.isoformat()}&per_page=100"):
+            title = c["commit"]["message"].splitlines()[0]
+            # tests, docs, chores and CI do not change what a system can do
+            if ROUTINE.match(title) or not FEATURE.match(title):
+                continue
+            items.append((title, "", c["html_url"], c["commit"]["committer"]["date"]))
+        for title, body, url, date in items:
+            text = f"{title} {body[:4000]}".lower()
+            for lid, path, kws in index:
+                hit = next((k for k in kws if re.search(rf"\b{re.escape(k)}\b", text)), None)
+                if hit:
+                    found.setdefault(lid, (path, []))[1].append({"system": sid, "title": title[:160], "url": url,
+                                                                 "date": date, "match": hit})
+    cutoff = (now - timedelta(days=KEEP_DAYS)).isoformat()
+    for lid, (_, news) in found.items():
+        old = [n for n in watch["leaves"].get(lid, []) if n["date"] >= cutoff]
+        seen = {n["url"] for n in old}
+        watch["leaves"][lid] = old + [n for n in news if n["url"] not in seen]
+    watch["leaves"] = {k: [n for n in v if n["date"] >= cutoff] for k, v in watch["leaves"].items()}
+    watch["leaves"] = {k: v for k, v in watch["leaves"].items() if v}
+    watch["checked"] = now.isoformat()
+    if not dry:
+        WATCH.write_text(json.dumps(watch, ensure_ascii=False, indent=1))
+    out = []
+    for lid, (path, news) in sorted(found.items()):
+        out.append(f"## {path} ({lid})")
+        for n in news[:8]:
+            out.append(f"- {n['system']}: {n['title']} — {n['url']}")
+    print("\n".join(out))
+
+
+main()

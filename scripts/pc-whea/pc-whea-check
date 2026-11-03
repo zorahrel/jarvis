@@ -1,0 +1,6 @@
+#!/bin/sh
+# Conta errori CPU (WHEA) e schermate blu sul PC dal tetto di frequenza del 02/11 15:30.
+# Se ne trova ancora, il tetto non basta: passo successivo numproc 16 o RMA (vedi memory/tools/pc-offload.md).
+HOST_SSH=$(sed -n "s/^HOST_SSH=//p" ~/.config/winfleet/config.env | tr -d "\"'")
+DA="${1:-2026-11-02T15:30:00}"
+ssh -o ConnectTimeout=15 "$HOST_SSH" "powershell -NoProfile -Command \"\$d=[datetime]'$DA'; \$w=@(Get-WinEvent -FilterHashtable @{LogName='System';ProviderName='Microsoft-Windows-WHEA-Logger';StartTime=\$d} -ErrorAction SilentlyContinue).Count; \$b=@(Get-WinEvent -FilterHashtable @{LogName='System';Id=41;StartTime=\$d} -ErrorAction SilentlyContinue).Count; 'PC: dal tetto a 4,3 GHz {0} errori CPU corretti e {1} riavvii imprevisti' -f \$w,\$b\"" || { echo "PC non raggiungibile per il controllo WHEA"; exit 1; }

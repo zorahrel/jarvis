@@ -69,7 +69,7 @@ const sql = (q) => JSON.parse(execFileSync('sqlite3', ['-readonly', '-json', DB,
 // 26/10: la ricevuta dice solo che la consegna è stata tentata («started»); un cron (e5738f4e) risultava consegnato e
 // il testo era stato soppresso (no_visible_result), la card si chiuse a torto. «Consegnato» è quello che dice il
 // registro dei run del gateway; se il gateway non risponde nessun run vale come consegnato e la card resta aperta.
-export function deliveredRuns(jobId, bin = process.env.OPENCLAW_BIN || 'openclaw') {
+export function deliveredRuns(jobId, bin = process.env.OPENCLAW_BIN || 'jarvis-canali') {
   try {
     const out = JSON.parse(execFileSync(bin, ['cron', 'runs', '--id', jobId, '--limit', '20'], { encoding: 'utf8', timeout: 60000, stdio: ['ignore', 'pipe', 'ignore'] }).replace(/^[^{]*/, ''));
     return (out.entries || []).filter((e) => e.action === 'finished' && e.delivered === true).map((e) => e.runAtMs);
@@ -119,7 +119,7 @@ async function main() {
   let token = '';
   try { token = execFileSync('security', ['find-generic-password', '-s', 'topics', '-a', 'agent-token', '-w'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim(); } catch {}
   const wa = process.env.TASK_SYNC_WA;
-  const notify = wa ? (text) => execFileSync('openclaw', ['message', 'send', '--channel', 'whatsapp', '--target', wa, '-m', `⏰ ${text}`], { stdio: 'ignore', timeout: 60000 }) : null;
+  const notify = wa ? (text) => execFileSync('jarvis-canali', ['message', 'send', '--channel', 'whatsapp', '--target', wa, '-m', `⏰ ${text}`], { stdio: 'ignore', timeout: 60000 }) : null;
   try { await closeRound({ topics: topicsSide({ token }), dry: process.argv.includes('--dry-run'), notify }); }
   catch (e) { console.error(`cron-close: ${e.message}`); process.exitCode = 2; }
 }

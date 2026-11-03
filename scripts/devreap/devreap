@@ -445,6 +445,51 @@ def reap_scratch(procs, dry, owners=None, listing=False):
     return {r["pid"] for r in rows}
 
 
+# --- Browser headless orfani --------------------------------------------------
+# Quarta regola, senza pressione. Il 02/11 un Chromium di Lighthouse e' rimasto
+# acceso 19 ore e mezza (11 processi): lo script lo lanciava con `lighthouse`
+# in un figlio e al timeout faceva `c.kill()` sul solo node, chrome-launcher non
+# chiudeva il browser e questo passava a launchd. Congiunzione stretta: padre
+# launchd + `--headless` + profilo usa e getta di Lighthouse o Playwright nella
+# cartella temporanea + piu' vecchio di HEADLESS_AGE + nessuna connessione in
+# entrata. Un browser vivo di un test ha ancora il suo node come padre.
+HEADLESS_PROFILE = re.compile(
+    r"--user-data-dir=/(?:private/)?(?:var/folders/[^/\s]+/[^/\s]+/T|tmp)/"
+    r"(?:lighthouse\.|playwright_)")
+HEADLESS_AGE = _env("DEVREAP_HEADLESS_AGE", 3600, int)
+
+
+def headless_orphans(procs):
+    rows = []
+    for pid, info in procs.items():
+        cmd = info["cmd"]
+        if info["ppid"] != 1 or info["age"] < HEADLESS_AGE:
+            continue
+        if "--headless" not in cmd or not HEADLESS_PROFILE.search(cmd):
+            continue
+        if "--type=" in cmd:                 # i figli muoiono col principale
+            continue
+        ports, inbound = net(pid)
+        if inbound:
+            continue
+        m = HEADLESS_PROFILE.search(cmd)
+        rows.append({"pid": pid, "age": info["age"], "profile": cmd[m.start():m.start() + 120].split()[0]})
+    return rows
+
+
+def reap_headless(procs, dry, listing=False):
+    rows = headless_orphans(procs)
+    for r in rows:
+        if listing:
+            print(f"  browser orfano pid={r['pid']} eta={r['age']//60}m  {r['profile']}")
+    if listing or not rows:
+        return set()
+    res = kill_tree([r["pid"] for r in rows], dry)
+    for r in rows:
+        log(f"REAP-HEADLESS pid={r['pid']} eta={r['age']//60}m [{res}] :: {r['profile']}", echo=True)
+    return {r["pid"] for r in rows}
+
+
 # --- Resti senza padrone -----------------------------------------------------
 
 def session_of(path):
@@ -1085,6 +1130,7 @@ def main():
     if listing:
         print_rows(rows, swap)
         reap_scratch(procs, dry, owners, listing=True)
+        reap_headless(procs, dry, listing=True)
         reap_resto(procs, dry, owners, listing=True)
         reap_tsserver(procs, dry, listing=True)
         reap_noclient(procs, rows, dry, listing=True)
@@ -1094,6 +1140,11 @@ def main():
     # Prima del gate: questi non aspettano che il Mac soffra.
     reap_git_filters(procs, dry)
     reaped = reap_scratch(procs, dry, owners)
+    try:
+        reaped |= reap_headless(procs, dry)
+    except Exception:
+        traceback.print_exc()
+        log("ERRORE headless: traccia in devreap.err.log")
     try:
         reap_resto(procs, dry, owners, skip=reaped)   # RESTO_KILL=0: decide e scrive, non chiude
     except Exception:
