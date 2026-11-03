@@ -382,8 +382,20 @@ def mac_free():
     return not tool.exists() or subprocess.run([str(tool)], capture_output=True).returncode == 0
 
 
+# L'uscita della app (letto in app.asar 4.4212.0, 03/11): ogni richiesta passa da un
+# gestore before-quit. Se una sessione ha lavoro da perdere (turno in corso, input
+# trattenuto, task in background, cron armato o loop anche da fermi, client remoto con
+# query viva) la app veta, mostra «Claude is still working» e resta accesa. Altrimenti
+# parte la pulizia (finestre nascoste) e poi esce da sola; una seconda richiesta mentre
+# pulisce dice «already running» e non fa niente. SIGTERM/INT/QUIT/HUP la app li
+# gestisce: salta il veto una volta sola e pulisce, come «Quit anyway» senza dialogo.
 VETO = "vetoed by before-quit interceptor"
-VETO_MSG = ("rimandato: la app ha sessioni attive e ne vieta l'uscita, il cambio aspetta che siano ferme. "
+CLEANUP = "Starting onQuitCleanup"
+SIGNAL = "received signal 'SIGTERM' quitting now"
+LIMBO = "handler is already running, letting it go"
+READY = "handler is ready for quit, so quitting"
+VETO_MSG = ("rimandato: la app ha lavoro in corso (turno, cron armato, task in background o client remoto) "
+            "e ne vieta l'uscita, il cambio aspetta che finisca. "
             "Ripeti più tardi: --force non aggira il veto, e la app con sessioni vive non la chiudo")
 
 
@@ -400,29 +412,79 @@ def force_quit():
 
 
 def quit_vetoed(offset):
-    """La app ha rifiutato l'uscita per sessioni attive: lo scrive nel suo log, dopo la richiesta."""
+    """La app ha rifiutato l'uscita per lavoro in corso: lo scrive nel suo log, dopo la richiesta."""
     return VETO in app_log_since(offset)
+
+
+def cleanup_started(offset):
+    return CLEANUP in app_log_since(offset)
+
+
+def quit_state(offset):
+    """Una riga sullo stato dell'uscita, dalle righe scritte dopo la richiesta."""
+    text = app_log_since(offset)
+    seen = [name for name, mark in (("veto", VETO), ("cleanup", CLEANUP), ("segnale", SIGNAL),
+                                    ("già in uscita", LIMBO), ("pronta", READY)) if mark in text]
+    if not seen:
+        return "nessuna riga d'uscita nel log: non ha reagito né alla richiesta né al segnale"
+    return "visto nel log: " + ", ".join(seen)
+
+
+def watch_cleanup(offset):
+    """La pulizia è partita: aspettare che finisca finché il log avanza (max 90 s).
+
+    Il veto qui non ferma niente: l'uscita è già in moto e la app esce comunque.
+    Conta solo se la pulizia si ferma davvero (ferma + veto = lavoro vivo, rimandato).
+    """
+    size, quiet = app_log_size(), 0
+    for _ in range(90):
+        if not app_running():
+            return
+        now = app_log_size()
+        size, quiet = (now, 0) if now != size else (size, quiet + 1)
+        if quiet >= 30:
+            break
+        time.sleep(1)
+    if not app_running():
+        return
+    if quit_vetoed(offset):
+        raise Fail(VETO_MSG, 10)
+    raise Fail(f"la app non si chiude ({quit_state(offset)}): non tocco il login", 6)
 
 
 def quit_app():
     if not app_running():
         return
-    offset = app_log_size()  # prima della richiesta: i veti di prima non contano
+    offset = app_log_size()  # prima della richiesta: le righe di prima non contano
     ask_quit()
     for _ in range(45):
         if not app_running():
             return
         if quit_vetoed(offset):
-            raise Fail(VETO_MSG, 10)  # sessioni vive: il segnale le taglierebbe, non lo mando
+            raise Fail(VETO_MSG, 10)  # lavoro vivo: il segnale lo taglierebbe, non lo mando
+        if cleanup_started(offset):
+            return watch_cleanup(offset)  # sta uscendo da sola: tempo, non segnali
         time.sleep(1)
+    if not app_running():
+        return
     if quit_vetoed(offset):
         raise Fail(VETO_MSG, 10)
+    if cleanup_started(offset):
+        return watch_cleanup(offset)
+    # niente veto e niente pulizia: l'Apple Event è andato perso o la app è sorda.
+    # Il segnale la fa uscire comunque (il veto lo salta una volta sola, e qui non c'era).
     force_quit()
-    for _ in range(20):
+    for _ in range(30):
         if not app_running():
             return
+        if cleanup_started(offset):
+            return watch_cleanup(offset)
         time.sleep(1)
-    raise Fail("la app non si chiude: non tocco il login", 6)
+    if not app_running():
+        return
+    if quit_vetoed(offset):
+        raise Fail(VETO_MSG, 10)
+    raise Fail(f"la app non si chiude ({quit_state(offset)}): non tocco il login", 6)
 
 
 def launch_app():
@@ -727,6 +789,7 @@ def add(args):
     wait_for_quiet(args)
     offset, _ = swap_offline(clear_login)
     say(f"app aperta sulla schermata d'accesso: entra con {label}. Aspetto fino a {args.wait_login} min")
+    deadline = time.time() + args.wait_login * 60
     try:
         new = wait_login(offset, prev_uuid, deadline)
     except KeyboardInterrupt:
@@ -874,18 +937,20 @@ def selftest_quit():
     log = tmp / "main.log"
     mod.APP_LOG = log
     veto_line = "2026-10-27 03:40:04 [info] beforeQuit: vetoed by before-quit interceptor\n"
+    cleanup_line = "2026-11-02 21:35:50 [info] Starting onQuitCleanup, hiding windows\n"
+    signal_line = "2026-11-02 21:35:50 [info] received signal 'SIGTERM' quitting now\n"
 
     def append(text):
         with log.open("a") as f:
             f.write(text)
 
-    def case(prelog="", ask=lambda st: None, on_sleep=lambda n: None, force_kills=False):
+    def case(prelog="", ask=lambda st: None, on_sleep=lambda n, st: None, force_kills=False):
         log.write_text(prelog)
         st = {"alive": True, "force": 0, "sleeps": 0}
 
         def fake_sleep(_s):
             st["sleeps"] += 1
-            on_sleep(st["sleeps"])
+            on_sleep(st["sleeps"], st)
 
         def fake_force():
             st["force"] += 1
@@ -906,24 +971,51 @@ def selftest_quit():
     try:
         # veto alla richiesta: exit 10, nessun segnale mandato alla app
         code, msg, force = case(ask=lambda st: append(veto_line))
-        results.append(("uscita vetata dalla app: exit 10 con «sessioni attive», nessun segnale",
-                        code == 10 and "sessioni attive" in msg and force == 0))
+        results.append(("uscita vetata dalla app: exit 10 con «lavoro in corso», nessun segnale",
+                        code == 10 and "lavoro in corso" in msg and force == 0))
         # veto vecchio, prima della richiesta: non conta, la app va comunque chiusa col segnale
         code, msg, force = case(prelog=veto_line * 3, force_kills=True)
         results.append(("veti di prima nel log non bloccano: segnale e app chiusa, exit 0",
                         code == 0 and force == 1))
-        # nessun veto e app che non risponde: il comportamento di prima, exit 6 dopo il segnale
+        # nessun veto e app che non risponde: segnale mandato, exit 6 che dice cosa si è visto
         code, msg, force = case(force_kills=False)
-        results.append(("app che non risponde senza veto: segnale mandato, exit 6 come prima",
-                        code == 6 and "non si chiude" in msg and force == 1))
+        results.append(("app che non risponde senza veto: segnale mandato, exit 6 che dice «non ha reagito»",
+                        code == 6 and "non si chiude" in msg and "non ha reagito" in msg and force == 1))
         # veto che arriva mentre si aspetta: exit 10 senza segnale
-        code, msg, force = case(on_sleep=lambda n: append(veto_line) if n == 2 else None)
+        code, msg, force = case(on_sleep=lambda n, st: append(veto_line) if n == 2 else None)
         results.append(("veto scritto durante l'attesa: exit 10, nessun segnale",
                         code == 10 and force == 0))
         # uscita pulita dopo la richiesta: nessun segnale
         code, msg, force = case(ask=lambda st: st.update(alive=False))
         results.append(("app che esce alla richiesta: exit 0, nessun segnale",
                         code == 0 and force == 0))
+        # pulizia partita e lenta ma che avanza: aspettata fino in fondo, exit 0 senza segnale
+        def slow_cleanup(n, st):
+            append(f"2026-11-02 21:35:{50 + n:02d} [info] cleanup passo {n}\n")
+            if n == 2:
+                append(cleanup_line)
+            if n == 50:
+                st.update(alive=False)
+        code, msg, force = case(on_sleep=slow_cleanup)
+        results.append(("cleanup lenta che avanza: aspettata, exit 0, nessun segnale",
+                        code == 0 and force == 0))
+        # pulizia partita e ferma: exit 6 che cita la cleanup, nessun segnale a metà pulizia
+        code, msg, force = case(on_sleep=lambda n, st: append(cleanup_line) if n == 2 else None)
+        results.append(("cleanup ferma: exit 6 che dice «cleanup», nessun segnale",
+                        code == 6 and "cleanup" in msg and force == 0))
+        # pulizia ferma e veto di un'altra richiesta nel frattempo: exit 10, è lavoro vivo
+        def stalled_veto(n, st):
+            if n == 2:
+                append(cleanup_line)
+            if n == 5:
+                append(veto_line)
+        code, msg, force = case(on_sleep=stalled_veto)
+        results.append(("cleanup ferma con veto: exit 10, nessun segnale",
+                        code == 10 and force == 0))
+        # segnale ricevuto ma nessuna pulizia: exit 6 che cita il segnale
+        code, msg, force = case(on_sleep=lambda n, st: append(signal_line) if n == 46 else None)
+        results.append(("segnale senza pulizia: exit 6 che dice «segnale»",
+                        code == 6 and "segnale" in msg and force == 1))
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
     return results

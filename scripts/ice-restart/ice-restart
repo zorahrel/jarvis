@@ -1,0 +1,13 @@
+#!/bin/bash
+# Ice (menu bar manager) perde memoria: 1,5 GB dopo 27 giorni, 68 MB appena aperta.
+# Registra il footprint e la rilancia solo se supera la soglia e il Mac è libero.
+# Uso: ice-restart [--dry-run]   soglia: ICE_MAX_MB (default 400)
+MAX=${ICE_MAX_MB:-400}; LOG=$HOME/.claude/jarvis/logs/ice-restart.log
+P=$(pgrep -x Ice) || { echo "Ice non gira"; exit 0; }
+MB=$(footprint "$P" | awk '/Footprint:/{v=$(NF-5);u=$(NF-4); if(u=="GB")v*=1024; if(u=="KB")v/=1024; printf "%d",v; exit}')
+echo "$(date -Iseconds) footprint=${MB}MB soglia=${MAX}MB" >> "$LOG"
+[ "$MB" -lt "$MAX" ] && exit 0
+~/bin/mac-libero 600 || { echo "Mac in uso, salto" >> "$LOG"; exit 0; }
+[ "$1" = "--dry-run" ] && { echo "riavvierebbe Ice (${MB}MB)"; exit 0; }
+kill -TERM "$P"; sleep 3; open -g -a Ice
+echo "$(date -Iseconds) riavviata, prima ${MB}MB" >> "$LOG"
