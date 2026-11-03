@@ -90,7 +90,7 @@ def state():
 def send(entry):
     """Manda davvero. Ritorna (ok, dettaglio). Il dry-run e' una env, non un flag della UI:
     una spunta 'prova' in pagina si dimentica accesa e poi nessuno ha mandato niente."""
-    cmd = ["jarvis-canali", "message", "send", "--channel", entry["canale"],
+    cmd = ["jarvis-channels", "message", "send", "--channel", entry["canale"],
            "--target", entry["target"], "-m", entry["testo"], "--json"]
     if os.environ.get("BOARD_DRY"):
         cmd.append("--dry-run")

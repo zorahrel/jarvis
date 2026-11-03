@@ -111,7 +111,7 @@ probe docs-index "http://127.0.0.1:3342/health" 20
 # staleness si misura contro il periodo dedotto dallo schedule.
 # Dal 29/09/2026 i cron stanno in OpenClaw: il router e' solo dashboard.
 section "Cron"
-cron_out=$(perl -e 'alarm 30; exec @ARGV' jarvis-canali cron list --json 2>/dev/null | python3 "$HERE/health/cron.py" 2>&1)
+cron_out=$(perl -e 'alarm 30; exec @ARGV' jarvis-channels cron list --json 2>/dev/null | python3 "$HERE/health/cron.py" 2>&1)
 
 if [[ -z "$cron_out" ]]; then
   fail cron "OpenClaw non ha risposto a 'openclaw cron list --json'"
@@ -130,7 +130,7 @@ fi
 # Dal 18/10 il router non serve piu' WhatsApp: lo stato dei canali (Discord, Telegram,
 # WhatsApp) lo dice il gateway OpenClaw. Il vecchio probe sul router dava FAIL ogni mattina.
 section "Canali"
-ch_out=$(perl -e 'alarm 30; exec @ARGV' jarvis-canali channels status --json 2>/dev/null | python3 "$HERE/health/channels.py" 2>&1)
+ch_out=$(perl -e 'alarm 30; exec @ARGV' jarvis-channels channels status --json 2>/dev/null | python3 "$HERE/health/channels.py" 2>&1)
 if [[ -z "$ch_out" ]]; then
   fail canali "OpenClaw non ha risposto a 'openclaw channels status --json'"
 else

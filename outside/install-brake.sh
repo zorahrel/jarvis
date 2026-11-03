@@ -33,7 +33,7 @@ echo "il hub legge shed.enabled solo all'avvio: va riavviato (launchctl kickstar
 NODE=$(command -v node || echo /opt/homebrew/bin/node)
 ARGV=$(jq -cn --arg cc "$HOME/.openclaw/bin/cron-clean" --arg node "$NODE" --arg bar "$HOME/Projects/claude-usage-hub/bin/mac-strain.mjs" \
   '[$cc, "Mac senza affanno", $node, $bar, "--hours", "24", "--cron"]')
-CRON=(jarvis-canali cron add --name mac-senza-affanno --display-name "Mac senza affanno"
+CRON=(jarvis-channels cron add --name mac-senza-affanno --display-name "Mac senza affanno"
   --description "Barra del freno del Mac: minuti di affanno per colpa degli agenti nelle ultime 24 h; zitto se verde"
   --cron "30 9 * * *" --tz Europe/Rome --command-argv "$ARGV" --announce ${CRON_DELIVERY:-})
 if [ "${1:-}" = --cron ]; then

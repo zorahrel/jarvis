@@ -2,7 +2,7 @@
  "systems": [
   {
    "id": "jarvis",
-   "name": "Jarvis (jarvis-canali)",
+   "name": "Jarvis (jarvis-channels)",
    "version": "own",
    "released": "2026-11-03",
    "releases_feed": "(local git log)",
@@ -919,7 +919,7 @@
         "agno": "no"
        },
        "sources": [],
-       "note": "jarvis-canali in Rust (tokio, rusqlite, whatsapp-rust, serenity)",
+       "note": "jarvis-channels in Rust (tokio, rusqlite, whatsapp-rust, serenity)",
        "keywords": [
         "rust rewrite",
         "native binary"
@@ -5406,7 +5406,7 @@
         "agno": "yes"
        },
        "sources": [],
-       "note": "repo zorahrel/jarvis pubblico; jarvis-canali privato",
+       "note": "repo zorahrel/jarvis pubblico; jarvis-channels privato",
        "keywords": [
         "license"
        ]
